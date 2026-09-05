@@ -28,7 +28,7 @@ export default function WelcomeScreen() {
             <Image
               accessibilityLabel="LifeFlow Mascot"
               resizeMode="contain"
-              source={require('../../../assets/images/WelcomeLogo.png')}
+              source={require('../../../assets/images/LogoMascot.png')}
               style={styles.mascot}
             />
 

@@ -36,7 +36,7 @@ export default function OnboardingTwoScreen() {
             <Image
               accessibilityLabel="LifeFlow mascot"
               resizeMode="contain"
-              source={require('../../../assets/images/Onboarding2.png')}
+              source={require('../../../assets/images/GoodMascot.png')}
               style={styles.mascot}
             />
             <Text style={styles.title}>Your Donation Journey</Text>

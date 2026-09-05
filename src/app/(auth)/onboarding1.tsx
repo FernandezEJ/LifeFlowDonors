@@ -36,7 +36,7 @@ export default function OnboardingOneScreen() {
             <Image
               accessibilityLabel="LifeFlow mascot"
               resizeMode="contain"
-              source={require('../../../assets/images/Onboarding1.png')}
+              source={require('../../../assets/images/GreetMascot.png')}
               style={styles.mascot}
             />
             <Text style={styles.title}>Be a Lifesaver</Text>
