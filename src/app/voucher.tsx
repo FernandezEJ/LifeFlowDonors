@@ -1,15 +1,13 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, AppState, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
-import {
-  activateMockVoucher,
-  expireElapsedVouchers,
-  useMockVouchers,
-} from '@/services/mock-voucher-store';
-
+import VoucherQR from 'react-qr-code';
+import { NotificationBell } from '@/components/notification-bell';
+import { useAuth } from '@/contexts/auth-context';
+import { errorMessage } from '@/services/api';
+import { ACTIVATION_WARNING, formatRemaining, remainingSeconds, type VoucherResponse } from '@/services/rewards';
 const COLORS = {
   background: '#FFF9F2',
   brand: '#D93A3A',
@@ -26,203 +24,130 @@ const COLORS = {
   expiredBackground: '#EEE9E6',
 };
 
-function formatRemaining(expiresAt: number | undefined, now: number) {
-  const seconds = Math.max(0, Math.ceil(((expiresAt ?? now) - now) / 1000));
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes.toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
-}
 
-function formatTimestamp(timestamp: number | undefined) {
-  if (!timestamp) return 'Not recorded';
-  return new Date(timestamp).toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
+// ========================================
+// OWNED SERVER VOUCHER AND CLOCK
+// Invalid IDs never fall back to another voucher. Each server response supplies
+// a clock offset; foreground refresh hides the QR until ownership/status is checked.
+// ========================================
 export default function VoucherScreen() {
   const router = useRouter();
-  const { id } = useLocalSearchParams<{ id?: string | string[] }>();
-  const voucherId = Array.isArray(id) ? id[0] : id;
-  const vouchers = useMockVouchers();
-  const voucher = vouchers.find((item) => item.id === voucherId) ?? vouchers[0];
+  const { id } = useLocalSearchParams<{id?: string}>();
+  const voucherId = Number(id);
+  const { voucher: getVoucher, activateVoucher } = useAuth();
+  const [response, setResponse] = useState<VoucherResponse | null>(null);
+  const [offset, setOffset] = useState(0);
   const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    expireElapsedVouchers();
-    const interval = setInterval(() => {
-      const currentTime = Date.now();
-      setNow(currentTime);
-      expireElapsedVouchers(currentTime);
-    }, 1000);
-
-    return () => clearInterval(interval);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const generation = useRef(0);
+  const lock = useRef(false);
+  const submitted = useRef(false);
+  const deadlineRequested = useRef(false);
+  const accept = useCallback((result: VoucherResponse) => {
+    setResponse(result); setOffset(Date.parse(result.server_time) - Date.now()); setNow(Date.now());
+    deadlineRequested.current = false;
   }, []);
+  const load = useCallback(async () => {
+    const current = ++generation.current; setLoading(true); setError('');
+    if (!Number.isSafeInteger(voucherId) || voucherId <= 0) { setResponse(null); setError('Voucher not found.'); setLoading(false); return; }
+    try { const result = await getVoucher(voucherId); if (current === generation.current) accept(result); }
+    catch (cause) { if (current === generation.current) setError(errorMessage(cause)); }
+    finally { if (current === generation.current) setLoading(false); }
+  }, [getVoucher, voucherId, accept]);
+  useFocusEffect(useCallback(() => {
+    void load();
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') void load();
+      else { generation.current++; setLoading(true); }
+    });
+    return () => { generation.current++; subscription.remove(); };
+  }, [load]));
+  const voucher = response?.voucher;
+  const seconds = remainingSeconds(voucher?.expires_at ?? null, offset, now);
 
-  if (!voucher) return null;
+  // ========================================
+  // VISUAL COUNTDOWN AND SERVER RECONCILIATION
+  // Timer never writes a status. At zero the QR disappears and Laravel is refreshed.
+  // A failed refresh exposes Retry, never a stale usable code.
+  // ========================================
+  useEffect(() => {
+    if (voucher?.status !== 'active') return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [voucher?.status]);
+  useEffect(() => {
+    if (voucher?.status === 'active' && seconds === 0 && !loading && !error && !deadlineRequested.current) {
+      deadlineRequested.current = true;
+      // The request asynchronously replaces the visual state with the server result.
+      void load();
+    }
+  }, [voucher?.status, seconds, loading, error, load]);
 
-  const activateVoucher = () => {
-    activateMockVoucher(voucher.id);
-    setNow(Date.now());
+  // ========================================
+  // EXPLICIT ACTIVATION WARNING
+  // Duplicate dialogs and requests are locked; retries cannot extend the server deadline.
+  // ========================================
+  const activate = async () => {
+    if (submitted.current) return;
+    submitted.current = true; setBusy(true); setError('');
+    const current = generation.current;
+    try { const result = await activateVoucher(voucherId); if (current === generation.current) accept(result); }
+    catch (cause) { if (current === generation.current) setError(errorMessage(cause)); }
+    finally { lock.current = false; submitted.current = false; setBusy(false); }
+  };
+  const confirm = () => {
+    if (lock.current || loading || busy || voucher?.status !== 'available') return;
+    lock.current = true;
+    Alert.alert('Attention', ACTIVATION_WARNING, [
+      { text: 'Cancel', style: 'cancel', onPress: () => { lock.current = false; } },
+      { text: 'Activate', onPress: () => void activate() },
+    ], { cancelable: false });
   };
 
-  return (
-    <>
-      <Stack.Screen options={{ headerShown: false }} />
-      <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
-        <View style={styles.fixedHeader}>
-          <View style={styles.header}>
-            <Pressable
-              accessibilityLabel="Go back"
-              accessibilityRole="button"
-              hitSlop={8}
-              onPress={() => router.back()}
-              style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}>
-              <MaterialIcons name="arrow-back" color={COLORS.text} size={23} />
-            </Pressable>
-            <Text style={styles.headerTitle}>Voucher</Text>
-            <Pressable
-              accessibilityLabel="Open notifications"
-              accessibilityRole="button"
-              hitSlop={8}
-              onPress={() => router.push('/notifications')}
-              style={({ pressed }) => [styles.bellButton, pressed && styles.pressed]}>
-              <MaterialIcons name="notifications-none" color={COLORS.text} size={24} />
-              <View style={styles.notificationDot} />
-            </Pressable>
-          </View>
-        </View>
-
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}>
-          <View style={styles.content}>
-            <View style={styles.titleBlock}>
-              <View
-                style={[
-                  styles.statusBadge,
-                  voucher.status === 'ACTIVE' && styles.activeBadge,
-                  voucher.status === 'EXPIRED' && styles.expiredBadge,
-                ]}>
-                <Text
-                  style={[
-                    styles.statusText,
-                    voucher.status === 'ACTIVE' && styles.activeStatusText,
-                    voucher.status === 'EXPIRED' && styles.expiredStatusText,
-                  ]}>
-                  {voucher.status}
-                </Text>
-              </View>
-              <Text style={styles.voucherTitle}>{voucher.title}</Text>
-              <Text style={styles.voucherCost}>{voucher.cost} Blood Points</Text>
-              <Text style={styles.description}>{voucher.description}</Text>
-            </View>
-
-            {voucher.status === 'AVAILABLE' ? (
-              <>
-                <View style={styles.warningCard}>
-                  <MaterialIcons name="access-time" color={COLORS.brand} size={25} />
-                  <View style={styles.warningContent}>
-                    <Text style={styles.warningTitle}>Activate only when ready</Text>
-                    <Text style={styles.warningText}>
-                      Only activate this voucher when you are already in front of the cashier or
-                      counter.{`\n\n`}Once activated, the QR code will only remain active for 5
-                      minutes.
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={styles.actionRow}>
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => router.back()}
-                    style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}>
-                    <Text style={styles.cancelButtonText}>Cancel</Text>
-                  </Pressable>
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={activateVoucher}
-                    style={({ pressed }) => [
-                      styles.activateButton,
-                      pressed && styles.activateButtonPressed,
-                    ]}>
-                    <Text style={styles.activateButtonText}>Activate Voucher</Text>
-                  </Pressable>
-                </View>
-              </>
-            ) : null}
-
-            {voucher.status === 'ACTIVE' ? (
-              <>
-                <View style={styles.qrCard}>
-                  <View accessibilityLabel="Demo QR code" style={styles.qrPlaceholder}>
-                    <MaterialIcons name="qr-code-2" color={COLORS.text} size={168} />
-                  </View>
-                  <Text style={styles.demoLabel}>DEMO QR</Text>
-                  <Text style={styles.countdown}>
-                    {formatRemaining(voucher.expiresAt, now)} remaining
-                  </Text>
-                  <Text numberOfLines={1} style={styles.tokenText}>
-                    {voucher.token}
-                  </Text>
-                </View>
-
-                <View style={styles.prototypeCard}>
-                  <MaterialIcons name="info-outline" color={COLORS.brand} size={23} />
-                  <View style={styles.prototypeContent}>
-                    <Text style={styles.prototypeTitle}>Prototype Notice</Text>
-                    <Text style={styles.prototypeText}>
-                      This voucher and QR code are for system demonstration and testing only. They
-                      are not connected to an actual cashier or merchant system.
-                    </Text>
-                  </View>
-                </View>
-              </>
-            ) : null}
-
-            {voucher.status === 'EXPIRED' ? (
-              <>
-                <View style={styles.expiredCard}>
-                  <MaterialIcons name="timer-off" color={COLORS.muted} size={36} />
-                  <Text style={styles.expiredTitle}>Voucher activation expired.</Text>
-                  <Text style={styles.expiredText}>
-                    The 5-minute QR activation window has ended.
-                  </Text>
-                </View>
-                <View style={styles.detailsCard}>
-                  <Text style={styles.detailsTitle}>Activation details</Text>
-                  <Text style={styles.detailLabel}>Activated</Text>
-                  <Text style={styles.detailValue}>{formatTimestamp(voucher.activatedAt)}</Text>
-                  <Text style={styles.detailLabel}>Expired</Text>
-                  <Text style={styles.detailValue}>{formatTimestamp(voucher.expiresAt)}</Text>
-                  <Text style={styles.expiredNotice}>
-                    This prototype cannot determine whether a cashier accepted or used the voucher.
-                  </Text>
-                </View>
-              </>
-            ) : null}
-
-            {voucher.status !== 'AVAILABLE' ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => router.dismissTo('/my-vouchers')}
-                style={({ pressed }) => [
-                  styles.backToVouchersButton,
-                  pressed && styles.activateButtonPressed,
-                ]}>
-                <Text style={styles.activateButtonText}>Back to My Vouchers</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        </ScrollView>
-      </SafeAreaView>
-    </>
-  );
+  // ========================================
+  // EXISTING WARNING, QR AND DETAILS LAYOUT
+  // The encoded value is only an opaque server token. Five elapsed minutes count
+  // as redemption for this capstone; no physical cashier scan is claimed.
+  // ========================================
+  return <><Stack.Screen options={{ headerShown: false }} />
+    <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
+      <View style={styles.fixedHeader}><View style={styles.header}>
+        <Pressable accessibilityLabel="Go back" onPress={() => router.back()} style={styles.headerButton}><MaterialIcons name="arrow-back" color={COLORS.text} size={23} /></Pressable>
+        <Text style={styles.headerTitle}>Voucher</Text><NotificationBell />
+      </View></View>
+      <ScrollView contentContainerStyle={styles.scrollContent}><View style={styles.content}>
+        {loading ? <Text>Loading voucher...</Text> : null}
+        {error ? <View><Text accessibilityRole="alert">{error}</Text><Pressable disabled={busy} onPress={() => void load()}><Text>Retry</Text></Pressable></View> : null}
+        {voucher ? <>
+          <View style={styles.titleBlock}><View style={styles.statusBadge}><Text style={styles.statusText}>{voucher.status.toUpperCase()}</Text></View>
+            <Text style={styles.voucherTitle}>{voucher.reward.name}</Text><Text style={styles.voucherCost}>{voucher.points_spent} Blood Points</Text><Text style={styles.description}>{voucher.reward.description}</Text></View>
+          {voucher.status === 'available' ? <>
+            <View style={styles.warningCard}><Text style={styles.warningText}>{ACTIVATION_WARNING}</Text></View>
+            <View style={styles.actionRow}><Pressable style={styles.cancelButton} onPress={() => router.back()}><Text style={styles.cancelButtonText}>Cancel</Text></Pressable>
+              <Pressable disabled={busy || loading} onPress={confirm} style={styles.activateButton}><Text style={styles.activateButtonText}>{busy ? 'Activating...' : 'Activate'}</Text></Pressable></View>
+          </> : null}
+          {voucher.status === 'active' ? <View style={styles.qrCard}>
+            {!loading && !error && seconds > 0 && voucher.qr_token ? <View style={{ padding: 16, backgroundColor: '#FFFFFF' }} accessibilityLabel="Active voucher QR code"><VoucherQR value={voucher.qr_token} size={184} /></View> : null}
+            <Text style={styles.countdown}>{seconds > 0 ? formatRemaining(seconds) + ' remaining' : 'Activation window ended. Refreshing status...'}</Text>
+          </View> : null}
+          {voucher.status === 'redeemed' || voucher.status === 'expired' ? <View style={styles.expiredCard}>
+            <Text style={styles.expiredTitle}>{voucher.status === 'redeemed' ? 'Voucher redeemed' : 'Voucher expired'}</Text>
+            <Text style={styles.expiredText}>{voucher.status === 'redeemed' ? 'The 5-minute activation window has ended.' : 'This voucher is no longer available.'}</Text>
+          </View> : null}
+          <View style={styles.prototypeCard}><Text style={styles.prototypeText}>For this capstone, activation and the completed 5-minute window count as redemption. The QR is for presentation only; no cashier scanner is connected.</Text></View>
+          {voucher.activated_at ? <View style={styles.detailsCard}><Text style={styles.detailsTitle}>Activation details</Text>
+            <Text style={styles.detailValue}>Activated: {new Date(voucher.activated_at).toLocaleString()}</Text>
+            <Text style={styles.detailValue}>Window ends: {voucher.expires_at ? new Date(voucher.expires_at).toLocaleString() : '--'}</Text>
+            {voucher.redeemed_at ? <Text style={styles.detailValue}>Redeemed: {new Date(voucher.redeemed_at).toLocaleString()}</Text> : null}
+          </View> : null}
+        </> : null}
+        <Pressable style={styles.backToVouchersButton} onPress={() => router.dismissTo('/my-vouchers')}><Text style={styles.activateButtonText}>Back to My Vouchers</Text></Pressable>
+      </View></ScrollView>
+    </SafeAreaView></>;
 }
-
+// Existing card, warning and button styles are retained.
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },
   fixedHeader: {

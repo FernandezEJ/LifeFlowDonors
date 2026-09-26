@@ -1,320 +1,229 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Stack, useRouter } from 'expo-router';
-import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useRef, useState } from 'react';
+import { useAuth } from '@/contexts/auth-context';
+import { NotificationBell } from '@/components/notification-bell';
+import { errorMessage } from '@/services/api';
+import { useEligibilityCooldown, formatEligibilityWait } from '@/hooks/use-eligibility-cooldown';
+import { EligibilityCooldownError, SCREENING_NOTICE, type EligibilityAnswers, type EligibilityAssessment, type EligibilityResult } from '@/services/eligibility';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-const COLORS = {
-  background: '#FFF9F2',
-  brand: '#D93A3A',
-  brandPressed: '#BE2F2F',
-  text: '#372E2E',
-  muted: '#766A68',
-  border: '#F0E2DC',
-  white: '#FFFFFF',
-  softRed: '#FDE8E8',
-};
-
-type BooleanAnswer = 'YES' | 'NO' | null;
-type BooleanQuestionKey = 'recentIllness' | 'medication' | 'recentDonation' | 'feelsWell';
-
-const BOOLEAN_QUESTIONS: readonly { key: BooleanQuestionKey; question: string }[] = [
-  { key: 'recentIllness', question: 'Have you had fever or illness recently?' },
-  { key: 'medication', question: 'Are you currently taking medication?' },
-  { key: 'recentDonation', question: 'Have you donated blood recently?' },
-  { key: 'feelsWell', question: 'Do you feel well today?' },
+// ========================================
+// SELF-ASSESSMENT QUESTION FLOW
+// Answers stay in this screen until review. Only Laravel evaluates them.
+// ========================================
+type Question = { key: keyof EligibilityAnswers; text: string; numeric?: boolean; pregnancy?: boolean };
+export const QUESTIONS: readonly Question[] = [
+  { key: 'weight', text: 'What is your current weight in kilograms?', numeric: true },
+  { key: 'sleepHours', text: 'How many hours did you sleep last night?', numeric: true },
+  { key: 'currentSymptoms', text: 'Do you currently have fever, cough, colds, sore throat, or otherwise feel unwell?' },
+  { key: 'donatedWithinThreeMonths', text: 'Have you donated blood within the last 3 months?' },
+  { key: 'feelsWell', text: 'Do you feel well enough to donate today?' },
+  { key: 'currentlyPregnant', text: 'Are you currently pregnant?', pregnancy: true },
+  { key: 'takingAntibioticsForActiveInfection', text: 'Are you currently taking antibiotics for an active infection?' },
+  { key: 'stillRecoveringFromProcedure', text: 'Are you still recovering from surgery, a medical procedure, or a recent hospitalization?' },
+  { key: 'activeOrRecoveringInfection', text: 'Do you currently have an active infection or are you still recovering from one?' },
+  { key: 'weakDizzyOrUnusuallyTired', text: 'Are you currently feeling weak, dizzy, unusually tired, or physically unwell today?' },
 ];
+type Draft = Partial<Record<keyof EligibilityAnswers, string>>;
+export function validAnswer(question: Question, value = ''): boolean {
+  if (question.numeric) {
+    const normalized = value.trim().replace(',', '.');
+    if (!/^\d+(\.\d+)?$/.test(normalized)) return false;
+    const number = Number(normalized);
+    return Number.isFinite(number) && (question.key === 'weight' ? number > 0 : number >= 0 && number <= 24);
+  }
+  return value === 'YES' || value === 'NO' || (!!question.pregnancy && value === 'NOT_APPLICABLE');
+}
+function answerLabel(value?: string) {
+  return value === 'YES' ? 'Yes' : value === 'NO' ? 'No' : value === 'NOT_APPLICABLE' ? 'Not applicable' : value || 'Not answered';
+}
+const RESULTS: Record<EligibilityResult, { title: string; copy: string; color: string }> = {
+  eligible: { title: 'Ready to proceed', copy: 'Based on your answers, you may proceed to the donation facility for final screening.', color: '#287A47' },
+  not_eligible: { title: 'Not ready to donate right now', copy: 'Based on your answers, one or more factors suggest that you should wait before donating.', color: '#B52E2E' },
+  // Preserve historical output without re-evaluating old answers.
+  temporarily_ineligible: { title: 'Not ready to donate right now', copy: 'Based on your answers, one or more factors may mean you should wait before donating.', color: '#B52E2E' },
+  needs_further_screening: { title: 'Previous assessment: facility review advised', copy: 'This saved assessment used an earlier questionnaire. It has not been re-evaluated. Please confirm with the donation facility.', color: '#514644' },
+};
+const PREPARATION = ['Get enough rest', 'Eat a proper meal', 'Stay hydrated', 'Prepare ID / required documents', 'Check donation location and time'];
+
+// Shared accessible buttons keep event handlers outside render-time execution.
+function AssessmentButton({ label, onPress, disabled = false, secondary = false, busy = false }: {
+  label: string; onPress: () => void; disabled?: boolean; secondary?: boolean; busy?: boolean;
+}) {
+  return <Pressable accessibilityRole="button" accessibilityState={{ disabled, busy }} disabled={disabled}
+    onPress={onPress} style={({ pressed }) => [styles.button, secondary && styles.secondary, disabled && styles.disabled, pressed && styles.pressed]}>
+    <Text style={[styles.buttonText, secondary && styles.secondaryText]}>{label}</Text>
+  </Pressable>;
+}
 
 export default function EvaluationScreen() {
   const router = useRouter();
-  const [weight, setWeight] = useState('');
-  const [sleepHours, setSleepHours] = useState('');
-  const [answers, setAnswers] = useState<Record<BooleanQuestionKey, BooleanAnswer>>({
-    recentIllness: null,
-    medication: null,
-    recentDonation: null,
-    feelsWell: null,
-  });
-
-  const updateAnswer = (key: BooleanQuestionKey, answer: Exclude<BooleanAnswer, null>) => {
-    setAnswers((current) => ({ ...current, [key]: answer }));
+  const { submitAssessment } = useAuth();
+  const cooldown = useEligibilityCooldown();
+  const [step, setStep] = useState(-1); // -1 intro; 0..9 questions; 10 review.
+  const [draft, setDraft] = useState<Draft>({});
+  const [saved, setSaved] = useState<EligibilityAssessment | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const submitting = useRef(false);
+  const scroll = useRef<ScrollView>(null);
+  const blocked = loading || !cooldown.canSubmit;
+  const latest = cooldown.state?.assessment;
+  const result = saved && (!latest || saved.id >= latest.id) ? saved : latest;
+  const showResult = !!result && (!!saved || !!cooldown.state?.cooldown_active);
+  const question = QUESTIONS[step];
+  const go = (next: number) => {
+    if (blocked) return;
+    setStep(next);
+    scroll.current?.scrollTo({ y: 0, animated: false });
   };
 
-  const submitEvaluation = () => {
-    const parsedWeight = Number(weight);
-    const parsedSleep = Number(sleepHours);
-    const hasEveryAnswer = Object.values(answers).every((answer) => answer !== null);
-
-    if (!weight.trim() || !sleepHours.trim() || !hasEveryAnswer) {
-      Alert.alert('Complete all fields', 'Please answer every evaluation question before submitting.');
-      return;
+  // ========================================
+  // CONFIRMED SUBMISSION AND COOLDOWN RECOVERY
+  // A lost response may already have committed. Refresh before allowing retry.
+  // ========================================
+  const submit = async () => {
+    if (submitting.current || blocked || step !== QUESTIONS.length || !QUESTIONS.every(q => validAnswer(q, draft[q.key]))) return;
+    submitting.current = true; setLoading(true); setError('');
+    const answers = { ...draft, weight: Number(draft.weight!.replace(',', '.')), sleepHours: Number(draft.sleepHours!.replace(',', '.')) } as EligibilityAnswers;
+    try {
+      setSaved(await submitAssessment(answers));
+      await cooldown.reload();
+    } catch (failure) {
+      if (failure instanceof EligibilityCooldownError) {
+        cooldown.accept(failure.state);
+        setSaved(failure.state.assessment);
+      } else {
+        setError(errorMessage(failure));
+        await cooldown.reload();
+      }
+    } finally {
+      submitting.current = false; setLoading(false);
+      scroll.current?.scrollTo({ y: 0, animated: false });
     }
-
-    if (!Number.isFinite(parsedWeight) || parsedWeight <= 0 || !Number.isFinite(parsedSleep) || parsedSleep < 0) {
-      Alert.alert('Check your entries', 'Enter valid numbers for weight and hours of sleep.');
-      return;
-    }
-
-    // TODO: Later this evaluation will be sent to Laravel, which will evaluate and store the
-    // result and update the user's current status. The frontend will not make that decision.
-    Alert.alert('Evaluation submitted for frontend testing.');
   };
-
-  return (
-    <>
-      <Stack.Screen options={{ headerShown: false }} />
-      <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
-        <View style={styles.fixedHeader}>
-          <View style={styles.header}>
-            <Pressable
-              accessibilityLabel="Go back"
-              accessibilityRole="button"
-              hitSlop={8}
-              onPress={() => router.back()}
-              style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}>
-              <MaterialIcons name="arrow-back" color={COLORS.text} size={23} />
-            </Pressable>
-            <Text style={styles.headerTitle}>Evaluation Form</Text>
-            <Pressable
-              accessibilityLabel="Open notifications"
-              accessibilityRole="button"
-              hitSlop={8}
-              onPress={() => router.push('/notifications')}
-              style={({ pressed }) => [styles.bellButton, pressed && styles.pressed]}>
-              <MaterialIcons name="notifications-none" color={COLORS.text} size={24} />
-              <View style={styles.notificationDot} />
-            </Pressable>
-          </View>
-        </View>
-
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}>
+  return <>
+    <Stack.Screen options={{ headerShown: false }} />
+    <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
+      <View style={styles.header}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={() => router.back()} style={styles.iconButton}>
+          <MaterialIcons name="arrow-back" size={24} color="#372E2E" />
+        </Pressable>
+        <Text style={styles.headerTitle}>Self-Assessment</Text>
+        <NotificationBell />
+      </View>
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView ref={scroll} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.scroll}>
           <View style={styles.content}>
-            <View style={styles.intro}>
-              <Text style={styles.introTitle}>Donation readiness check</Text>
-              <Text style={styles.introText}>
-                Answer these questions for this frontend demonstration. This form does not provide
-                medical clearance.
-              </Text>
-            </View>
+            {cooldown.loading ? <Text style={styles.body}>Checking evaluation availability...</Text> : null}
+            {cooldown.error ? <View style={styles.notice}>
+              <Text accessibilityRole="alert" style={styles.body}>{cooldown.error}</Text>
+              {<AssessmentButton label={'Retry availability check'} onPress={() => void cooldown.reload()} disabled={loading} busy={loading} />}
+            </View> : null}
+            {error ? <Text accessibilityRole="alert" style={styles.body}>{error}</Text> : null}
+            {cooldown.state?.cooldown_active ? <View style={styles.notice}>
+              <Text style={styles.subheading}>You already completed an evaluation recently.</Text>
+              <Text style={styles.body}>{formatEligibilityWait(cooldown.remaining)}</Text>
+              <Text style={styles.body}>Available again: {new Date(cooldown.state.next_allowed_at!).toLocaleString()}</Text>
+            </View> : null}
 
-            <View style={styles.questionCard}>
-              <Text style={styles.questionNumber}>1</Text>
-              <View style={styles.questionContent}>
-                <Text style={styles.questionText}>Weight</Text>
-                <TextInput
-                  accessibilityLabel="Weight in kilograms"
-                  keyboardType="decimal-pad"
-                  onChangeText={setWeight}
-                  placeholder="Enter weight in kg"
-                  placeholderTextColor="#9B908D"
-                  style={styles.input}
-                  value={weight}
-                />
+            {/* PRE-SCREENING RESULT: display saved Laravel output, never a local decision. */}
+            {showResult && result ? <>
+              <View style={styles.card} accessibilityLiveRegion="polite">
+                <Text style={styles.eyebrow}>Your Pre-Screening Result</Text>
+                <Text style={[styles.title, { color: RESULTS[result.result].color }]}>{RESULTS[result.result].title}</Text>
+                <Text style={styles.body}>{RESULTS[result.result].copy}</Text>
+                {result.reasons.map((reason, index) => <Text key={index} style={styles.reason}>{reason}</Text>)}
+                <Text style={styles.body}>{SCREENING_NOTICE}</Text>
               </View>
-            </View>
-
-            <View style={styles.questionCard}>
-              <Text style={styles.questionNumber}>2</Text>
-              <View style={styles.questionContent}>
-                <Text style={styles.questionText}>Hours of sleep last night</Text>
-                <TextInput
-                  accessibilityLabel="Hours of sleep last night"
-                  keyboardType="decimal-pad"
-                  onChangeText={setSleepHours}
-                  placeholder="Enter hours of sleep"
-                  placeholderTextColor="#9B908D"
-                  style={styles.input}
-                  value={sleepHours}
-                />
+              {<AssessmentButton label={'View Status'} onPress={() => router.push('/(tabs)/status')} busy={loading} />}
+              {<AssessmentButton label={'Back to Flowie'} onPress={() => router.push('/flowie')} disabled={false} secondary={true} busy={loading} />}
+              {/* This facility note is informational, not an additional result. */}
+              <View style={styles.card}>
+                <Text style={styles.subheading}>Check with the donation facility</Text>
+                <Text style={styles.body}>Recently had a tattoo or piercing, started a new medication, or have another health concern? Donation rules can vary, so confirm with the donation facility before donating.</Text>
               </View>
-            </View>
-
-            {BOOLEAN_QUESTIONS.map((item, index) => (
-              <View key={item.key} style={styles.questionCard}>
-                <Text style={styles.questionNumber}>{index + 3}</Text>
-                <View style={styles.questionContent}>
-                  <Text style={styles.questionText}>{item.question}</Text>
-                  <View style={styles.answerRow}>
-                    {(['YES', 'NO'] as const).map((answer) => {
-                      const selected = answers[item.key] === answer;
-
-                      return (
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityState={{ selected }}
-                          key={answer}
-                          onPress={() => updateAnswer(item.key, answer)}
-                          style={({ pressed }) => [
-                            styles.answerButton,
-                            selected && styles.answerButtonSelected,
-                            pressed && styles.answerButtonPressed,
-                          ]}>
-                          <Text
-                            style={[
-                              styles.answerButtonText,
-                              selected && styles.answerButtonTextSelected,
-                            ]}>
-                            {answer === 'YES' ? 'Yes' : 'No'}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                </View>
+              {/* Preparation is informational and is never part of the answer payload. */}
+              <View style={styles.card}>
+                <Text style={styles.subheading}>Preparation Check</Text>
+                <Text style={styles.body}>These reminders do not affect your pre-screening result.</Text>
+                {PREPARATION.map(item => <Text key={item} style={styles.body}>{item}</Text>)}
               </View>
-            ))}
-
-            <Pressable
-              accessibilityRole="button"
-              onPress={submitEvaluation}
-              style={({ pressed }) => [styles.submitButton, pressed && styles.submitButtonPressed]}>
-              <Text style={styles.submitButtonText}>Submit Evaluation</Text>
-            </Pressable>
-
-            <View style={styles.noticeCard}>
-              <MaterialIcons name="info-outline" color={COLORS.brand} size={21} />
-              <Text style={styles.noticeText}>
-                This prototype does not calculate or permanently update donation eligibility.
-              </Text>
-            </View>
-
-            {/* TODO: The Evaluation Form may later be highlighted as a Flowie FAQ/action.
-                Flowie can explain donation information, but final eligibility must come from
-                evaluation/backend logic rather than free-form AI conversation. */}
+              {cooldown.canSubmit ? <AssessmentButton label={'Start a new assessment'} onPress={() => { setSaved(null); setDraft({}); go(-1); }} busy={loading} /> : null}
+            </> : cooldown.state?.cooldown_active ? null : step === -1 ? <View style={styles.card}>
+              <Text style={styles.title}>Donation Readiness Self-Assessment</Text>
+              <Text style={styles.body}>This quick self-assessment helps you check your current readiness before visiting a donation facility.</Text>
+              <Text style={styles.body}>{SCREENING_NOTICE}</Text>
+              <Text style={styles.body}>You can submit one assessment every 24 hours. Please review your answers carefully before submitting.</Text>
+              {<AssessmentButton label={'Start Assessment'} onPress={() => go(0)} disabled={blocked} busy={loading} />}
+            </View> : step < QUESTIONS.length ? <View style={styles.card}>
+              <Text style={styles.eyebrow}>Question {step + 1} of 10</Text>
+              <View accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 10, now: step + 1 }}
+                accessibilityLabel="Assessment progress" style={styles.progress}>
+                <View style={[styles.progressFill, { width: (((step + 1) * 10) + '%') as `${number}%` }]} />
+              </View>
+              <Text style={styles.title}>{question.text}</Text>
+              {question.numeric ? <TextInput key={question.key} accessibilityLabel={question.text}
+                keyboardType="decimal-pad" editable={!blocked} value={draft[question.key] || ''}
+                placeholder={question.key === 'weight' ? 'Weight in kg' : 'Hours of sleep'}
+                placeholderTextColor="#766A68" style={styles.input} maxLength={12}
+                onChangeText={value => setDraft(current => ({ ...current, [question.key]: value }))} /> :
+                (question.pregnancy ? ['YES', 'NO', 'NOT_APPLICABLE'] : ['YES', 'NO']).map(value => (
+                  <Pressable key={value} accessibilityRole="radio" accessibilityLabel={answerLabel(value)}
+                    accessibilityState={{ checked: draft[question.key] === value, disabled: blocked }} disabled={blocked}
+                    onPress={() => { if (!blocked) setDraft(current => ({ ...current, [question.key]: value })); }}
+                    style={[styles.option, draft[question.key] === value && styles.selected]}>
+                    <Text style={[styles.body, draft[question.key] === value && styles.selectedText]}>{answerLabel(value)}</Text>
+                  </Pressable>
+                ))}
+              {question.numeric ? <Text style={styles.hint}>{question.key === 'weight' ? 'Enter a number greater than zero.' : 'Enter hours from 0 to 24.'}</Text> : null}
+              {<AssessmentButton label={'Next'} onPress={() => { if (validAnswer(question, draft[question.key])) go(step + 1); }} disabled={blocked || !validAnswer(question, draft[question.key])} busy={loading} />}
+              {<AssessmentButton label={'Back'} onPress={() => go(step - 1)} disabled={blocked} secondary={true} busy={loading} />}
+              <Text style={styles.hint}>{SCREENING_NOTICE}</Text>
+            </View> : <View style={styles.card}>
+              {/* REVIEW ANSWERS: question ten never submits automatically. */}
+              <Text style={styles.title}>Review Answers</Text>
+              <Text style={styles.body}>Please check all 10 answers. You can submit one assessment every 24 hours.</Text>
+              {QUESTIONS.map((q, index) => <View key={q.key} style={styles.reviewRow}>
+                <Text style={styles.subheading}>{index + 1}. {q.text}</Text>
+                <Text style={styles.body}>{answerLabel(draft[q.key])}{q.key === 'weight' ? ' kg' : q.key === 'sleepHours' ? ' hours' : ''}</Text>
+              </View>)}
+              {<AssessmentButton label={'Edit Answers'} onPress={() => go(0)} disabled={blocked} secondary={true} busy={loading} />}
+              {<AssessmentButton label={loading ? 'Submitting Assessment...' : 'Submit Assessment'} onPress={() => void submit()} disabled={blocked} busy={loading} />}
+              <Text style={styles.hint}>{SCREENING_NOTICE}</Text>
+            </View>}
           </View>
         </ScrollView>
-      </SafeAreaView>
-    </>
-  );
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  </>;
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: COLORS.background },
-  fixedHeader: {
-    zIndex: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    backgroundColor: COLORS.background,
-  },
-  header: {
-    width: '100%',
-    maxWidth: 620,
-    minHeight: 60,
-    alignSelf: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 9,
-  },
-  backButton: {
-    width: 42,
-    height: 42,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
-  },
-  pressed: { opacity: 0.7 },
-  headerTitle: { color: COLORS.text, fontSize: 17, fontWeight: '800' },
-  bellButton: {
-    width: 42,
-    height: 42,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 14,
-    backgroundColor: COLORS.white,
-  },
-  notificationDot: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 7,
-    height: 7,
-    borderWidth: 1.5,
-    borderColor: COLORS.white,
-    borderRadius: 4,
-    backgroundColor: COLORS.brand,
-  },
-  scrollContent: { paddingHorizontal: 20, paddingTop: 22, paddingBottom: 34 },
-  content: { width: '100%', maxWidth: 620, alignSelf: 'center', gap: 14 },
-  intro: { marginBottom: 4 },
-  introTitle: { color: COLORS.text, fontSize: 24, fontWeight: '800', letterSpacing: -0.4 },
-  introText: { marginTop: 7, color: COLORS.muted, fontSize: 14, lineHeight: 20 },
-  questionCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 19,
-    backgroundColor: COLORS.white,
-  },
-  questionNumber: {
-    width: 30,
-    height: 30,
-    overflow: 'hidden',
-    color: COLORS.brand,
-    fontSize: 13,
-    fontWeight: '800',
-    lineHeight: 30,
-    textAlign: 'center',
-    borderRadius: 15,
-    backgroundColor: COLORS.softRed,
-  },
-  questionContent: { flex: 1 },
-  questionText: { color: COLORS.text, fontSize: 15, fontWeight: '700', lineHeight: 21 },
-  input: {
-    minHeight: 48,
-    marginTop: 11,
-    paddingHorizontal: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 14,
-    backgroundColor: COLORS.background,
-    color: COLORS.text,
-    fontSize: 15,
-  },
-  answerRow: { flexDirection: 'row', gap: 9, marginTop: 12 },
-  answerButton: {
-    minHeight: 43,
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#F0CBC6',
-    borderRadius: 14,
-    backgroundColor: COLORS.background,
-  },
-  answerButtonSelected: { borderColor: COLORS.brand, backgroundColor: COLORS.brand },
-  answerButtonPressed: { opacity: 0.75 },
-  answerButtonText: { color: COLORS.text, fontSize: 14, fontWeight: '700' },
-  answerButtonTextSelected: { color: COLORS.white, fontWeight: '800' },
-  submitButton: {
-    minHeight: 52,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 7,
-    borderRadius: 17,
-    backgroundColor: COLORS.brand,
-  },
-  submitButtonPressed: {
-    backgroundColor: COLORS.brandPressed,
-    transform: [{ scale: 0.99 }],
-  },
-  submitButtonText: { color: COLORS.white, fontSize: 15, fontWeight: '800' },
-  noticeCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 9,
-    padding: 14,
-    borderRadius: 16,
-    backgroundColor: COLORS.softRed,
-  },
-  noticeText: { flex: 1, color: COLORS.muted, fontSize: 12, lineHeight: 18 },
+  flex: { flex: 1 }, safeArea: { flex: 1, backgroundColor: '#FFF9F2' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F0E2DC' },
+  headerTitle: { flex: 1, textAlign: 'center', color: '#372E2E', fontSize: 17, fontWeight: '800' },
+  iconButton: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
+  scroll: { flexGrow: 1, padding: 20, paddingBottom: 32 },
+  content: { width: '100%', maxWidth: 620, alignSelf: 'center', gap: 16 },
+  card: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#F0E2DC', borderRadius: 22, padding: 20, gap: 18 },
+  notice: { backgroundColor: '#FDE8E8', borderRadius: 18, padding: 18, gap: 10 },
+  title: { color: '#372E2E', fontSize: 25, lineHeight: 33, fontWeight: '800' },
+  subheading: { color: '#372E2E', fontSize: 16, lineHeight: 23, fontWeight: '700' },
+  eyebrow: { color: '#B52E2E', fontSize: 15, fontWeight: '800' },
+  body: { color: '#514644', fontSize: 16, lineHeight: 24 },
+  hint: { color: '#766A68', fontSize: 13, lineHeight: 20 },
+  reason: { color: '#514644', fontSize: 16, lineHeight: 24, borderLeftWidth: 3, borderLeftColor: '#D93A3A', paddingLeft: 12 },
+  progress: { height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: '#F0E2DC' },
+  progressFill: { height: 8, backgroundColor: '#D93A3A' },
+  input: { minHeight: 56, borderWidth: 1, borderColor: '#D4C4BE', borderRadius: 14, padding: 14, fontSize: 20, color: '#372E2E' },
+  option: { minHeight: 56, justifyContent: 'center', padding: 16, borderWidth: 1, borderColor: '#D4C4BE', borderRadius: 14 },
+  selected: { backgroundColor: '#D93A3A', borderColor: '#D93A3A' }, selectedText: { color: '#FFFFFF' },
+  button: { minHeight: 52, padding: 14, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D93A3A' },
+  buttonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', textAlign: 'center' },
+  secondary: { backgroundColor: '#FFF9F2', borderWidth: 1, borderColor: '#D93A3A' }, secondaryText: { color: '#B52E2E' },
+  disabled: { opacity: 0.45 }, pressed: { opacity: 0.75 },
+  reviewRow: { gap: 6, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: '#F0E2DC' },
 });

@@ -1,16 +1,11 @@
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
-import {
-  FlatList,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { NotificationBell } from '@/components/notification-bell';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useRef, useState } from 'react';
+import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
+import { useAuth } from '@/contexts/auth-context';
+import { errorMessage } from '@/services/api';
+import { DONATION_STATUS, DONATION_STATUS_DESCRIPTION, type DonationPage, type DonationStatus } from '@/services/donations';
 const COLORS = {
   background: '#FFF9F2',
   brand: '#D93A3A',
@@ -22,223 +17,62 @@ const COLORS = {
   softRed: '#FDE8E8',
 };
 
-type ActivityStatus = 'PENDING' | 'FOR_VERIFICATION' | 'COMPLETED' | 'CANCELLED';
-type ActivityFilter = 'ALL' | 'PENDING' | 'FOR_VERIFICATION' | 'COMPLETED';
 
-type ActivityRecord = {
-  id: string;
-  title: string;
-  organizer: string;
-  date: string;
-  location?: string;
-  status: ActivityStatus;
-  reward: string;
-};
-
-const ACTIVITIES: readonly ActivityRecord[] = [
-  {
-    id: '1',
-    title: 'Community Bloodletting Activity',
-    organizer: 'LifeFlow',
-    date: 'September 12, 2026',
-    location: 'Sample Community Center',
-    status: 'PENDING',
-    reward: '550 Blood Points',
-  },
-  {
-    id: '2',
-    title: 'Philippine Red Cross Donation',
-    organizer: 'Philippine Red Cross',
-    date: 'June 10, 2026',
-    location: 'Philippine Red Cross Blood Center',
-    status: 'COMPLETED',
-    reward: '350 Blood Points',
-  },
-  {
-    id: '3',
-    title: 'University Blood Donation Day',
-    organizer: 'LifeFlow',
-    date: 'August 22, 2026',
-    location: 'University Activity Hall',
-    status: 'FOR_VERIFICATION',
-    reward: '450 Blood Points',
-  },
-  {
-    id: '4',
-    title: 'Community Mobile Blood Drive',
-    organizer: 'LifeFlow',
-    date: 'May 18, 2026',
-    status: 'CANCELLED',
-    reward: 'Not awarded',
-  },
-];
-
-const FILTERS: readonly { label: string; value: ActivityFilter }[] = [
-  { label: 'All', value: 'ALL' },
-  { label: 'Pending', value: 'PENDING' },
-  { label: 'For Verification', value: 'FOR_VERIFICATION' },
-  { label: 'Completed', value: 'COMPLETED' },
-];
-
-const STATUS_STYLES: Record<
-  ActivityStatus,
-  { background: string; color: string; label: string }
-> = {
-  PENDING: { background: '#FFF1D6', color: '#A76500', label: 'Pending' },
-  FOR_VERIFICATION: { background: '#E6F0FF', color: '#3469A5', label: 'For Verification' },
-  COMPLETED: { background: '#E2F5E9', color: '#287A47', label: 'Completed' },
-  CANCELLED: { background: '#F1ECEA', color: '#8A5F59', label: 'Cancelled' },
-};
-
-type ActivityCardProps = {
-  activity: ActivityRecord;
-  onView: () => void;
-};
-
-function ActivityCard({ activity, onView }: ActivityCardProps) {
-  const statusStyle = STATUS_STYLES[activity.status];
-  const rewardLabel =
-    activity.status === 'COMPLETED'
-      ? 'Earned reward'
-      : activity.status === 'CANCELLED'
-        ? 'Reward'
-        : 'Expected reward';
-
-  return (
-    <View style={styles.card}>
-      <View style={styles.cardHeader}>
-        <View style={styles.cardHeading}>
-          <Text style={styles.cardTitle}>{activity.title}</Text>
-          <Text style={styles.organizer}>{activity.organizer}</Text>
-        </View>
-        <View style={[styles.statusBadge, { backgroundColor: statusStyle.background }]}>
-          <Text style={[styles.statusText, { color: statusStyle.color }]}>{statusStyle.label}</Text>
-        </View>
-      </View>
-
-      <View style={styles.details}>
-        <View style={styles.detailRow}>
-          <MaterialIcons name="event" color={COLORS.brand} size={18} />
-          <Text style={styles.detailText}>{activity.date}</Text>
-        </View>
-        {activity.location ? (
-          <View style={styles.detailRow}>
-            <MaterialIcons name="location-on" color={COLORS.brand} size={18} />
-            <Text style={styles.detailText}>{activity.location}</Text>
-          </View>
-        ) : null}
-      </View>
-
-      <View style={styles.cardFooter}>
-        <View style={styles.rewardBlock}>
-          <Text style={styles.rewardLabel}>{rewardLabel}</Text>
-          <Text
-            style={[
-              styles.rewardValue,
-              activity.status === 'CANCELLED' && styles.cancelledReward,
-            ]}>
-            {activity.reward}
-          </Text>
-        </View>
-        <Pressable
-          accessibilityLabel={`View ${activity.title}`}
-          accessibilityRole="button"
-          onPress={onView}
-          style={({ pressed }) => [styles.viewButton, pressed && styles.viewButtonPressed]}>
-          <Text style={styles.viewButtonText}>View</Text>
-          <MaterialIcons name="chevron-right" color={COLORS.white} size={19} />
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
+// ========================================
+// DONATION HISTORY STATE
+// Focus/filter changes cancel stale responses; loading blocks duplicate page requests.
+// ========================================
 export default function ActivityScreen() {
   const router = useRouter();
-  const [selectedFilter, setSelectedFilter] = useState<ActivityFilter>('ALL');
-
-  const filteredActivities = useMemo(
-    () =>
-      selectedFilter === 'ALL'
-        ? ACTIVITIES
-        : ACTIVITIES.filter((activity) => activity.status === selectedFilter),
-    [selectedFilter],
-  );
-
-  return (
-    <SafeAreaView edges={['top']} style={styles.safeArea}>
-      <View style={styles.fixedHeader}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Activity</Text>
-          <Pressable
-            accessibilityLabel="Open notifications"
-            accessibilityRole="button"
-            hitSlop={8}
-            onPress={() => router.push('/notifications')}
-            style={({ pressed }) => [styles.bellButton, pressed && styles.headerButtonPressed]}>
-            <MaterialIcons name="notifications-none" color={COLORS.text} size={25} />
-            <View style={styles.notificationDot} />
-          </Pressable>
-        </View>
-      </View>
-
-      <FlatList
-        contentContainerStyle={styles.listContent}
-        data={filteredActivities}
-        keyExtractor={(activity) => activity.id}
-        ListHeaderComponent={
-          <View style={styles.listHeader}>
-            <Text style={styles.subtitle}>Track your donation activities</Text>
-
-            <ScrollView
-              contentContainerStyle={styles.filters}
-              horizontal
-              showsHorizontalScrollIndicator={false}>
-              {FILTERS.map((filter) => {
-                const selected = filter.value === selectedFilter;
-
-                return (
-                  <Pressable
-                    accessibilityRole="button"
-                    key={filter.value}
-                    onPress={() => setSelectedFilter(filter.value)}
-                    style={({ pressed }) => [
-                      styles.filterChip,
-                      selected && styles.filterChipSelected,
-                      pressed && styles.filterChipPressed,
-                    ]}>
-                    <Text style={[styles.filterText, selected && styles.filterTextSelected]}>
-                      {filter.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-
-            <View style={styles.historyHeading}>
-              <Text style={styles.historyTitle}>Your participation</Text>
-              <Text style={styles.historyCount}>{filteredActivities.length}</Text>
-            </View>
-          </View>
-        }
-        renderItem={({ item }) => (
-          <ActivityCard
-            activity={item}
-            onView={() =>
-              router.push({
-                pathname: '/activity/[id]',
-                params: { id: item.id },
-              })
-            }
-          />
-        )}
-        ItemSeparatorComponent={() => <View style={styles.cardSeparator} />}
-        showsVerticalScrollIndicator={false}
-      />
-    </SafeAreaView>
-  );
+  const { donationHistory } = useAuth();
+  const [status, setStatus] = useState<DonationStatus | undefined>();
+  const [page, setPage] = useState<DonationPage | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const generation = useRef(0);
+  const lock = useRef(false);
+  const [refresh, setRefresh] = useState(0);
+  useFocusEffect(useCallback(() => {
+    // Retry changes restart the focused history request.
+    void refresh;
+    const version = ++generation.current;
+    lock.current = true; setLoading(true); setError(''); setPage(null);
+    donationHistory(1, status).then(data => { if (generation.current === version) setPage(data); })
+      .catch(e => { if (generation.current === version) setError(errorMessage(e)); })
+      .finally(() => { if (generation.current === version) { lock.current = false; setLoading(false); } });
+    return () => { generation.current++; };
+  }, [donationHistory, status, refresh]));
+  const more = async () => {
+    if (lock.current || !page || page.current_page >= page.last_page) return;
+    const version = generation.current;
+    lock.current = true; setLoading(true); setError('');
+    try { const data = await donationHistory(page.current_page + 1, status);
+      if (version === generation.current) setPage({ ...data, data: [...page.data, ...data.data] });
+    } catch(e) { if (version === generation.current) setError(errorMessage(e)); }
+    finally { if (version === generation.current) { lock.current = false; setLoading(false); } }
+  };
+  return <SafeAreaView edges={['top']} style={styles.safeArea}>
+    <View style={styles.fixedHeader}><View style={styles.header}><Text style={styles.headerTitle}>Activity</Text>
+      {/* Shared backend unread count refreshes on focus. */}<NotificationBell />
+    </View></View>
+    <FlatList data={page?.data || []} keyExtractor={item => String(item.id)} contentContainerStyle={styles.listContent}
+      ListHeaderComponent={<View style={styles.listHeader}>
+        <Text style={styles.subtitle}>Your donation activities</Text>
+        <ScrollView horizontal contentContainerStyle={styles.filters}>{([undefined, 'pending', 'for_verification', 'needs_revision', 'completed', 'rejected', 'cancelled'] as const).map(value => <Pressable key={value || 'all'} onPress={() => setStatus(value)} style={[styles.filterChip, value === status && styles.filterChipSelected]}><Text style={[styles.filterText, value === status && styles.filterTextSelected]}>{value ? DONATION_STATUS[value] : 'All'}</Text></Pressable>)}</ScrollView>
+        <Text style={styles.historyTitle}>Joined activities {page ? '(' + page.total + ')' : ''}</Text>
+        {error ? <Pressable onPress={() => setRefresh(n => n + 1)}><Text accessibilityRole="alert" style={styles.subtitle}>{error} Tap to retry.</Text></Pressable> : null}
+      </View>}
+      ListEmptyComponent={<Text style={styles.subtitle}>{loading ? 'Loading records…' : error ? '' : 'No joined activities yet.'}</Text>}
+      renderItem={({item}) => <View style={styles.card}>
+        <Text style={styles.cardTitle}>{item.opportunity.title}</Text>
+        <Text style={styles.detailText}>{item.opportunity.event_date || 'Confirm arrangements with the chapter'}</Text><Text style={styles.organizer}>{item.opportunity.location}</Text>
+        <View style={styles.cardFooter}><View style={styles.statusBlock}><Text style={styles.statusText}>{DONATION_STATUS[item.status]}</Text><Text style={styles.rewardLabel}>{DONATION_STATUS_DESCRIPTION[item.status]}</Text></View>
+          <Pressable style={styles.viewButton} onPress={() => router.push({ pathname: '/activity/[id]', params: { id: String(item.id) } })}><Text style={styles.viewButtonText}>View</Text></Pressable></View>
+      </View>}
+      ItemSeparatorComponent={() => <View style={styles.cardSeparator}/>}
+      ListFooterComponent={page && page.current_page < page.last_page ? <Pressable disabled={loading} onPress={more} style={styles.viewButton}><Text style={styles.viewButtonText}>{loading ? 'Loading…' : 'Load more'}</Text></Pressable> : null}/>
+  </SafeAreaView>;
 }
-
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },
   fixedHeader: {
@@ -341,7 +175,8 @@ const styles = StyleSheet.create({
   cardTitle: { color: COLORS.text, fontSize: 17, fontWeight: '800', lineHeight: 23 },
   organizer: { marginTop: 4, color: COLORS.muted, fontSize: 13, fontWeight: '600' },
   statusBadge: { paddingHorizontal: 9, paddingVertical: 6, borderRadius: 12 },
-  statusText: { fontSize: 10, fontWeight: '800', textTransform: 'uppercase' },
+  statusText: { color: COLORS.text, fontSize: 12, lineHeight: 18, fontWeight: '800', flexShrink: 1 },
+  statusBlock: { flex: 1, minWidth: 0, gap: 4 },
   details: { gap: 7, marginTop: 15 },
   detailRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   detailText: { flex: 1, color: COLORS.muted, fontSize: 13, lineHeight: 19 },
@@ -361,6 +196,7 @@ const styles = StyleSheet.create({
   cancelledReward: { color: COLORS.muted },
   viewButton: {
     minHeight: 42,
+    flexShrink: 0,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',

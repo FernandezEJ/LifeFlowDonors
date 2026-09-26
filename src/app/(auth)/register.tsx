@@ -1,6 +1,11 @@
+import { useAuth } from '@/contexts/auth-context';
+import { errorMessage } from '@/services/api';
+import { RegistrationLegal, PRESCREENING_ACKNOWLEDGEMENT } from '@/components/registration-legal';
+import BirthDatePicker from '@/components/birth-date-picker';
+import { authApi, formErrors } from '@/services/auth';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useRouter } from 'expo-router';
-import { type ReactNode, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -33,6 +38,9 @@ type BloodType = (typeof BLOOD_TYPES)[number] | '';
 type Gender = (typeof GENDERS)[number] | '';
 
 type FormState = {
+  acceptedTerms: boolean;
+  acknowledgedPrivacy: boolean;
+  acknowledgedPrescreening: boolean;
   firstName: string;
   middleName: string;
   lastName: string;
@@ -48,6 +56,7 @@ type FormState = {
 type FormErrors = Partial<Record<keyof FormState, string>>;
 
 const INITIAL_FORM: FormState = {
+  acceptedTerms: false, acknowledgedPrivacy: false, acknowledgedPrescreening: false,
   firstName: '',
   middleName: '',
   lastName: '',
@@ -59,20 +68,6 @@ const INITIAL_FORM: FormState = {
   gender: '',
   bloodType: '',
 };
-
-function formatBirthDate(value: string) {
-  const digits = value.replace(/\D/g, '').slice(0, 8);
-
-  if (digits.length <= 2) {
-    return digits;
-  }
-
-  if (digits.length <= 4) {
-    return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-  }
-
-  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
-}
 
 function isValidBirthDate(value: string) {
   if (!/^\d{2}\/\d{2}\/\d{4}$/.test(value)) {
@@ -104,12 +99,60 @@ function FormField({ children, error, label }: FormFieldProps) {
 
 export default function RegisterScreen() {
   const router = useRouter();
+  // ========================================
+  // REGISTRATION STATE
+  // Shares the root session and preserves field-level feedback.
+  // ========================================
+  const { register, verifyRegistration, busy: authBusy } = useAuth();
+  const [requestError, setRequestError] = useState('');
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const [errors, setErrors] = useState<FormErrors>({});
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
+  const [legalDocument, setLegalDocument] = useState<'terms' | 'privacy' | null>(null);
+  const [pending, setPending] = useState<string | null>(null);
+  const [code, setCode] = useState('');
+  const [working, setWorking] = useState(false);
+  const [resendSeconds, setResendSeconds] = useState(0);
+  const lock = useRef(false), generation = useRef(0), resendDeadline = useRef(0);
+  const busy = authBusy || working;
+  useFocusEffect(useCallback(() => () => {
+    generation.current++; lock.current = false; setWorking(false);
+    setPending(null); setCode(''); setLegalDocument(null);
+    setForm(current => ({ ...current, password: '', confirmPassword: '', acceptedTerms: false, acknowledgedPrivacy: false, acknowledgedPrescreening: false }));
+  }, []));
+  useEffect(() => {
+    const timer = setInterval(() => setResendSeconds(Math.max(0, Math.ceil((resendDeadline.current - performance.now()) / 1000))), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const startResendWait = () => { resendDeadline.current = performance.now() + 60000; setResendSeconds(60); };
+  const changeEmail = () => {
+    if (lock.current) return;
+    generation.current++; setPending(null); setCode(''); setRequestError(''); setErrors({});
+    setForm(current => ({ ...current, password: '', confirmPassword: '' }));
+  };
+  const verify = async () => {
+    if (lock.current || !pending) return;
+    if (!/^\d{6}$/.test(code)) { setRequestError('Enter the 6-digit code.'); return; }
+    lock.current = true; setWorking(true); setRequestError('');
+    const request = generation.current;
+    try { await verifyRegistration(pending, code); }
+    catch (error) {
+      if (request === generation.current) setRequestError(errorMessage(error));
+    } finally { if (request === generation.current) { lock.current = false; setWorking(false); } }
+  };
+  const resend = async () => {
+    if (lock.current || !pending || performance.now() < resendDeadline.current) return;
+    lock.current = true; setWorking(true); setRequestError('');
+    const request = generation.current;
+    try { await authApi.resendRegistration(pending); if (request === generation.current) { setCode(''); startResendWait(); } }
+    catch (error) { if (request === generation.current) setRequestError(errorMessage(error)); }
+    finally { if (request === generation.current) { lock.current = false; setWorking(false); } }
+  };
+
   const updateField = <K extends keyof FormState>(field: K, value: FormState[K]) => {
+    if (lock.current) return;
     setForm((current) => ({ ...current, [field]: value }));
 
     if (errors[field]) {
@@ -117,7 +160,7 @@ export default function RegisterScreen() {
     }
   };
 
-  const validateForm = () => {
+  const formValidation = () => {
     const nextErrors: FormErrors = {};
     const normalizedMobile = form.mobileNumber.replace(/[\s()-]/g, '');
 
@@ -167,23 +210,80 @@ export default function RegisterScreen() {
       nextErrors.bloodType = 'Select your blood type.';
     }
 
-    setErrors(nextErrors);
-    return Object.keys(nextErrors).length === 0;
-  };
-
-  const handleCreateAccount = () => {
-    if (!validateForm()) {
-      return;
+    if (form.firstName.trim().length > 80) nextErrors.firstName = 'Use at most 80 characters.';
+    if (form.middleName.trim().length > 80) nextErrors.middleName = 'Use at most 80 characters.';
+    if (form.lastName.trim().length > 80) nextErrors.lastName = 'Use at most 80 characters.';
+    if (form.email.trim().length > 255) nextErrors.email = 'Use at most 255 characters.';
+    const passwordBytes = Array.from(form.password).reduce((total, character) => { const point = character.codePointAt(0)!; return total + (point <= 127 ? 1 : point <= 2047 ? 2 : point <= 65535 ? 3 : 4); }, 0);
+    if (passwordBytes > 72 || form.password.includes('\0')) nextErrors.password = 'Use at most 72 bytes without null characters.';
+    if (isValidBirthDate(form.birthDate)) {
+      const [month, day, year] = form.birthDate.split('/').map(Number);
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const birthday = new Date(); birthday.setHours(0, 0, 0, 0); birthday.setFullYear(year, month - 1, day);
+      if (year < 1 || birthday >= today) nextErrors.birthDate = 'Choose a birth date before today.';
     }
-
-    // TODO: Call the Laravel registration API here when backend integration begins.
-    // Laravel integration requirements:
-    // - Email and mobile number uniqueness will be validated by the Laravel backend.
-    // - Registration must be rejected by the backend if either value already exists.
-    // - Laravel must hash the password before storing it.
-    // - The frontend must never decide email or mobile number uniqueness by itself.
-    router.replace('/(tabs)');
+    if (!form.acceptedTerms) nextErrors.acceptedTerms = 'Accept the Terms and Conditions.';
+    if (!form.acknowledgedPrivacy) nextErrors.acknowledgedPrivacy = 'Acknowledge the Privacy Policy.';
+    if (!form.acknowledgedPrescreening) nextErrors.acknowledgedPrescreening = 'Acknowledge the pre-screening limitation.';
+    return nextErrors;
   };
+
+  // ========================================
+  // LARAVEL REGISTRATION
+  // Requires complete form and consent before requesting the email code.
+  // ========================================
+  const handleCreateAccount = async () => {
+    if (busy || lock.current) return;
+    const validation = formValidation(); setErrors(validation);
+    if (Object.keys(validation).length) return;
+    lock.current = true; setWorking(true); setRequestError('');
+    const request = generation.current;
+    try {
+      const response = await register(form);
+      if (request !== generation.current) return;
+      setPending(response.pending_token); setCode(''); startResendWait();
+      setForm(current => ({ ...current, password: '', confirmPassword: '' }));
+      setShowPassword(false); setShowConfirmPassword(false);
+    } catch (error) {
+      if (request === generation.current) { setErrors(formErrors(error)); setRequestError(errorMessage(error)); }
+    } finally { if (request === generation.current) { lock.current = false; setWorking(false); } }
+  };
+
+  const canCreate = Object.keys(formValidation()).length === 0;
+
+  if (pending) return <SafeAreaView style={styles.safeArea}>
+    <View style={styles.decorativeCircle} />
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardView}>
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        <View style={styles.content}>
+          <View style={styles.header}>
+            <Text style={styles.title}>Verify your email</Text>
+            <Text style={styles.subtitle}>We sent a 6-digit verification code to your email.</Text>
+          </View>
+          <View style={styles.form}>
+            <FormField label="6-digit code">
+              <TextInput accessibilityLabel="6-digit code" keyboardType="number-pad" autoComplete="one-time-code"
+                maxLength={6} editable={!busy} value={code} onChangeText={setCode} style={styles.input} />
+            </FormField>
+            <Text style={styles.subtitle}>Code expires in 15 minutes.</Text>
+          </View>
+          <View style={styles.actions}>
+            {requestError ? <Text accessibilityRole="alert" style={styles.errorText}>{requestError}</Text> : null}
+            <Pressable accessibilityRole="button" disabled={busy} onPress={verify} style={styles.primaryButton}>
+              <Text style={styles.primaryButtonText}>{busy ? 'Please wait...' : 'Verify & Create Account'}</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" disabled={busy || resendSeconds > 0} onPress={resend} style={{ padding: 16 }}>
+              <Text style={styles.loginText}>{resendSeconds > 0 ? 'Resend code in ' + resendSeconds + 's' : 'Resend code'}</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" disabled={busy} onPress={changeEmail} style={{ padding: 16 }}>
+              <Text style={styles.loginText}>Change email</Text>
+            </Pressable>
+          </View>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  </SafeAreaView>;
+
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -224,7 +324,7 @@ export default function RegisterScreen() {
                 />
               </FormField>
 
-              <FormField label="Middle Name">
+              <FormField label="Middle Name" error={errors.middleName}>
                 <TextInput
                   autoCapitalize="words"
                   autoComplete="name-middle"
@@ -327,15 +427,7 @@ export default function RegisterScreen() {
               </FormField>
 
               <FormField label="Birth Date" error={errors.birthDate}>
-                <TextInput
-                  keyboardType="number-pad"
-                  maxLength={10}
-                  onChangeText={(value) => updateField('birthDate', formatBirthDate(value))}
-                  placeholder="MM/DD/YYYY"
-                  placeholderTextColor={COLORS.muted}
-                  style={[styles.input, errors.birthDate && styles.inputError]}
-                  value={form.birthDate}
-                />
+                <BirthDatePicker value={form.birthDate} disabled={busy} onChange={value => updateField('birthDate', value)} />
               </FormField>
 
               <FormField label="Gender" error={errors.gender}>
@@ -399,15 +491,51 @@ export default function RegisterScreen() {
               </FormField>
             </View>
 
-            <View style={styles.actions}>
+
+            {/* Links are outside checkbox press targets, so review never toggles consent. */}
+            <View style={styles.consentGroup}>
+              {([
+                ['acceptedTerms', 'I agree to the Terms and Conditions', 'terms'],
+                ['acknowledgedPrivacy', 'I acknowledge the Privacy Policy', 'privacy'],
+                ['acknowledgedPrescreening', PRESCREENING_ACKNOWLEDGEMENT, null],
+              ] as const).map(([field, label, document]) => <View key={field}>
+                <View style={styles.consentRow}>
+                  <Pressable accessibilityRole="checkbox" accessibilityLabel={label} accessibilityState={{ checked: form[field], disabled: busy }}
+                    disabled={busy} onPress={() => updateField(field, !form[field])} style={styles.consentCheckbox}>
+                    <MaterialIcons name={form[field] ? 'check-box' : 'check-box-outline-blank'} color={COLORS.brand} size={24} />
+                  </Pressable>
+                  <Text style={styles.consentText}>
+                    {document ? <>
+                      {document === 'terms' ? 'I agree to the ' : 'I acknowledge the '}
+                      <Text accessibilityRole="link" accessibilityLabel={document === 'terms' ? 'Terms and Conditions' : 'Privacy Policy'}
+                        onPress={() => { if (!busy) setLegalDocument(document); }} style={styles.consentLink}>
+                        {document === 'terms' ? 'Terms and Conditions' : 'Privacy Policy'}
+                      </Text>
+                    </> : label}
+                  </Text>
+                </View>
+                {errors[field] ? <Text style={styles.errorText}>{errors[field]}</Text> : null}
+              </View>)}
+            </View>
+            <RegistrationLegal document={legalDocument} onClose={() => setLegalDocument(null)}
+              onAgree={document => {
+                updateField(document === 'terms' ? 'acceptedTerms' : 'acknowledgedPrivacy', true);
+                setLegalDocument(null);
+              }} />
+
+            <View style={[styles.actions, styles.consentActions]}>
+              {requestError ? <Text accessibilityRole="alert" style={styles.errorText}>{requestError}</Text> : null}
               <Pressable
                 accessibilityRole="button"
+                disabled={busy || !canCreate}
+                accessibilityState={{ disabled: busy || !canCreate, busy }}
                 onPress={handleCreateAccount}
                 style={({ pressed }) => [
                   styles.primaryButton,
+                  (busy || !canCreate) && { opacity: 0.5 },
                   pressed && styles.primaryButtonPressed,
                 ]}>
-                <Text style={styles.primaryButtonText}>Create Account</Text>
+                <Text style={styles.primaryButtonText}>{busy ? 'Sending code...' : 'Create Account'}</Text>
               </Pressable>
 
               <View style={styles.loginRow}>
@@ -574,6 +702,12 @@ const styles = StyleSheet.create({
     color: COLORS.brand,
     fontWeight: '800',
   },
+  consentGroup: { marginTop: 16, gap: 0 },
+  consentRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 4 },
+  consentCheckbox: { width: 44, minHeight: 44, alignItems: 'center', paddingTop: 9 },
+  consentText: { flex: 1, paddingVertical: 10, fontSize: 15, lineHeight: 22, color: COLORS.text },
+  consentLink: { color: COLORS.brand, fontWeight: '700', textDecorationLine: 'underline' },
+  consentActions: { marginTop: 12, gap: 10 },
   actions: {
     gap: 16,
     marginTop: 30,

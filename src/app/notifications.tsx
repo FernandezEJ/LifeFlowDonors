@@ -1,291 +1,130 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { Stack, useRouter } from 'expo-router';
-import type { ComponentProps } from 'react';
-import { useMemo, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useRef, useState } from 'react';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAuth } from '@/contexts/auth-context';
+import { useNotifications } from '@/contexts/notification-context';
+import { errorMessage } from '@/services/api';
+import { notificationDestination, type ImportantNotification, type NotificationPage } from '@/services/notifications';
 
 const COLORS = {
-  background: '#FFF9F2',
-  brand: '#D93A3A',
-  text: '#372E2E',
-  muted: '#766A68',
-  border: '#F0E2DC',
-  white: '#FFFFFF',
-  softRed: '#FDE8E8',
-  pinned: '#FFF0ED',
+  background: '#FFF9F2', brand: '#D93A3A', text: '#372E2E', muted: '#766A68',
+  border: '#F0E2DC', white: '#FFFFFF', softRed: '#FDE8E8', pinned: '#FFF0ED',
 };
 
-type MaterialIconName = ComponentProps<typeof MaterialIcons>['name'];
-type NotificationFilter = 'ALL' | 'UNREAD';
-type NotificationType =
-  | 'announcement'
-  | 'activity'
-  | 'verification'
-  | 'points'
-  | 'voucher'
-  | 'status'
-  | 'achievement';
-
-type NotificationItem = {
-  id: string;
-  type: NotificationType;
-  title: string;
-  message: string;
-  date: string;
-  read: boolean;
-  pinned?: boolean;
-  sortOrder: number;
-};
-
-const TYPE_ICONS: Record<NotificationType, MaterialIconName> = {
-  announcement: 'campaign',
-  activity: 'event',
-  verification: 'verified',
-  points: 'stars',
-  voucher: 'confirmation-number',
-  status: 'monitor-heart',
-  achievement: 'workspace-premium',
-};
-
-const INITIAL_NOTIFICATIONS: readonly NotificationItem[] = [
-  {
-    id: '1',
-    type: 'announcement',
-    title: 'Community Bloodletting Activity',
-    message: 'LifeFlow Admin posted a new blood donation activity. Tap to view details.',
-    date: 'Today',
-    read: false,
-    pinned: true,
-    sortOrder: 7,
-  },
-  {
-    id: '2',
-    type: 'verification',
-    title: 'Donation Verified',
-    message: 'Your donation proof has been verified. 350 Blood Points were added.',
-    date: 'Today',
-    read: false,
-    sortOrder: 6,
-  },
-  {
-    id: '3',
-    type: 'activity',
-    title: 'Donation Activity Reminder',
-    message: 'Your Community Bloodletting Activity is coming up soon.',
-    date: 'Today',
-    read: true,
-    sortOrder: 5,
-  },
-  {
-    id: '4',
-    type: 'points',
-    title: 'Blood Points Added',
-    message: 'Your latest verified donation earned 350 Blood Points.',
-    date: 'Yesterday',
-    read: true,
-    sortOrder: 4,
-  },
-  {
-    id: '5',
-    type: 'status',
-    title: 'Status Updated',
-    message: 'Your latest evaluation result is now available.',
-    date: 'Yesterday',
-    read: true,
-    sortOrder: 3,
-  },
-  {
-    id: '6',
-    type: 'voucher',
-    title: 'Voucher Expired',
-    message: 'Your 5-minute voucher activation window has ended.',
-    date: 'Yesterday',
-    read: true,
-    sortOrder: 2,
-  },
-  {
-    id: '7',
-    type: 'achievement',
-    title: 'Silver Donor Unlocked',
-    message: 'You reached the Silver Donor milestone.',
-    date: 'September 3, 2026',
-    read: true,
-    sortOrder: 1,
-  },
-];
-
+// ========================================
+// SERVER-OWNED NOTIFICATION HISTORY
+// Retains the existing cards and filters, with real pagination/read state.
+// Focus/filter changes discard stale responses and reload the owned inbox.
+// ========================================
 export default function NotificationsScreen() {
   const router = useRouter();
-  const [notifications, setNotifications] = useState<NotificationItem[]>([
-    ...INITIAL_NOTIFICATIONS,
-  ]);
-  const [selectedFilter, setSelectedFilter] = useState<NotificationFilter>('ALL');
-  const unreadCount = notifications.filter((notification) => !notification.read).length;
+  const { listNotifications, readNotification, readAllNotifications } = useAuth();
+  const { unreadCount, refreshCount, enablePush, pushStatus } = useNotifications();
+  const [unreadOnly, setUnreadOnly] = useState(false);
+  const [page, setPage] = useState<NotificationPage | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const generation = useRef(0);
+  const loadingPage = useRef(false);
+  const actionLock = useRef(false);
+  const load = useCallback(async (pageNumber = 1, append = false) => {
+    if (append && loadingPage.current) return;
+    const current = append ? generation.current : ++generation.current;
+    loadingPage.current = true;
+    setLoading(true); setError('');
+    try {
+      const result = await listNotifications(pageNumber, unreadOnly);
+      if (generation.current !== current) return;
+      setPage(previous => append && previous
+        ? { ...result, data: [...previous.data, ...result.data.filter(item => !previous.data.some(old => old.id === item.id))] }
+        : result);
+      void refreshCount(true);
+    } catch (e) { if (generation.current === current) setError(errorMessage(e)); }
+    finally { if (generation.current === current) { setLoading(false); loadingPage.current = false; } }
+  }, [listNotifications, unreadOnly, refreshCount]);
+  useFocusEffect(useCallback(() => {
+    void load();
+    return () => { generation.current++; loadingPage.current = false; };
+  }, [load]));
 
-  const visibleNotifications = useMemo(
-    () =>
-      notifications
-        .filter((notification) => selectedFilter === 'ALL' || !notification.read)
-        .sort(
-          (first, second) =>
-            Number(Boolean(second.pinned)) - Number(Boolean(first.pinned)) ||
-            second.sortOrder - first.sortOrder,
-        ),
-    [notifications, selectedFilter],
-  );
-
-  const markAllRead = () => {
-    if (unreadCount === 0) return;
-    setNotifications((current) =>
-      current.map((notification) => ({ ...notification, read: true })),
-    );
+  // ========================================
+  // CONFIRMED READ ACTIONS AND AUTHENTICATED NAVIGATION
+  // Do not pretend a read succeeded during a network failure.
+  // ========================================
+  const act = async (operation: () => Promise<void>) => {
+    if (actionLock.current) return;
+    actionLock.current = true; setBusy(true); setError('');
+    try { await operation(); } catch (e) { setError(errorMessage(e)); }
+    finally { actionLock.current = false; setBusy(false); }
   };
+  const openNotification = (item: ImportantNotification) => void act(async () => {
+    const result = await readNotification(item.id);
+    setPage(previous => previous ? { ...previous, data: previous.data.map(row => row.id === item.id ? result.notification : row) } : previous);
+    await refreshCount(true);
+    const destination = notificationDestination(result.notification);
+    if (destination) router.push(destination);
+  });
+  const markAllRead = () => void act(async () => {
+    await readAllNotifications(); await refreshCount(true); await load();
+  });
 
-  const openNotification = (notification: NotificationItem) => {
-    setNotifications((current) =>
-      current.map((item) => (item.id === notification.id ? { ...item, read: true } : item)),
-    );
-
-    switch (notification.type) {
-      case 'announcement':
-        // TODO: Open the announcement supplied by the backend when destination data is available.
-        Alert.alert(notification.title, 'Announcement details will be connected later.');
-        break;
-      case 'activity':
-        router.push({ pathname: '/activity/[id]', params: { id: '1' } });
-        break;
-      case 'verification':
-        router.push({ pathname: '/activity/[id]', params: { id: '2' } });
-        break;
-      case 'points':
-        router.navigate('/(tabs)/points');
-        break;
-      case 'voucher':
-        router.navigate('/my-vouchers');
-        break;
-      case 'status':
-        router.navigate('/(tabs)/status');
-        break;
-      case 'achievement':
-        router.navigate('/(tabs)/profile');
-        break;
-    }
-  };
-
-  return (
-    <>
-      <Stack.Screen options={{ headerShown: false }} />
-      <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
-        <View style={styles.fixedHeader}>
-          <View style={styles.header}>
-            <Pressable
-              accessibilityLabel="Go back"
-              accessibilityRole="button"
-              hitSlop={8}
-              onPress={() => router.back()}
-              style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}>
-              <MaterialIcons name="arrow-back" color={COLORS.text} size={23} />
-            </Pressable>
-            <Text style={styles.headerTitle}>Notifications</Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ disabled: unreadCount === 0 }}
-              disabled={unreadCount === 0}
-              hitSlop={7}
-              onPress={markAllRead}
-              style={({ pressed }) => [styles.markAllButton, pressed && styles.pressed]}>
-              <Text style={[styles.markAllText, unreadCount === 0 && styles.markAllTextDisabled]}>
-                Mark all read
-              </Text>
-            </Pressable>
-          </View>
-        </View>
-
-        <FlatList
-          contentContainerStyle={styles.listContent}
-          data={visibleNotifications}
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
-          keyExtractor={(notification) => notification.id}
-          ListHeaderComponent={
-            <View style={styles.filterBar}>
-              {(['ALL', 'UNREAD'] as const).map((filter) => {
-                const selected = selectedFilter === filter;
-                const label = filter === 'ALL' ? 'All' : `Unread (${unreadCount})`;
-
-                return (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityState={{ selected }}
-                    key={filter}
-                    onPress={() => setSelectedFilter(filter)}
-                    style={({ pressed }) => [
-                      styles.filterChip,
-                      selected && styles.filterChipSelected,
-                      pressed && styles.pressed,
-                    ]}>
-                    <Text style={[styles.filterText, selected && styles.filterTextSelected]}>
-                      {label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <MaterialIcons
-                name={selectedFilter === 'UNREAD' ? 'done-all' : 'notifications-none'}
-                color={COLORS.muted}
-                size={34}
-              />
-              <Text style={styles.emptyText}>
-                {selectedFilter === 'UNREAD' ? "You're all caught up." : 'No notifications yet.'}
-              </Text>
-            </View>
-          }
-          renderItem={({ item }) => (
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => openNotification(item)}
-              style={({ pressed }) => [
-                styles.notificationCard,
-                !item.read && styles.notificationUnread,
-                item.pinned && styles.notificationPinned,
-                pressed && styles.cardPressed,
-              ]}>
-              <View style={styles.typeIcon}>
-                <MaterialIcons name={TYPE_ICONS[item.type]} color={COLORS.brand} size={23} />
-              </View>
-              <View style={styles.notificationContent}>
-                <View style={styles.titleRow}>
-                  <Text style={[styles.cardTitle, !item.read && styles.cardTitleUnread]}>
-                    {item.title}
-                  </Text>
-                  {!item.read ? <View style={styles.unreadDot} /> : null}
-                </View>
-                {item.pinned ? (
-                  <View style={styles.pinnedLabel}>
-                    <MaterialIcons name="push-pin" color={COLORS.brand} size={12} />
-                    <Text style={styles.pinnedText}>Pinned</Text>
-                  </View>
-                ) : null}
-                <Text style={styles.cardMessage}>{item.message}</Text>
-                <Text style={styles.cardDate}>{item.date}</Text>
-              </View>
-            </Pressable>
-          )}
-          showsVerticalScrollIndicator={false}
-        />
-
-        {/* TODO: Laravel/Firebase will later manage notification records, push delivery,
-            read state, mark-all-read, pinned announcements, active-duration expiration, and
-            destination data. Expired announcements must no longer remain pinned. */}
-      </SafeAreaView>
-    </>
-  );
+  // ========================================
+  // EXISTING INBOX DESIGN WITH LOADING, RETRY AND OPT-IN
+  // No sample notifications or navigation to invented activity IDs remain.
+  // ========================================
+  return <><Stack.Screen options={{ headerShown: false }} />
+    <SafeAreaView edges={['top','bottom']} style={styles.safeArea}>
+      <View style={styles.fixedHeader}><View style={styles.header}>
+        <Pressable accessibilityLabel="Go back" onPress={() => router.back()} style={styles.backButton}>
+          <MaterialIcons name="arrow-back" color={COLORS.text} size={23} />
+        </Pressable>
+        <Text style={styles.headerTitle}>Notifications</Text>
+        <Pressable disabled={busy || unreadCount === 0} onPress={markAllRead} style={styles.markAllButton}>
+          <Text style={[styles.markAllText, (busy || unreadCount === 0) && styles.markAllTextDisabled]}>Mark all read</Text>
+        </Pressable>
+      </View></View>
+      <FlatList contentContainerStyle={styles.listContent} data={(page?.data || []).filter(item => !unreadOnly || !item.read_at)}
+        keyExtractor={item => String(item.id)} ItemSeparatorComponent={() => <View style={styles.separator} />}
+        refreshing={loading} onRefresh={() => void load()}
+        ListHeaderComponent={<>
+          <View style={styles.filterBar}>{[false,true].map(filter => <Pressable key={String(filter)}
+            accessibilityRole="button" accessibilityState={{ selected: filter === unreadOnly }}
+            onPress={() => { if (filter !== unreadOnly) { setPage(null); setUnreadOnly(filter); } }}
+            style={[styles.filterChip, filter === unreadOnly && styles.filterChipSelected]}>
+            <Text style={[styles.filterText, filter === unreadOnly && styles.filterTextSelected]}>{filter ? 'Unread ('+unreadCount+')' : 'All'}</Text>
+          </Pressable>)}</View>
+          <Pressable accessibilityRole="button" disabled={busy} onPress={() => void act(enablePush)} style={styles.markAllButton}>
+            <Text style={styles.markAllText}>Enable important notifications</Text>
+          </Pressable>
+          {pushStatus ? <Text style={styles.cardMessage}>{pushStatus}</Text> : null}
+          {error ? <Pressable onPress={() => void load()}><Text accessibilityRole="alert" style={styles.cardMessage}>{error} Tap to retry.</Text></Pressable> : null}
+        </>}
+        ListEmptyComponent={<View style={styles.emptyState}><MaterialIcons name="notifications-none" color={COLORS.muted} size={34}/>
+          <Text style={styles.emptyText}>{loading ? 'Loading notifications...' : error ? 'Notifications could not be loaded.' : unreadOnly ? "You're all caught up." : 'No notifications yet.'}</Text>
+        </View>}
+        ListFooterComponent={page && page.current_page < page.last_page ? <Pressable disabled={loading}
+          onPress={() => void load(page.current_page+1,true)} style={styles.markAllButton}>
+          <Text style={styles.markAllText}>{loading ? 'Loading...' : 'Load more'}</Text>
+        </Pressable> : null}
+        renderItem={({ item }) => <Pressable accessibilityRole="button" disabled={busy} onPress={() => openNotification(item)}
+          style={[styles.notificationCard, !item.read_at && styles.notificationUnread]}>
+          <View style={styles.typeIcon}><MaterialIcons name={item.type === 'admin_announcement' ? 'campaign' : item.type === 'donation_completed' ? 'verified' : 'error-outline'} color={COLORS.brand} size={23}/></View>
+          <View style={styles.notificationContent}><View style={styles.titleRow}>
+            <Text style={[styles.cardTitle,!item.read_at && styles.cardTitleUnread]}>{item.title}</Text>
+            {!item.read_at ? <View style={styles.unreadDot}/> : null}
+          </View><Text style={styles.cardMessage}>{item.message}</Text><Text style={styles.cardDate}>{new Date(item.created_at).toLocaleDateString()}</Text></View>
+        </Pressable>}
+      />
+    </SafeAreaView></>;
 }
 
+// ========================================
+// EXISTING NOTIFICATION SCREEN STYLES
+// Preserves the established card, typography, and color treatment.
+// ========================================
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },
   fixedHeader: {

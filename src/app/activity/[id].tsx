@@ -1,9 +1,16 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-
+import {Stack,useFocusEffect,useLocalSearchParams,useRouter} from 'expo-router';
+import {useCallback,useRef,useState} from 'react';
+import {Alert,Pressable,ScrollView,StyleSheet,Text,View} from 'react-native';
+import {SafeAreaView} from 'react-native-safe-area-context';
+import {useAuth} from '@/contexts/auth-context';
+import {errorMessage} from '@/services/api';
+import {DONATION_STATUS,type DonationParticipation} from '@/services/donations';
+// ========================================
+// PROOF PICKER AND STORAGE
+// Reuses the installed picker and delegates file transfers to the service.
+// ========================================
+import { pickProofFile, prepareProofUpload, reportProofFailure, type ProofFile } from '@/services/proof-storage';
 const COLORS = {
   background: '#FFF9F2',
   brand: '#D93A3A',
@@ -15,293 +22,66 @@ const COLORS = {
   softRed: '#FDE8E8',
 };
 
-type ActivityStatus = 'PENDING' | 'FOR_VERIFICATION' | 'COMPLETED' | 'CANCELLED';
 
-type ActivityDetail = {
-  id: string;
-  title: string;
-  organizer: string;
-  date: string;
-  time: string;
-  location: string;
-  description: string;
-  status: ActivityStatus;
-  reward: string;
-};
 
-const ACTIVITY_DETAILS: Record<string, ActivityDetail> = {
-  '1': {
-    id: '1',
-    title: 'Community Bloodletting Activity',
-    organizer: 'LifeFlow',
-    date: 'September 12, 2026',
-    time: '9:00 AM - 3:00 PM',
-    location: 'Sample Community Center',
-    description:
-      'Join the community blood donation activity and help support patients who need lifesaving blood.',
-    status: 'PENDING',
-    reward: '550 Blood Points',
-  },
-  '2': {
-    id: '2',
-    title: 'Philippine Red Cross Donation',
-    organizer: 'Philippine Red Cross',
-    date: 'June 10, 2026',
-    time: '10:00 AM - 2:00 PM',
-    location: 'Philippine Red Cross Blood Center',
-    description:
-      'A completed voluntary blood donation recorded through a Philippine Red Cross blood service facility.',
-    status: 'COMPLETED',
-    reward: '350 Blood Points',
-  },
-  '3': {
-    id: '3',
-    title: 'University Blood Donation Day',
-    organizer: 'LifeFlow',
-    date: 'August 22, 2026',
-    time: '8:30 AM - 4:00 PM',
-    location: 'University Activity Hall',
-    description:
-      'A campus blood donation activity organized to make safe blood more accessible to the community.',
-    status: 'FOR_VERIFICATION',
-    reward: '450 Blood Points',
-  },
-  '4': {
-    id: '4',
-    title: 'Community Mobile Blood Drive',
-    organizer: 'LifeFlow',
-    date: 'May 18, 2026',
-    time: '9:00 AM - 1:00 PM',
-    location: 'Community Covered Court',
-    description:
-      'A mobile bloodletting activity created to connect nearby donors with a local donation team.',
-    status: 'CANCELLED',
-    reward: 'Not awarded',
-  },
-};
-
-const STATUS_STYLES: Record<
-  ActivityStatus,
-  { background: string; color: string; label: string }
-> = {
-  PENDING: { background: '#FFF1D6', color: '#A76500', label: 'Pending' },
-  FOR_VERIFICATION: { background: '#E6F0FF', color: '#3469A5', label: 'For Verification' },
-  COMPLETED: { background: '#E2F5E9', color: '#287A47', label: 'Completed' },
-  CANCELLED: { background: '#F1ECEA', color: '#8A5F59', label: 'Cancelled' },
-};
-
-type DetailRowProps = {
-  icon: 'event' | 'schedule' | 'location-on' | 'business';
-  label: string;
-  value: string;
-};
-
-function DetailRow({ icon, label, value }: DetailRowProps) {
-  return (
-    <View style={styles.detailRow}>
-      <View style={styles.detailIcon}>
-        <MaterialIcons name={icon} color={COLORS.brand} size={20} />
-      </View>
-      <View style={styles.detailContent}>
-        <Text style={styles.detailLabel}>{label}</Text>
-        <Text style={styles.detailValue}>{value}</Text>
-      </View>
-    </View>
-  );
+// ========================================
+// OWNED PARTICIPATION AND PROOF
+// Keeps activity visible after expiry and permits donor actions only while pending.
+// ========================================
+export default function ActivityDetailScreen(){
+ const router=useRouter(); const {id}=useLocalSearchParams<{id:string}>();
+ const {user,donationDetail,cancelParticipation,submitProof}=useAuth();
+ const [item,setItem]=useState<DonationParticipation|null>(null); const [error,setError]=useState(''); const [busy,setBusy]=useState(false);
+ const revision=useRef(0);
+ const lock=useRef(false); const [retry,setRetry]=useState(0);
+ useFocusEffect(useCallback(()=>{void retry;let active=true;revision.current++;setItem(null);setError('');donationDetail(id).then(r=>{if(active)setItem(r.participation);}).catch(e=>{if(active)setError(errorMessage(e));});return()=>{active=false;revision.current++;};},[id,donationDetail,retry]));
+ const run=async(action:()=>Promise<void>)=>{if(lock.current)return;lock.current=true;setBusy(true);setError('');try{await action();}catch(e){setError(errorMessage(e));}finally{lock.current=false;setBusy(false);}};
+ const cancel=()=>Alert.alert('Cancel participation?','Only pending activities can be cancelled.',[{text:'Keep activity',style:'cancel'},{text:'Cancel participation',style:'destructive',onPress:()=>void run(async()=>setItem((await cancelParticipation(id)).participation))}]);
+ // Retain the selected cached file for retry; there is only one server upload.
+ const [selected,setSelected]=useState<{id:string;userId:number;asset:ProofFile}|null>(null);
+ const pendingFile=selected?.id===id && selected.userId===user?.id ? selected : null;
+ const upload=()=>void run(async()=>{
+   if(!user || !item || !['pending','needs_revision'].includes(item.status))return;
+   const version=revision.current;
+   let asset=pendingFile?.asset;
+   if(!asset){
+     const selection=await pickProofFile();
+     if(!selection || version!==revision.current)return;
+     asset=selection;
+     setSelected({id,userId:user.id,asset});
+   }
+   try{
+     const response=await submitProof(id,prepareProofUpload(asset));
+     if(version!==revision.current)return;
+     setItem(response.participation);setSelected(null);
+   }catch(e){
+     if(version!==revision.current)return;
+     reportProofFailure(e);
+     // A lost response may already have committed. Never infer success locally.
+     const current=await donationDetail(id).catch(()=>null);
+     if(version!==revision.current)return;
+     if(current && !['pending','needs_revision'].includes(current.participation.status)){
+       setItem(current.participation);setSelected(null);return;
+     }
+     throw e;
+   }
+ });
+ // ========================================
+ // ACTIVITY DETAILS AND DONOR ACTIONS
+ // Only server-confirmed pending activity exposes proof and cancellation.
+ // ========================================
+ return <><Stack.Screen options={{headerShown:false}}/><SafeAreaView edges={['top','bottom']} style={styles.safeArea}>
+ <View style={styles.header}><Pressable accessibilityLabel="Go back" onPress={()=>router.back()} style={styles.backButton}><MaterialIcons name="arrow-back" size={23}/></Pressable><Text style={styles.headerTitle}>Activity Details</Text></View>
+ <ScrollView contentContainerStyle={styles.scrollContent}><View style={styles.content}>
+ {error?<Pressable onPress={()=>setRetry(n=>n+1)}><Text accessibilityRole="alert" style={styles.description}>{error} Tap to refresh.</Text></Pressable>:null}
+ {item?<><Text style={styles.statusText}>{DONATION_STATUS[item.status]}</Text><Text style={styles.title}>{item.opportunity.title}</Text>
+ <View style={styles.detailsCard}><Text style={styles.detailValue}>{item.opportunity.event_date || 'Confirm arrangements with the chapter'} {item.opportunity.start_time || ''}</Text><Text style={styles.detailValue}>{item.opportunity.location}</Text><Text style={styles.description}>{item.opportunity.description}</Text></View>
+ <View style={styles.rewardCard}><Text style={styles.description}>Verified donations earn 300 points for your first donation, increasing by 50 to a maximum of 500 per donation.</Text></View>
+ {item.status==='pending' || item.status==='needs_revision'?<>
+ {item.status==='needs_revision'?<View style={styles.proofCard}><Text style={styles.description}>Admin note:</Text><Text style={styles.description}>{item.revision_reason || 'Please upload a corrected proof for review.'}</Text></View>:null}<Pressable disabled={busy} accessibilityState={{disabled:busy,busy}} onPress={upload} style={styles.uploadButton}><Text style={styles.uploadButtonText}>{busy?'Uploading proof...':pendingFile?'Retry Proof Upload':item.status==='needs_revision'?'Upload New Proof':'Upload Proof'}</Text></Pressable><Text style={styles.description}>Choose a JPEG, PNG, or PDF up to 5 MB.</Text>{item.status==='pending'?<Pressable disabled={busy} onPress={cancel} style={styles.cancelButton}><Text style={styles.cancelButtonText}>Cancel Participation</Text></Pressable>:null}</>:<View style={styles.proofCard}><Text style={styles.description}>{item.status==='for_verification'?'Proof submitted. Waiting for admin verification.':item.status==='completed'?'Donation verified.':item.status==='rejected'?'Rejected: '+(item.rejection_reason || 'Contact the organizer for details.'):'Participation cancelled.'}</Text>{item.proof_original_name?<Text style={styles.description}>{item.proof_original_name}</Text>:null}</View>}
+ </>:!error?<Text style={styles.description}>Loading activity…</Text>:null}
+ </View></ScrollView></SafeAreaView></>;
 }
-
-export default function ActivityDetailScreen() {
-  const router = useRouter();
-  const { id } = useLocalSearchParams<{ id: string | string[] }>();
-  const activityId = Array.isArray(id) ? id[0] : id;
-  const activity = ACTIVITY_DETAILS[activityId ?? '1'] ?? ACTIVITY_DETAILS['1'];
-  const [status, setStatus] = useState<ActivityStatus>(activity.status);
-  const statusStyle = STATUS_STYLES[status];
-  const isPending = status === 'PENDING';
-  const isForVerification = status === 'FOR_VERIFICATION';
-  const isCompleted = status === 'COMPLETED';
-
-  const submitProof = () => {
-    Alert.alert(
-      'Submit donation proof?',
-      'This frontend demo will mark your proof as waiting for verification.',
-      [
-        { text: 'Not Now', style: 'cancel' },
-        {
-          text: 'Submit',
-          onPress: () => {
-            // TODO: Upload proof through Laravel and send it to an admin verification workflow.
-            // After approval, Laravel will complete the donation, create the points transaction,
-            // update the donation count, and allow the eligibility/status system to recalculate.
-            setStatus('FOR_VERIFICATION');
-          },
-        },
-      ],
-    );
-  };
-
-  const cancelParticipation = () => {
-    Alert.alert('Cancel Participation', 'Are you sure you want to cancel this activity?', [
-      { text: 'Keep Activity', style: 'cancel' },
-      {
-        text: 'Cancel Participation',
-        style: 'destructive',
-        onPress: () => setStatus('CANCELLED'),
-      },
-    ]);
-  };
-
-  return (
-    <>
-      <Stack.Screen options={{ headerShown: false }} />
-      <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
-        <View style={styles.header}>
-          <Pressable
-            accessibilityLabel="Go back"
-            accessibilityRole="button"
-            hitSlop={8}
-            onPress={() => router.back()}
-            style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}>
-            <MaterialIcons name="arrow-back" color={COLORS.text} size={23} />
-          </Pressable>
-          <Text style={styles.headerTitle}>Activity Details</Text>
-          <Pressable
-            accessibilityLabel="Open notifications"
-            accessibilityRole="button"
-            hitSlop={8}
-            onPress={() => router.push('/notifications')}
-            style={({ pressed }) => [styles.bellButton, pressed && styles.pressed]}>
-            <MaterialIcons name="notifications-none" color={COLORS.text} size={24} />
-            <View style={styles.notificationDot} />
-          </Pressable>
-        </View>
-
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}>
-          <View style={styles.content}>
-            <View style={styles.titleBlock}>
-              <View style={[styles.statusBadge, { backgroundColor: statusStyle.background }]}>
-                <Text style={[styles.statusText, { color: statusStyle.color }]}>
-                  {statusStyle.label}
-                </Text>
-              </View>
-              <Text style={styles.title}>{activity.title}</Text>
-              <Text style={styles.organizer}>Organized by {activity.organizer}</Text>
-            </View>
-
-            <View style={styles.detailsCard}>
-              <DetailRow icon="event" label="Date" value={activity.date} />
-              <DetailRow icon="schedule" label="Time" value={activity.time} />
-              <DetailRow icon="location-on" label="Location" value={activity.location} />
-              <DetailRow icon="business" label="Organizer" value={activity.organizer} />
-            </View>
-
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>About this activity</Text>
-              <Text style={styles.description}>{activity.description}</Text>
-            </View>
-
-            <View style={styles.rewardCard}>
-              <View style={styles.rewardIcon}>
-                <MaterialIcons name="stars" color={COLORS.brand} size={25} />
-              </View>
-              <View style={styles.rewardContent}>
-                <Text style={styles.rewardLabel}>
-                  {isCompleted ? 'Earned reward' : 'Expected reward'}
-                </Text>
-                <Text
-                  style={[styles.rewardValue, status === 'CANCELLED' && styles.cancelledReward]}>
-                  {status === 'CANCELLED' ? 'Not awarded' : activity.reward}
-                </Text>
-                {!isCompleted && status !== 'CANCELLED' ? (
-                  <Text style={styles.rewardNote}>
-                    Points are credited only after an admin verifies the donation proof.
-                  </Text>
-                ) : null}
-              </View>
-            </View>
-
-            <View style={styles.proofCard}>
-              <View style={styles.proofHeading}>
-                <View style={styles.proofIcon}>
-                  <MaterialIcons name="upload-file" color={COLORS.brand} size={24} />
-                </View>
-                <Text style={styles.sectionTitle}>Proof of Donation</Text>
-              </View>
-
-              {isPending ? (
-                <>
-                  <Text style={styles.description}>
-                    After donating, upload your donation certificate or other accepted proof for
-                    verification.
-                  </Text>
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={submitProof}
-                    style={({ pressed }) => [
-                      styles.uploadButton,
-                      pressed && styles.uploadButtonPressed,
-                    ]}>
-                    <MaterialIcons name="upload-file" color={COLORS.white} size={20} />
-                    <Text style={styles.uploadButtonText}>Upload Certificate</Text>
-                  </Pressable>
-                </>
-              ) : null}
-
-              {isForVerification ? (
-                <View style={styles.verificationMessage}>
-                  <MaterialIcons name="hourglass-top" color="#3469A5" size={20} />
-                  <Text style={styles.verificationText}>
-                    Your proof has been submitted and is waiting for verification.
-                  </Text>
-                </View>
-              ) : null}
-
-              {isCompleted ? (
-                <View style={styles.completedMessage}>
-                  <MaterialIcons name="verified" color="#287A47" size={20} />
-                  <Text style={styles.completedText}>Your donation proof has been verified.</Text>
-                </View>
-              ) : null}
-
-              {status === 'CANCELLED' ? (
-                <Text style={styles.cancelledMessage}>
-                  This participation was cancelled, so proof submission is unavailable.
-                </Text>
-              ) : null}
-            </View>
-
-            {isCompleted ? (
-              <View style={styles.eligibilityNote}>
-                <MaterialIcons name="health-and-safety" color={COLORS.brand} size={22} />
-                <Text style={styles.eligibilityText}>
-                  Your next donation eligibility will be determined after your donation record is
-                  verified.
-                </Text>
-                {/* TODO: The Laravel eligibility/status system will later calculate the next
-                    eligible donation date according to the project's approved donation rules. */}
-              </View>
-            ) : null}
-
-            {isPending ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={cancelParticipation}
-                style={({ pressed }) => [
-                  styles.cancelButton,
-                  pressed && styles.cancelButtonPressed,
-                ]}>
-                <Text style={styles.cancelButtonText}>Cancel Participation</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        </ScrollView>
-      </SafeAreaView>
-    </>
-  );
-}
-
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },
   header: {

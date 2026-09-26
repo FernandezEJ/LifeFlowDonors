@@ -1,8 +1,13 @@
+import { HomeDonationReminder } from '@/components/home-donation-reminder';
+import { FLOWIE_MASCOTS, HOME_MASCOT_CYCLE } from '@/constants/flowie-mascots';
+import { NotificationBell } from '@/components/notification-bell';
+import {useAuth} from '@/contexts/auth-context';
+import {boardItems,type DonationOpportunity} from '@/services/donations';
+import {errorMessage} from '@/services/api';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  Alert,
   Image,
   Pressable,
   ScrollView,
@@ -24,39 +29,13 @@ const COLORS = {
   white: '#FFFFFF',
 };
 
-const FLOWIE_MESSAGES = [
-  "Hi Juan! I'm here to help with your blood donation journey.",
+const flowieMessages = (firstName: string) => [
+  `Hi ${firstName}! I'm here to help with your blood donation journey.`,
   "Need help checking if you're ready to donate? Ask me anytime!",
   'A healthy donor can make a life-saving difference.',
   "Have questions about blood types or donation preparation? I'm here!",
   "Don't forget—you can update your status through the Evaluation Form inside Flowie.",
 ] as const;
-
-const ADMIN_ANNOUNCEMENTS = [
-  {
-    id: '1',
-    title: 'Community Bloodletting Activity',
-    description: 'Join our upcoming blood donation activity and help save lives.',
-    date: 'September 12, 2026',
-    location: 'Example Location',
-    image: require('../../../assets/images/GoodMascot.png'),
-    startsAt: '2026-09-01T00:00:00+08:00',
-    expiresAt: '2026-09-12T23:59:59+08:00',
-  },
-  {
-    id: 'expired-demo',
-    title: 'August Community Donation Drive',
-    description: 'This expired mock post demonstrates automatic frontend filtering.',
-    date: 'August 30, 2026',
-    location: 'Example Location',
-    image: require('../../../assets/images/GoodMascot.png'),
-    startsAt: '2026-08-20T00:00:00+08:00',
-    expiresAt: '2026-08-30T23:59:59+08:00',
-  },
-] as const;
-
-// Frontend demo only: capture device time once when this screen module loads.
-const ANNOUNCEMENT_CHECK_TIME = Date.now();
 
 const GUIDE_STEPS = [
   ['Check Your Status', 'Complete the eligibility evaluation in the Status tab.'],
@@ -64,28 +43,34 @@ const GUIDE_STEPS = [
   ['Earn Blood Points', 'Verified donations can earn points and rewards.'],
 ] as const;
 
-function isAnnouncementActive(
-  announcement: (typeof ADMIN_ANNOUNCEMENTS)[number],
-  currentTime: number,
-) {
-  return (
-    currentTime >= new Date(announcement.startsAt).getTime() &&
-    currentTime <= new Date(announcement.expiresAt).getTime()
-  );
-}
-
 export default function HomeScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const [flowieMessageIndex, setFlowieMessageIndex] = useState(0);
   const stackFlowie = width < 370;
-  const activeAnnouncements = ADMIN_ANNOUNCEMENTS.filter((announcement) =>
-    isAnnouncementActive(announcement, ANNOUNCEMENT_CHECK_TIME),
-  );
+  // ========================================
+  // LIVE ANNOUNCEMENT BOARD
+  // Reloads on focus and periodically; expiration removes only the board item.
+  // The Red Cross system card stays present even when loading fails.
+  // ========================================
+  const {opportunities, profile}=useAuth();const [posts,setPosts]=useState<DonationOpportunity[]>([]);const [boardError,setBoardError]=useState('');const [clock,setClock]=useState(() => Date.now());
+  useFocusEffect(useCallback(()=>{let active=true;const load=()=>opportunities().then(r=>{if(active){setPosts(r.data);setBoardError('');}}).catch(e=>{if(active)setBoardError(errorMessage(e));});void load();const refresh=setInterval(()=>void load(),30000);const tick=setInterval(()=>setClock(Date.now()),1000);return()=>{active=false;clearInterval(refresh);clearInterval(tick);};},[opportunities]));
+  const board=boardItems(posts,clock);
+  const firstName = profile?.first_name?.trim() || 'Donor';
+  const messages = flowieMessages(firstName);
+  const [mascotIndex, setMascotIndex] = useState(0);
+
+  useFocusEffect(useCallback(() => {
+    setMascotIndex(0);
+    const timer = setInterval(() => {
+      setMascotIndex(index => (index + 1) % HOME_MASCOT_CYCLE.length);
+    }, 2000);
+    return () => clearInterval(timer);
+  }, []));
 
   useEffect(() => {
     const intervalId = setInterval(() => {
-      setFlowieMessageIndex((currentIndex) => (currentIndex + 1) % FLOWIE_MESSAGES.length);
+      setFlowieMessageIndex((currentIndex) => (currentIndex + 1) % flowieMessages('').length);
     }, 4500);
 
     return () => clearInterval(intervalId);
@@ -95,40 +80,25 @@ export default function HomeScreen() {
     router.push('/flowie');
   };
 
-  const openNotifications = () => {
-    router.push('/notifications');
-  };
 
   const openRedCrossOption = () => {
-    // TODO: Open Philippine Red Cross donation information or donation centers later.
-    Alert.alert(
-      'Philippine Red Cross',
-      'Red Cross donation information will be available here soon.',
-    );
+    router.push({ pathname: '/announcement/[id]', params: { id: 'red-cross-dagupan' } });
   };
 
   return (
     <SafeAreaView edges={['top']} style={styles.safeArea}>
+      <HomeDonationReminder />
       <View style={styles.fixedHeader}>
         <View style={styles.header}>
           <Text style={styles.brandTitle}>LifeFlow</Text>
-          <Pressable
-            accessibilityLabel="Open notifications"
-            accessibilityRole="button"
-            hitSlop={8}
-            onPress={openNotifications}
-            style={({ pressed }) => [styles.bellButton, pressed && styles.pressed]}>
-            <MaterialIcons name="notifications-none" color={COLORS.text} size={25} />
-            <View style={styles.notificationDot} />
-          </Pressable>
+          {/* Shared backend unread count refreshes on focus. */}<NotificationBell />
         </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
           <View style={styles.greetingBlock}>
-            {/* TODO: Later the first name will come from the authenticated Laravel user profile. */}
-            <Text style={styles.greetingTitle}>Hello, Juan</Text>
+            <Text style={styles.greetingTitle}>Hello, {firstName}</Text>
           </View>
 
           <View style={styles.flowieSection}>
@@ -141,13 +111,13 @@ export default function HomeScreen() {
                 <Image
                   accessibilityLabel="Flowie, the LifeFlow assistant"
                   resizeMode="contain"
-                  source={require('../../../assets/images/EvalMascot.png')}
+                  source={FLOWIE_MASCOTS[HOME_MASCOT_CYCLE[mascotIndex]]}
                   style={styles.flowieImage}
                 />
                 <View style={[styles.speechBubble, stackFlowie && styles.speechBubbleStacked]}>
                   <View style={[styles.speechTail, stackFlowie && styles.speechTailStacked]} />
                   <Text style={styles.flowieName}>Flowie</Text>
-                  <Text style={styles.flowieMessage}>{FLOWIE_MESSAGES[flowieMessageIndex]}</Text>
+                  <Text style={styles.flowieMessage}>{messages[flowieMessageIndex]}</Text>
                 </View>
               </View>
             </Pressable>
@@ -165,55 +135,15 @@ export default function HomeScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Donation Opportunities</Text>
 
-            {/* TODO: Admin posts will come from Laravel/MySQL. Admin-selected start/end times
-                will be filtered by the API so expired announcements are not returned. */}
-            {activeAnnouncements.map((announcement) => (
-              <View key={announcement.id} style={styles.adminAnnouncementCard}>
-                <View style={styles.announcementImageArea}>
-                  <Image
-                    accessibilityLabel={`${announcement.title} illustration`}
-                    resizeMode="contain"
-                    source={announcement.image}
-                    style={styles.announcementImage}
-                  />
-                  <View style={styles.activeBadge}>
-                    <Text style={styles.activeBadgeText}>ACTIVE BLOODLETTING</Text>
-                  </View>
-                </View>
-                <View style={styles.announcementBody}>
-                  <Text style={styles.cardTitle}>{announcement.title}</Text>
-                  <Text style={styles.cardDescription}>{announcement.description}</Text>
-                  <View style={styles.detailRow}>
-                    <MaterialIcons name="event" color={COLORS.brand} size={17} />
-                    <Text style={styles.cardMeta}>{announcement.date}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <MaterialIcons name="location-on" color={COLORS.brand} size={17} />
-                    <Text style={styles.cardMeta}>{announcement.location}</Text>
-                  </View>
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => Alert.alert(announcement.title, announcement.description)}
-                    style={({ pressed }) => [
-                      styles.primaryButton,
-                      pressed && styles.primaryButtonPressed,
-                    ]}>
-                    <Text style={styles.primaryButtonText}>View Announcement</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ))}
-
-            {/* TODO: Keep this permanent fallback available when no admin bloodletting post is active. */}
-            <View style={styles.redCrossCard}>
+            {boardError?<Text style={styles.cardDescription}>{boardError}</Text>:null}
+            {board.map((announcement,index)=>announcement==='red-cross'?(<View key="red-cross" style={styles.redCrossCard}>
               <View style={styles.redCrossIcon}>
                 <MaterialIcons name="local-hospital" color={COLORS.brand} size={30} />
               </View>
               <View style={styles.redCrossContent}>
-                <Text style={styles.cardTitle}>Donate Through the Philippine Red Cross</Text>
+                {index===0?<Text style={styles.cardMeta}>PINNED</Text>:null}<Text style={styles.cardTitle}>Donate Through the Philippine Red Cross - Dagupan City Chapter</Text>
                 <Text style={styles.cardDescription}>
-                  No LifeFlow bloodletting activity right now? You can still donate through a
-                  Philippine Red Cross blood service facility.
+                  Choose the Philippine Red Cross Dagupan City Chapter as your donation option.
                 </Text>
                 <Pressable
                   accessibilityRole="button"
@@ -225,7 +155,41 @@ export default function HomeScreen() {
                   <Text style={styles.secondaryButtonText}>View Donation Option</Text>
                 </Pressable>
               </View>
-            </View>
+            </View>):(<View key={announcement.id} style={styles.adminAnnouncementCard}>
+                <View style={styles.announcementImageArea}>
+                  <Image
+                    accessibilityLabel={`${announcement.title} illustration`}
+                    resizeMode="contain"
+                    source={require('../../../assets/images/GoodMascot.png')}
+                    style={styles.announcementImage}
+                  />
+                  <View style={styles.activeBadge}>
+                    <Text style={styles.activeBadgeText}>{index===0?'PINNED':'ACTIVE BLOODLETTING'}</Text>
+                  </View>
+                </View>
+                <View style={styles.announcementBody}>
+                  <Text style={styles.cardTitle}>{announcement.title}</Text>
+                  <Text style={styles.cardDescription}>{announcement.description}</Text>
+                  <View style={styles.detailRow}>
+                    <MaterialIcons name="event" color={COLORS.brand} size={17} />
+                    <Text style={styles.cardMeta}>{announcement.event_date}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <MaterialIcons name="location-on" color={COLORS.brand} size={17} />
+                    <Text style={styles.cardMeta}>{announcement.location}</Text>
+                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => router.push({pathname:'/announcement/[id]',params:{id:String(announcement.id)}})}
+                    style={({ pressed }) => [
+                      styles.primaryButton,
+                      pressed && styles.primaryButtonPressed,
+                    ]}>
+                    <Text style={styles.primaryButtonText}>View Announcement</Text>
+                  </Pressable>
+                </View>
+              </View>))}
+
           </View>
 
           <View style={styles.section}>

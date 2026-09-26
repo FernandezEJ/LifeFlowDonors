@@ -1,3 +1,5 @@
+import { useAuth } from '@/contexts/auth-context';
+import { ApiError, errorMessage } from '@/services/api';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
@@ -33,6 +35,12 @@ type LoginErrors = {
 
 export default function LoginScreen() {
   const router = useRouter();
+  // ========================================
+  // LOGIN STATE
+  // Shares the root session and shows safe request feedback.
+  // ========================================
+  const { login, busy } = useAuth();
+  const [requestError, setRequestError] = useState('');
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -54,40 +62,43 @@ export default function LoginScreen() {
     }
   };
 
+  // ========================================
+  // LOGIN FORM VALIDATION
+  // Matches the email-only endpoint; Laravel verifies the actual password.
+  // ========================================
   const validateForm = () => {
     const nextErrors: LoginErrors = {};
 
     if (!identifier.trim()) {
-      nextErrors.identifier = 'Email or mobile number is required.';
+      nextErrors.identifier = 'Email address is required.';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier.trim())) {
+      nextErrors.identifier = 'Enter a valid email address.';
     }
 
     if (!password) {
       nextErrors.password = 'Password is required.';
-    } else if (password.length < 8) {
-      nextErrors.password = 'Password must be at least 8 characters.';
     }
 
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   };
 
-  const handleLogin = () => {
-    if (!validateForm()) {
-      return;
+  // ========================================
+  // LARAVEL LOGIN
+  // The backend accepts email and password; the session gate opens tabs.
+  // ========================================
+  const handleLogin = async () => {
+    if (busy || !validateForm()) return;
+    setRequestError('');
+    try { await login(identifier, password); }
+    catch (error) {
+      setRequestError(errorMessage(error));
+      if (error instanceof ApiError) setErrors({ identifier: error.fields.email?.join('\n'), password: error.fields.password?.join('\n') });
     }
-
-    // TODO: Call the Laravel login API here when backend authentication is connected.
-    // Real login authentication will be handled by the Laravel backend.
-    // Laravel should:
-    // - Accept either an email address or mobile number as the login identifier.
-    // - Find the matching user and verify the hashed password.
-    // - Reject invalid credentials and return an authenticated user, session, or token on success.
-    // - Never trust frontend validation alone.
-    router.replace('/(tabs)');
   };
 
   const handleForgotPassword = () => {
-    // TODO: Open the password recovery flow after that screen and backend support are added.
+    if (!busy) router.push('/(auth)/forgot-password');
   };
 
   return (
@@ -116,12 +127,13 @@ export default function LoginScreen() {
 
             <View style={styles.form}>
               <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Email or Mobile Number</Text>
+                <Text style={styles.label}>Email Address</Text>
                 <TextInput
                   autoCapitalize="none"
                   autoCorrect={false}
+                  keyboardType="email-address"
                   onChangeText={updateIdentifier}
-                  placeholder="Enter your email or mobile number"
+                  placeholder="Enter your email"
                   placeholderTextColor={COLORS.muted}
                   style={[styles.input, errors.identifier && styles.inputError]}
                   value={identifier}
@@ -171,14 +183,16 @@ export default function LoginScreen() {
             </View>
 
             <View style={styles.actions}>
+              {requestError ? <Text accessibilityRole="alert" style={styles.errorText}>{requestError}</Text> : null}
               <Pressable
                 accessibilityRole="button"
+                disabled={busy}
                 onPress={handleLogin}
                 style={({ pressed }) => [
                   styles.primaryButton,
                   pressed && styles.primaryButtonPressed,
                 ]}>
-                <Text style={styles.primaryButtonText}>Login</Text>
+                <Text style={styles.primaryButtonText}>{busy ? 'Logging in...' : 'Login'}</Text>
               </Pressable>
 
               <View style={styles.registerRow}>

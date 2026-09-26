@@ -1,6 +1,10 @@
+import { NotificationBell } from '@/components/notification-bell';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useRouter } from 'expo-router';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+
+import { useEligibilityCooldown, formatEligibilityWait } from '@/hooks/use-eligibility-cooldown';
+import { SCREENING_NOTICE, type EligibilityAnswers } from '@/services/eligibility';
+import { type ImageSourcePropType, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const COLORS = {
@@ -18,29 +22,7 @@ const COLORS = {
   amber: '#A76500',
 };
 
-type EligibilityStatus = 'ELIGIBLE' | 'NOT_ELIGIBLE' | 'EVALUATION_REQUIRED';
-
-type DonorStatus = {
-  status: EligibilityStatus;
-  age: number;
-  weight: number;
-  gender: string;
-  bloodType: string;
-  lastDonation: string;
-  nextEligibility: string;
-  reason?: string;
-  advice?: string;
-};
-
-const MOCK_STATUS: DonorStatus = {
-  status: 'ELIGIBLE',
-  age: 21,
-  weight: 62,
-  gender: 'Male',
-  bloodType: 'O+',
-  lastDonation: 'June 10, 2026',
-  nextEligibility: 'Based on next evaluation',
-};
+type EligibilityStatus = 'ELIGIBLE' | 'NOT_ELIGIBLE' | 'EVALUATION_REQUIRED' | 'NEEDS_SCREENING';
 
 const STATUS_PRESENTATION: Record<
   EligibilityStatus,
@@ -53,57 +35,112 @@ const STATUS_PRESENTATION: Record<
   }
 > = {
   ELIGIBLE: {
-    title: 'You are eligible to donate!',
+    title: 'Ready to proceed',
     description:
-      'Based on your latest LifeFlow evaluation, you may proceed with donation planning.',
+      'Based on your latest self-assessment, you may proceed to the donation facility for final screening.',
     icon: 'check-circle',
     background: COLORS.softGreen,
     color: COLORS.green,
   },
   NOT_ELIGIBLE: {
-    title: 'You are temporarily not eligible to donate.',
-    description: 'Review the result from your latest evaluation before planning another donation.',
+    title: 'Not ready to donate right now',
+    description: 'Based on your latest self-assessment, one or more factors suggest that you should wait before donating.',
     icon: 'cancel',
     background: COLORS.softRed,
     color: COLORS.brand,
   },
+  NEEDS_SCREENING: {
+    title: 'Previous assessment: facility review advised',
+    description: 'This saved assessment used an earlier questionnaire. It has not been re-evaluated. Please confirm with the donation facility.',
+    icon: 'pending', background: COLORS.softAmber, color: COLORS.amber,
+  },
   EVALUATION_REQUIRED: {
-    title: 'Evaluation required.',
-    description: 'Complete the LifeFlow evaluation to update your current donation readiness.',
+    title: 'Pre-screening unavailable',
+    description: 'Complete the Donation Readiness Self-Assessment to view your latest status.',
     icon: 'pending',
     background: COLORS.softAmber,
     color: COLORS.amber,
   },
 };
 
-const SUMMARY_ITEMS = [
-  { label: 'Age', value: `${MOCK_STATUS.age} years old`, icon: 'cake' as const },
-  { label: 'Weight', value: `${MOCK_STATUS.weight} kg`, icon: 'monitor-weight' as const },
-  { label: 'Gender', value: MOCK_STATUS.gender, icon: 'person-outline' as const },
-  { label: 'Blood Type', value: MOCK_STATUS.bloodType, icon: 'bloodtype' as const },
-  { label: 'Last Donation', value: MOCK_STATUS.lastDonation, icon: 'event' as const },
-  { label: 'Next Eligibility', value: MOCK_STATUS.nextEligibility, icon: 'update' as const },
+// ========================================
+// STATUS MASCOT STATE
+// No concerned artwork exists in the checked assets. Supply that asset here
+// when available; the known happy mascot is an explicit temporary fallback.
+// ========================================
+const STATUS_MASCOTS: { happy: ImageSourcePropType; concerned: ImageSourcePropType | null } = {
+  happy: require('../../../assets/images/HappyMascot.png'),
+  concerned: require('../../../assets/images/SadMascot.png'),
+};
+
+// Display saved values only. Missing legacy fields never become invented answers.
+const ANSWER_LABELS: readonly { key: keyof EligibilityAnswers; label: string }[] = [
+  { key: 'weight', label: 'Weight' },
+  { key: 'sleepHours', label: 'Sleep last night' },
+  { key: 'currentSymptoms', label: 'Current symptoms' },
+  { key: 'donatedWithinThreeMonths', label: 'Donated within the last 3 months' },
+  { key: 'feelsWell', label: 'Feel well enough today' },
+  { key: 'currentlyPregnant', label: 'Currently pregnant' },
+  { key: 'takingAntibioticsForActiveInfection', label: 'Taking antibiotics for an active infection' },
+  { key: 'stillRecoveringFromProcedure', label: 'Still recovering from surgery / procedure / hospitalization' },
+  { key: 'activeOrRecoveringInfection', label: 'Active infection / recovering from one' },
+  { key: 'weakDizzyOrUnusuallyTired', label: 'Weak, dizzy, unusually tired, or physically unwell' },
 ];
+function displayAnswer(key: keyof EligibilityAnswers, value: unknown): string {
+  if (key === 'weight' || key === 'sleepHours') {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 'Not recorded';
+    return key === 'weight' ? value + ' kg' : value + (value === 1 ? ' hour' : ' hours');
+  }
+  if (value === 'YES') return 'Yes';
+  if (value === 'NO') return 'No';
+  if (key === 'currentlyPregnant' && value === 'NOT_APPLICABLE') return 'Not applicable';
+  return 'Not recorded';
+}
+function displayServerDate(value: string | null | undefined, empty: string): string {
+  if (!value) return empty;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString(undefined, { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Not recorded';
+}
 
 export default function StatusScreen() {
   const router = useRouter();
-  const presentation = STATUS_PRESENTATION[MOCK_STATUS.status];
-  const showReason = MOCK_STATUS.status === 'NOT_ELIGIBLE';
+  // ========================================
+  // LATEST SAVED PRE-SCREENING
+  // Cancels stale screen updates on blur and never substitutes a mock result.
+  // ========================================
+  const cooldown = useEligibilityCooldown();
+  const { loading, error } = cooldown;
+  const assessment = cooldown.state?.assessment ?? null;
+  const state: EligibilityStatus = !assessment ? 'EVALUATION_REQUIRED'
+    : assessment.result === 'eligible' ? 'ELIGIBLE'
+    : assessment.result === 'needs_further_screening' ? 'NEEDS_SCREENING' : 'NOT_ELIGIBLE';
+  const presentation = STATUS_PRESENTATION[state];
+  const showReason = !!assessment?.reasons.length;
+  const mascot = !loading && !error && state === 'NOT_ELIGIBLE'
+    ? STATUS_MASCOTS.concerned ?? STATUS_MASCOTS.happy : STATUS_MASCOTS.happy;
+  // ========================================
+  // DONOR SUMMARY
+  // Server timestamps precede all ten saved answers. No eligibility calculation
+  // or device-clock authorization is performed by this presentation layer.
+  // ========================================
+  const summaryItems = [
+    { label: 'Assessed', value: displayServerDate(assessment?.assessed_at, 'Not assessed'), icon: 'event' as const, wide: true },
+    { label: 'Next self-assessment available', value: assessment
+      ? displayServerDate(cooldown.state?.next_allowed_at, 'Not recorded') : 'Not available', icon: 'update' as const, wide: true },
+    ...ANSWER_LABELS.map(({ key, label }, index) => ({
+      label: (index + 1) + '. ' + label,
+      value: displayAnswer(key, assessment?.answers?.[key]),
+      icon: key === 'weight' ? 'monitor-weight' as const : 'fact-check' as const,
+      wide: label.length > 35,
+    })),
+  ];
 
   return (
     <SafeAreaView edges={['top']} style={styles.safeArea}>
       <View style={styles.fixedHeader}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Status</Text>
-          <Pressable
-            accessibilityLabel="Open notifications"
-            accessibilityRole="button"
-            hitSlop={8}
-            onPress={() => router.push('/notifications')}
-            style={({ pressed }) => [styles.bellButton, pressed && styles.pressed]}>
-            <MaterialIcons name="notifications-none" color={COLORS.text} size={25} />
-            <View style={styles.notificationDot} />
-          </Pressable>
+          {/* Shared backend unread count refreshes on focus. */}<NotificationBell />
         </View>
       </View>
 
@@ -114,7 +151,7 @@ export default function StatusScreen() {
               <Image
                 accessibilityLabel="Flowie, the LifeFlow assistant"
                 resizeMode="contain"
-                source={require('../../../assets/images/HappyMascot.png')}
+                source={mascot}
                 style={styles.statusMascot}
               />
               <View style={[styles.statusIcon, { backgroundColor: COLORS.white }]}>
@@ -123,9 +160,9 @@ export default function StatusScreen() {
             </View>
             <View style={styles.statusContent}>
               <Text style={[styles.statusTitle, { color: presentation.color }]}>
-                {presentation.title}
+                {loading ? 'Loading pre-screening…' : error ? 'Pre-screening unavailable' : presentation.title}
               </Text>
-              <Text style={styles.statusDescription}>{presentation.description}</Text>
+              <Text style={styles.statusDescription}>{error || presentation.description}</Text>
             </View>
           </View>
 
@@ -133,11 +170,11 @@ export default function StatusScreen() {
             <View style={styles.adviceCard}>
               <Text style={styles.adviceHeading}>Reason</Text>
               <Text style={styles.adviceText}>
-                {MOCK_STATUS.reason ?? 'Example reason from latest evaluation'}
+                {assessment?.reasons.join('\n\n')}
               </Text>
               <Text style={styles.adviceHeading}>Advice</Text>
               <Text style={styles.adviceText}>
-                {MOCK_STATUS.advice ?? 'Complete another evaluation when your condition changes.'}
+                {SCREENING_NOTICE}
               </Text>
             </View>
           ) : null}
@@ -145,8 +182,8 @@ export default function StatusScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Donor Summary</Text>
             <View style={styles.summaryGrid}>
-              {SUMMARY_ITEMS.map((item) => (
-                <View key={item.label} style={styles.summaryItem}>
+              {summaryItems.map((item) => (
+                <View key={item.label} style={[styles.summaryItem, item.wide && styles.summaryWide]}>
                   <View style={styles.summaryIcon}>
                     <MaterialIcons name={item.icon} color={COLORS.brand} size={21} />
                   </View>
@@ -162,27 +199,30 @@ export default function StatusScreen() {
           <View style={styles.disclaimerCard}>
             <MaterialIcons name="info-outline" color={COLORS.brand} size={22} />
             <Text style={styles.disclaimerText}>
-              LifeFlow status is a planning guide based on your evaluation. It is not final medical
-              clearance to donate.
+              {SCREENING_NOTICE}
             </Text>
           </View>
 
+          {/* One compact countdown accompanies the action; exact dates stay in Donor Summary. */}
           <View style={styles.updateSection}>
-            <Text style={styles.updateHelper}>
-              Open Flowie to access the Evaluation Form and update your donation status.
-            </Text>
-          </View>
-
           <Pressable
             accessibilityRole="button"
-            onPress={() => router.push('/flowie')}
-            style={({ pressed }) => [styles.updateButton, pressed && styles.updateButtonPressed]}>
+            disabled={!cooldown.canSubmit}
+            accessibilityState={{ disabled: !cooldown.canSubmit }}
+            onPress={() => { if (cooldown.canSubmit) router.push(assessment ? '/flowie' : '/evaluation'); }}
+            style={({ pressed }) => [styles.updateButton, !cooldown.canSubmit && { opacity: 0.5 }, pressed && styles.updateButtonPressed]}>
             <MaterialIcons name="chat-bubble-outline" color={COLORS.white} size={21} />
-            <Text style={styles.updateButtonText}>Update Status with Flowie</Text>
+            <Text style={styles.updateButtonText}>{assessment ? 'Update Status with Flowie' : 'Start Assessment'}</Text>
           </Pressable>
 
-          {/* TODO: Laravel will calculate and store the next eligible donation date from the
-              project's approved donation rules and verified donation history. */}
+          {assessment && cooldown.state?.cooldown_active ? <Text style={styles.updateHelper}>
+            {formatEligibilityWait(cooldown.remaining).replace('Evaluate again in ', 'Available again in ')}
+          </Text> : null}
+          </View>
+          {/* Refresh errors keep the action locked until server availability is known. */}
+          {error ? <Pressable accessibilityRole="button" onPress={() => void cooldown.reload()} style={styles.updateButton}>
+            <Text style={styles.updateButtonText}>Retry availability check</Text>
+          </Pressable> : null}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -293,7 +333,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   summaryItem: {
-    minWidth: 150,
+    minWidth: 0,
     minHeight: 82,
     flexBasis: '47%',
     flexGrow: 1,
@@ -306,6 +346,7 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     backgroundColor: COLORS.white,
   },
+  summaryWide: { flexBasis: '100%' },
   summaryIcon: {
     width: 36,
     height: 36,
@@ -315,7 +356,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.softRed,
   },
   summaryContent: { flex: 1 },
-  summaryLabel: { color: COLORS.muted, fontSize: 11, fontWeight: '600' },
+  summaryLabel: { color: COLORS.muted, fontSize: 12, lineHeight: 18, fontWeight: '600' },
   summaryValue: { marginTop: 3, color: COLORS.text, fontSize: 13, fontWeight: '800', lineHeight: 17 },
   disclaimerCard: {
     flexDirection: 'row',
@@ -326,7 +367,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.softRed,
   },
   disclaimerText: { flex: 1, color: COLORS.muted, fontSize: 12, lineHeight: 18 },
-  updateSection: { marginBottom: -11 },
+  updateSection: { gap: 8 },
   updateHelper: { color: COLORS.muted, fontSize: 13, lineHeight: 19, textAlign: 'center' },
   updateButton: {
     minHeight: 52,

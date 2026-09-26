@@ -1,6 +1,11 @@
+import { RewardCatalogue } from '@/components/reward-catalogue';
+import { useAuth } from '@/contexts/auth-context';
+import { errorMessage } from '@/services/api';
+import type { Page, PointTransaction } from '@/services/rewards';
+import { NotificationBell } from '@/components/notification-bell';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -18,49 +23,7 @@ const COLORS = {
   redeemed: '#CC684A',
 };
 
-const BLOOD_POINTS = 235;
-
-type TransactionType = 'earned' | 'redeemed';
-type TransactionFilter = 'all' | TransactionType;
-
-type PointsTransaction = {
-  id: string;
-  type: TransactionType;
-  points: number;
-  date: string;
-  description: string;
-};
-
-const TRANSACTIONS: readonly PointsTransaction[] = [
-  {
-    id: '1',
-    type: 'earned',
-    points: 150,
-    date: '04 Sept 2026',
-    description: 'You have earned',
-  },
-  {
-    id: '2',
-    type: 'redeemed',
-    points: 150,
-    date: '04 Sept 2026',
-    description: 'You have redeemed',
-  },
-  {
-    id: '3',
-    type: 'redeemed',
-    points: 60,
-    date: '04 Sept 2026',
-    description: 'You have redeemed',
-  },
-  {
-    id: '4',
-    type: 'redeemed',
-    points: 25,
-    date: '04 Sept 2026',
-    description: 'You have redeemed',
-  },
-];
+type TransactionFilter = 'all' | 'earned' | 'redeemed';
 
 const FILTERS: readonly { label: string; value: TransactionFilter }[] = [
   { label: 'All', value: 'all' },
@@ -72,28 +35,34 @@ export default function PointsScreen() {
   const router = useRouter();
   const [selectedFilter, setSelectedFilter] = useState<TransactionFilter>('all');
 
-  const filteredTransactions = useMemo(
-    () =>
-      selectedFilter === 'all'
-        ? TRANSACTIONS
-        : TRANSACTIONS.filter((transaction) => transaction.type === selectedFilter),
-    [selectedFilter],
-  );
+
+  // ========================================
+  // PRIVATE PAGINATED LEDGER
+  // Filters query the whole server history; focus refreshes after spending.
+  // ========================================
+  const { pointTransactions } = useAuth();
+  const [balance, setBalance] = useState<number | null>(null);
+  const [page, setPage] = useState<Page<PointTransaction> | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const generation = useRef(0);
+  const load = useCallback(async (number = 1) => {
+    const current = ++generation.current; setLoading(true); setError('');
+    try {
+      const result = await pointTransactions(number, selectedFilter === 'all' ? undefined : selectedFilter === 'earned' ? 'donation_reward' : 'reward_redemption');
+      if (current === generation.current) setPage(previous => number === 1 ? result : { ...result, data: [...(previous?.data ?? []), ...result.data] });
+    } catch (cause) { if (current === generation.current) setError(errorMessage(cause)); }
+    finally { if (current === generation.current) setLoading(false); }
+  }, [pointTransactions, selectedFilter]);
+  useFocusEffect(useCallback(() => { void load(); return () => { generation.current++; }; }, [load]));
+  const filteredTransactions = page?.data ?? [];
 
   return (
     <SafeAreaView edges={['top']} style={styles.safeArea}>
       <View style={styles.fixedHeader}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Points</Text>
-          <Pressable
-            accessibilityLabel="Open notifications"
-            accessibilityRole="button"
-            hitSlop={8}
-            onPress={() => router.push('/notifications')}
-            style={({ pressed }) => [styles.bellButton, pressed && styles.pressed]}>
-            <MaterialIcons name="notifications-none" color={COLORS.text} size={25} />
-            <View style={styles.notificationDot} />
-          </Pressable>
+          {/* Shared backend unread count refreshes on focus. */}<NotificationBell />
         </View>
       </View>
 
@@ -102,11 +71,11 @@ export default function PointsScreen() {
           <View style={styles.balanceSection}>
             <Text style={styles.balanceHeading}>Your Blood Points</Text>
             <View
-              accessibilityLabel={`${BLOOD_POINTS} Blood Points`}
+              accessibilityLabel={`${(balance ?? '--')} Blood Points`}
               accessibilityRole="text"
               style={styles.pointsCircle}>
-              {/* TODO: Real points balance will later come from Laravel/backend. */}
-              <Text style={styles.pointsNumber}>{BLOOD_POINTS}</Text>
+              {/* Balance comes from the same catalogue response used for spending. */}
+              <Text style={styles.pointsNumber}>{(balance ?? '--')}</Text>
               <Text style={styles.pointsLabel}>Points</Text>
             </View>
             <Pressable
@@ -120,6 +89,7 @@ export default function PointsScreen() {
             </Pressable>
           </View>
 
+          <RewardCatalogue onBalance={setBalance} />
           <View style={styles.transactionsSection}>
             <View style={styles.filterBar}>
               {FILTERS.map((filter) => {
@@ -129,7 +99,7 @@ export default function PointsScreen() {
                   <Pressable
                     accessibilityRole="button"
                     key={filter.value}
-                    onPress={() => setSelectedFilter(filter.value)}
+                    onPress={() => { if (selectedFilter !== filter.value) { setPage(null); setSelectedFilter(filter.value); } }}
                     style={({ pressed }) => [
                       styles.filterButton,
                       selected && styles.filterButtonSelected,
@@ -143,10 +113,12 @@ export default function PointsScreen() {
               })}
             </View>
 
+            {loading ? <Text>Loading transactions...</Text> : null}
+            {error ? <View><Text accessibilityRole="alert">{error}</Text><Pressable onPress={() => void load()}><Text>Retry</Text></Pressable></View> : null}
             <View style={styles.transactionList}>
               {filteredTransactions.length > 0 ? (
                 filteredTransactions.map((transaction) => {
-                  const earned = transaction.type === 'earned';
+                  const earned = transaction.amount > 0;
                   const transactionColor = earned ? COLORS.earned : COLORS.redeemed;
 
                   return (
@@ -156,11 +128,11 @@ export default function PointsScreen() {
                       />
                       <View style={styles.transactionDetails}>
                         <Text style={styles.transactionDescription}>{transaction.description}</Text>
-                        <Text style={styles.transactionDate}>{transaction.date}</Text>
+                        <Text style={styles.transactionDate}>{new Date(transaction.created_at).toLocaleDateString()}</Text>
                       </View>
                       <Text style={[styles.transactionPoints, { color: transactionColor }]}>
                         {earned ? '+' : '-'}
-                        {transaction.points}
+                        {Math.abs(transaction.amount)}
                       </Text>
                     </View>
                   );
@@ -168,10 +140,11 @@ export default function PointsScreen() {
               ) : (
                 <View style={styles.emptyState}>
                   <MaterialIcons name="receipt-long" color={COLORS.muted} size={28} />
-                  <Text style={styles.emptyText}>No transactions yet.</Text>
+                  <Text style={styles.emptyText}>{loading ? 'Loading...' : error ? 'History unavailable.' : 'No transactions yet.'}</Text>
                 </View>
               )}
             </View>
+            {page && page.current_page < page.last_page ? <Pressable disabled={loading} onPress={() => void load(page.current_page + 1)}><Text>Load more transactions</Text></Pressable> : null}
           </View>
         </View>
       </ScrollView>
@@ -319,6 +292,3 @@ const styles = StyleSheet.create({
   emptyText: { color: COLORS.muted, fontSize: 14, fontWeight: '600' },
 });
 
-// TODO: Completed and verified donations will create earned point transactions in Laravel.
-// Reward redemption will create redeemed transactions there as well.
-// The frontend must not directly decide or permanently modify the points balance.

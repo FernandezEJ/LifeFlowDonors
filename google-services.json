@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1017432124453",
+    "project_id": "lifeflow-capstone-cf182",
+    "storage_bucket": "lifeflow-capstone-cf182.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1017432124453:android:d1e063cdd7e6c6ee9a23cc",
+        "android_client_info": {
+          "package_name": "com.lifeflow.capstone"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA-Ecs9D5FI-sDrpijFUBFlGPCrhx9Dyec"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

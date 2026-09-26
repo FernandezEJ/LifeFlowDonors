@@ -1,7 +1,14 @@
+import { profileMascotImage } from '@/constants/profile-settings';
+import BirthDatePicker from '@/components/birth-date-picker';
+import { NotificationBell } from '@/components/notification-bell';
+import { type DonationSummary } from '@/services/donations';
+import { useAuth } from '@/contexts/auth-context';
+import { errorMessage } from '@/services/api';
+import { formErrors, toProfileForm, type ProfileForm } from '@/services/auth';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useRouter } from 'expo-router';
-import type { ComponentProps } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'react';
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const COLORS = {
@@ -19,19 +26,6 @@ const COLORS = {
 
 type MaterialIconName = ComponentProps<typeof MaterialIcons>['name'];
 
-type MockUser = {
-  firstName: string;
-  middleName: string;
-  lastName: string;
-  email: string;
-  mobile: string;
-  birthDate: string;
-  gender: string;
-  bloodType: string;
-  totalDonations: number;
-  streakCount: number;
-};
-
 type Achievement = {
   title: string;
   requiredDonations: number;
@@ -40,54 +34,103 @@ type Achievement = {
   background: string;
 };
 
-const MOCK_USER: MockUser = {
-  firstName: 'Juan',
-  middleName: 'Santos',
-  lastName: 'Dela Cruz',
-  email: 'juan@example.com',
-  mobile: '09171234567',
-  birthDate: '09/17/2004',
-  gender: 'Male',
-  bloodType: 'O+',
-  totalDonations: 3,
-  streakCount: 2,
-};
-
-const VERIFIED_DONATIONS = 3;
-
+// ========================================
+// VERIFIED MILESTONE DISPLAY
+// The server supplies the current achievement; counts unlock milestone illustrations.
+// ========================================
 const ACHIEVEMENTS: readonly Achievement[] = [
-  { title: 'Bronze Donor', requiredDonations: 1, icon: 'workspace-premium', color: '#A86432', background: '#F5E5D8' },
-  { title: 'Silver Donor', requiredDonations: 3, icon: 'workspace-premium', color: '#78838D', background: '#E9EDF0' },
-  { title: 'Gold Donor', requiredDonations: 5, icon: 'workspace-premium', color: '#B97700', background: '#FFF1D6' },
-  { title: 'Platinum Donor', requiredDonations: 10, icon: 'workspace-premium', color: '#66808E', background: '#E5EEF1' },
-  { title: 'Diamond Donor', requiredDonations: 20, icon: 'diamond', color: '#2589A6', background: '#E0F3F7' },
-  { title: 'LifeFlow Hero', requiredDonations: 30, icon: 'auto-awesome', color: '#B23A79', background: '#F9E3EF' },
+  { title: 'New Donor', requiredDonations: 0, icon: 'favorite', color: '#A86432', background: '#F5E5D8' },
+  { title: 'First-Time Donor', requiredDonations: 1, icon: 'workspace-premium', color: '#A86432', background: '#F5E5D8' },
+  { title: 'Bronze Donor', requiredDonations: 3, icon: 'workspace-premium', color: '#A86432', background: '#F5E5D8' },
+  { title: 'Silver Donor', requiredDonations: 5, icon: 'workspace-premium', color: '#78838D', background: '#E9EDF0' },
+  { title: 'Gold Donor', requiredDonations: 10, icon: 'workspace-premium', color: '#B97700', background: '#FFF1D6' },
 ];
 
-const CURRENT_MEDAL = ACHIEVEMENTS.reduce<Achievement | null>(
-  (highest, achievement) =>
-    VERIFIED_DONATIONS >= achievement.requiredDonations ? achievement : highest,
-  null,
-);
-
-const PERSONAL_INFORMATION = [
-  { label: 'First Name', value: MOCK_USER.firstName },
-  { label: 'Middle Name', value: MOCK_USER.middleName },
-  { label: 'Last Name', value: MOCK_USER.lastName },
-  { label: 'Email', value: MOCK_USER.email },
-  { label: 'Mobile Number', value: MOCK_USER.mobile },
-  { label: 'Birth Date', value: MOCK_USER.birthDate },
-  { label: 'Gender', value: MOCK_USER.gender },
-  { label: 'Blood Type', value: MOCK_USER.bloodType },
-] as const;
+// ========================================
+// PROFILE INFORMATION
+// Shows donor details and account email; email stays read-only in profile edits.
+// ========================================
+const PERSONAL_FIELDS: { label: string; field: keyof ProfileForm }[] = [
+  { label: 'First Name', field: 'firstName' }, { label: 'Middle Name', field: 'middleName' },
+  { label: 'Last Name', field: 'lastName' }, { label: 'Email', field: 'email' },
+  { label: 'Mobile Number', field: 'mobileNumber' }, { label: 'Birth Date', field: 'birthDate' },
+  { label: 'Gender', field: 'gender' }, { label: 'Blood Type', field: 'bloodType' },
+];
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const fullName = `${MOCK_USER.firstName} ${MOCK_USER.lastName}`;
+  // ========================================
+  // REFRESH VERIFIED TOTAL ON FOCUS
+  // Errors remain visible and never turn into a fabricated zero or achievement.
+  // ========================================
+  const { donationSummary } = useAuth();
+  const [summary, setSummary] = useState<DonationSummary | null>(null);
+  const [summaryError, setSummaryError] = useState('');
+  useFocusEffect(useCallback(() => {
+    let active = true; setSummary(null); setSummaryError('');
+    donationSummary().then(data => { if (active) setSummary(data); })
+      .catch(e => { if (active) setSummaryError(errorMessage(e)); });
+    return () => { active = false; };
+  }, [donationSummary]));
+  const CURRENT_MEDAL = summary ? ACHIEVEMENTS.find(item => item.title === summary.achievement.label) : null;
+  // ========================================
+  // PROFILE LOADING AND EDITING
+  // Loads Laravel data and keeps unsaved edits separate from displayed data.
+  // ========================================
+  const { user, profile, loadProfile, saveProfile, logout, busy } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [requestError, setRequestError] = useState('');
+  const [draft, setDraft] = useState<ProfileForm | null>(null);
+  const [errors, setErrors] = useState<Partial<Record<keyof ProfileForm, string>>>({});
+  const [saved, setSaved] = useState(false);
+  const fetching = useRef(false);
+  const saving = useRef(false);
+  const fullName = user?.name || '';
+  const personal = user && profile ? toProfileForm(user, profile) : null;
 
-  const showPlaceholder = (title: string, message: string) => {
-    Alert.alert(title, message);
+  useEffect(() => {
+    let active = true;
+    loadProfile().catch(error => { if (active) setRequestError(errorMessage(error)); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [loadProfile]);
+
+  const retryProfile = async () => {
+    if (fetching.current || loading) return;
+    fetching.current = true;
+    setLoading(true);
+    setRequestError('');
+    try { await loadProfile(); } catch (error) { setRequestError(errorMessage(error)); }
+    finally { fetching.current = false; setLoading(false); }
   };
+
+  // ========================================
+  // SAVE PERSONAL DETAILS
+  // Laravel validates the allowed fields; success refreshes the shared profile.
+  // ========================================
+  const handleSave = async () => {
+    if (!draft || busy || saving.current) return;
+    saving.current = true;
+    setRequestError('');
+    setErrors({});
+    try { await saveProfile(draft); setDraft(null); setSaved(true); }
+    catch (error) { setErrors(formErrors(error)); setRequestError(errorMessage(error)); }
+    finally { saving.current = false; }
+  };
+
+  // ========================================
+  // LOGOUT FEEDBACK
+  // The provider revokes the token and clears local state even on network errors.
+  // ========================================
+  const handleLogout = async () => {
+    if (busy) return;
+    try {
+      const warning = await logout();
+      if (warning) Alert.alert('Logout notice', warning);
+      router.replace('/(auth)/login');
+    } catch (error) { setRequestError(errorMessage(error)); }
+  };
+
 
   const confirmLogout = () => {
     Alert.alert('Log out?', 'Are you sure you want to log out?', [
@@ -95,7 +138,7 @@ export default function ProfileScreen() {
       {
         text: 'Logout',
         style: 'destructive',
-        onPress: () => router.replace('/(auth)/login'),
+        onPress: () => void handleLogout(),
       },
     ]);
   };
@@ -105,41 +148,33 @@ export default function ProfileScreen() {
       <View style={styles.fixedHeader}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Profile</Text>
-          <Pressable
-            accessibilityLabel="Open notifications"
-            accessibilityRole="button"
-            hitSlop={8}
-            onPress={() => router.push('/notifications')}
-            style={({ pressed }) => [styles.bellButton, pressed && styles.pressed]}>
-            <MaterialIcons name="notifications-none" color={COLORS.text} size={25} />
-            <View style={styles.notificationDot} />
-          </Pressable>
+          {/* Shared backend unread count refreshes on focus. */}<NotificationBell />
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
           <View style={styles.profileHero}>
             <View style={styles.avatarArea}>
               <View accessibilityLabel={`${fullName} profile picture`} style={styles.avatar}>
-                <Text style={styles.avatarInitials}>JD</Text>
+                <Image source={profileMascotImage(profile?.profile_avatar)} resizeMode="contain" style={{ width: 92, height: 96 }} accessibilityLabel="LifeFlow profile mascot" />
               </View>
               <Pressable
-                accessibilityLabel="Change profile photo"
+                accessibilityLabel="Change Avatar"
                 accessibilityRole="button"
                 hitSlop={7}
                 onPress={() =>
-                  showPlaceholder('Change Photo', 'Profile photo upload will be available later.')
+                  router.push({ pathname: '/profile-settings/[setting]', params: { setting: 'avatar' } })
                 }
                 style={({ pressed }) => [styles.cameraButton, pressed && styles.cameraButtonPressed]}>
-                <MaterialIcons name="photo-camera" color={COLORS.white} size={17} />
+                <MaterialIcons name="face" color={COLORS.white} size={17} />
               </Pressable>
             </View>
             <Text style={styles.donorName}>{fullName}</Text>
             <Text style={styles.donorLabel}>LifeFlow Donor</Text>
             <View style={styles.bloodTypeBadge}>
               <MaterialIcons name="bloodtype" color={COLORS.brand} size={17} />
-              <Text style={styles.bloodTypeText}>{MOCK_USER.bloodType}</Text>
+              <Text style={styles.bloodTypeText}>{profile?.blood_type || '--'}</Text>
             </View>
           </View>
 
@@ -148,19 +183,19 @@ export default function ProfileScreen() {
               <View style={styles.statIcon}>
                 <MaterialIcons name="bloodtype" color={COLORS.brand} size={26} />
               </View>
-              <Text style={styles.statNumber}>{MOCK_USER.totalDonations}</Text>
+              <Text style={styles.statNumber}>{summary?.total_donations ?? '—'}</Text>
               <Text style={styles.statLabel}>Total Donations</Text>
             </View>
             <View style={styles.statCard}>
               <View style={styles.statIcon}>
-                <MaterialIcons name="local-fire-department" color={COLORS.brand} size={26} />
+                <MaterialIcons name="workspace-premium" color={COLORS.brand} size={26} />
               </View>
-              <Text style={styles.statNumber}>{MOCK_USER.streakCount}</Text>
-              <Text style={styles.statLabel}>Streak Count</Text>
+              <Text style={styles.currentMedalTitle}>{summary?.achievement.label ?? '—'}</Text>
+              <Text style={styles.statLabel}>Donor Achievement</Text>
             </View>
           </View>
 
-          {/* TODO: Donation totals and streaks will come from verified Laravel donation records. */}
+          {summaryError ? <Text accessibilityRole="alert" style={styles.donorLabel}>{summaryError}</Text> : null}
 
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Achievements</Text>
@@ -185,7 +220,7 @@ export default function ProfileScreen() {
               contentContainerStyle={styles.achievementList}
               showsHorizontalScrollIndicator={false}>
               {ACHIEVEMENTS.map((achievement) => {
-                const unlocked = VERIFIED_DONATIONS >= achievement.requiredDonations;
+                const unlocked = summary !== null && summary.total_donations >= achievement.requiredDonations;
 
                 return (
                   <View
@@ -246,33 +281,61 @@ export default function ProfileScreen() {
           </View>
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Personal Information</Text>
+            <View style={styles.informationHeading}>
+              <Text style={[styles.sectionTitle, { flex: 1 }]}>Profile Information</Text>
+              {!draft ? <Pressable accessibilityRole="button" disabled={busy || loading || !personal}
+                onPress={() => { setDraft(personal); setErrors({}); setRequestError(''); setSaved(false); }}
+                style={({ pressed }) => [styles.editLink, { opacity: busy || loading || !personal ? 0.5 : pressed ? 0.7 : 1 }]}>
+                <Text style={styles.editButtonText}>Edit Profile</Text>
+              </Pressable> : null}
+            </View>
+            {loading ? <><ActivityIndicator color={COLORS.brand} /><Text>Loading profile...</Text></> : null}
+            {requestError ? <Text accessibilityRole="alert" style={styles.feedbackError}>{requestError}</Text> : null}
+            {!loading && requestError && !draft ? <Pressable onPress={retryProfile}><Text style={styles.editButtonText}>Retry profile</Text></Pressable> : null}
+            {saved ? <Text accessibilityRole="alert" style={styles.achievementNote}>Profile saved.</Text> : null}
             <View style={styles.informationCard}>
-              {PERSONAL_INFORMATION.map((item, index) => (
+              {PERSONAL_FIELDS.map((item, index) => (
                 <View
                   key={item.label}
                   style={[
                     styles.informationRow,
-                    index < PERSONAL_INFORMATION.length - 1 && styles.informationRowBorder,
+                    index < PERSONAL_FIELDS.length - 1 && styles.informationRowBorder,
                   ]}>
                   <Text style={styles.informationLabel}>{item.label}</Text>
-                  <Text selectable style={styles.informationValue}>
-                    {item.value}
-                  </Text>
+                  {item.field === 'email' ? <View style={styles.fieldValue}>
+                    <Text selectable style={styles.informationValue}>{personal?.email || '--'}</Text>
+                    {user?.email_verified_at ? <Text style={styles.verifiedText}>Verified</Text> : null}
+                    {draft ? <Text style={styles.achievementNote}>Change email in Profile Settings.</Text> : null}
+                  </View> : draft ? <View style={styles.fieldValue}>
+                    {item.field === 'birthDate' ? <BirthDatePicker value={draft.birthDate} disabled={busy}
+                      onChange={value => {
+                        setDraft(current => current ? { ...current, birthDate: value } : current);
+                        setErrors(current => ({ ...current, birthDate: undefined }));
+                      }} /> : <TextInput
+                      accessibilityLabel={item.label}
+                      editable={!busy}
+                      autoCapitalize="sentences"
+                      keyboardType={item.field === 'mobileNumber' ? 'phone-pad' : 'default'}
+                      placeholder={item.field === 'gender' ? 'Male or Female' : item.label}
+                      style={[styles.informationValue, styles.editInput]}
+                      value={draft[item.field]}
+                      onChangeText={value => {
+                        setDraft(current => current ? { ...current, [item.field]: value } : current);
+                        setErrors(current => ({ ...current, [item.field]: undefined }));
+                      }}
+                    />}
+                    {errors[item.field] ? <Text style={styles.feedbackError}>{errors[item.field]}</Text> : null}
+                  </View> : <Text selectable style={styles.informationValue}>{personal?.[item.field] || '--'}</Text>}
                 </View>
               ))}
             </View>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() =>
-                showPlaceholder('Edit Profile', 'Profile editing will be connected later.')
-              }
+            {draft ? <Pressable accessibilityRole="button" disabled={busy} onPress={() => void handleSave()}
               style={({ pressed }) => [styles.editButton, pressed && styles.editButtonPressed]}>
-              <MaterialIcons name="edit" color={COLORS.brand} size={19} />
-              <Text style={styles.editButtonText}>Edit Profile</Text>
-            </Pressable>
-            {/* TODO: Profile edits will be validated and saved through Laravel. Changed email or
-                mobile values must be checked for uniqueness against other accounts. */}
+              <Text style={styles.editButtonText}>{busy ? 'Saving...' : 'Save Profile'}</Text>
+            </Pressable> : null}
+            {draft ? <Pressable disabled={busy} style={styles.editButton} onPress={() => { setDraft(null); setErrors({}); setRequestError(''); }}>
+              <Text style={styles.editButtonText}>Cancel</Text>
+            </Pressable> : null}
           </View>
 
           <View style={styles.section}>
@@ -281,20 +344,20 @@ export default function ProfileScreen() {
               <Pressable
                 accessibilityRole="button"
                 onPress={() =>
-                  showPlaceholder('Settings', 'Account settings will be available later.')
+                  router.push('/profile-settings')
                 }
                 style={({ pressed }) => [styles.accountRow, pressed && styles.accountRowPressed]}>
                 <View style={styles.accountIcon}>
                   <MaterialIcons name="settings" color={COLORS.text} size={21} />
                 </View>
-                <Text style={styles.accountText}>Settings</Text>
+                <Text style={styles.accountText}>Profile Settings</Text>
                 <MaterialIcons name="chevron-right" color={COLORS.muted} size={23} />
               </Pressable>
               <View style={styles.accountSeparator} />
               <Pressable
                 accessibilityRole="button"
                 onPress={() =>
-                  showPlaceholder('About LifeFlow', 'LifeFlow donor help and information is coming soon.')
+                  router.push('/help-about')
                 }
                 style={({ pressed }) => [styles.accountRow, pressed && styles.accountRowPressed]}>
                 <View style={styles.accountIcon}>
@@ -306,24 +369,31 @@ export default function ProfileScreen() {
               <View style={styles.accountSeparator} />
               <Pressable
                 accessibilityRole="button"
+                disabled={busy}
                 onPress={confirmLogout}
                 style={({ pressed }) => [styles.accountRow, pressed && styles.accountRowPressed]}>
                 <View style={styles.logoutIcon}>
                   <MaterialIcons name="logout" color={COLORS.brand} size={21} />
                 </View>
-                <Text style={styles.logoutText}>Logout</Text>
+                <Text style={styles.logoutText}>{busy && !draft ? 'Logging out...' : 'Logout'}</Text>
               </Pressable>
             </View>
           </View>
 
-          {/* TODO: Profile photo upload will later connect to Laravel storage/backend. */}
+
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+// ========================================
+// PROFILE FORM FEEDBACK
+// Adds only the input border and error color needed by existing rows.
+// ========================================
 const styles = StyleSheet.create({
+  editInput: { borderWidth: 1, borderColor: COLORS.border, borderRadius: 8, padding: 8, minHeight: 44 },
+  feedbackError: { color: COLORS.brand, fontSize: 13 },
   safeArea: { flex: 1, backgroundColor: COLORS.background },
   fixedHeader: {
     zIndex: 10,
@@ -487,17 +557,18 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: COLORS.white,
   },
+  informationHeading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  editLink: { minHeight: 44, justifyContent: 'center', alignItems: 'flex-end', flexShrink: 0 },
+  fieldValue: { gap: 5, width: '100%' },
+  verifiedText: { color: COLORS.muted, fontSize: 11, fontWeight: '600' },
   informationRow: {
     minHeight: 58,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 14,
+    gap: 6,
     paddingVertical: 12,
   },
   informationRowBorder: { borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  informationLabel: { flex: 0.9, color: COLORS.muted, fontSize: 12, fontWeight: '600' },
-  informationValue: { flex: 1.4, color: COLORS.text, fontSize: 13, fontWeight: '700', textAlign: 'right' },
+  informationLabel: { color: COLORS.muted, fontSize: 12, fontWeight: '600' },
+  informationValue: { color: COLORS.text, fontSize: 13, fontWeight: '700' },
   editButton: {
     minHeight: 49,
     flexDirection: 'row',
