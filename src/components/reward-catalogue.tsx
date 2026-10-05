@@ -1,9 +1,12 @@
+import { TabSkeleton } from '@/components/tab-skeleton';
+import { ConfirmationModal } from '@/components/confirmation-modal';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
-import { Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '@/contexts/auth-context';
 import { ApiError, errorMessage } from '@/services/api';
+import { publicImageUrl } from '@/services/announcement-presentation';
 import { redemptionStorage, type PendingRedemption } from '@/services/redemption-storage';
 import type { PointSummary, Reward } from '@/services/rewards';
 const COLORS = {
@@ -20,7 +23,7 @@ const COLORS = {
 
 // ========================================
 // SHARED REAL REWARD CATALOGUE
-// Preserves reward cards and balance design across Points and Redeem.
+// Real inventory and balance in the dedicated Redeem destination.
 // Focus refreshes prices, stock and balance; old session responses are discarded.
 // ========================================
 export function RewardCatalogue({ showBalance = false, onBalance }: { showBalance?: boolean; onBalance?: (balance: number) => void }) {
@@ -32,6 +35,7 @@ export function RewardCatalogue({ showBalance = false, onBalance }: { showBalanc
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [confirmation, setConfirmation] = useState<{ reward: Reward; attempt: PendingRedemption } | null>(null);
   const requestKey = useRef('');
   const lock = useRef(false);
   const submitted = useRef(false);
@@ -77,15 +81,12 @@ export function RewardCatalogue({ showBalance = false, onBalance }: { showBalanc
         setPending(null);
       }
       setError(errorMessage(cause));
-    } finally { submitted.current = false; lock.current = false; setBusy(false); }
+    } finally { submitted.current = false; lock.current = false; setBusy(false); setConfirmation(null); }
   };
   const confirm = (reward: Reward) => {
     if (lock.current || loading || pending || !summary || reward.stock_quantity < 1 || summary.current_balance < reward.points_cost) return;
     lock.current = true;
-    Alert.alert('Confirm Redemption', 'Redeem this reward for ' + reward.points_cost + ' points?', [
-      { text: 'Cancel', style: 'cancel', onPress: () => { lock.current = false; } },
-      { text: 'Redeem', onPress: () => void spend({ rewardId: reward.id, requestKey: requestKey.current }) },
-    ], { cancelable: false });
+    setConfirmation({ reward, attempt: { rewardId: reward.id, requestKey: requestKey.current } });
   };
 
   // ========================================
@@ -93,31 +94,40 @@ export function RewardCatalogue({ showBalance = false, onBalance }: { showBalanc
   // No sample rewards or optimistic balance changes are displayed.
   // A pending retry remains available even when its previous purchase used the last unit.
   // ========================================
+  if (loading && !summary) return <TabSkeleton />;
   return <View>
+    <ConfirmationModal visible={!!confirmation} icon="card-giftcard" title="Confirm Redemption"
+      message={confirmation ? `${confirmation.reward.name}${confirmation.reward.voucher_value ? ' — ₱' + confirmation.reward.voucher_value : ''}\nRedeem this reward for ${confirmation.reward.points_cost} points?\nYour voucher will be saved in My Vouchers. Activate it only when you are at the cashier/counter; activation starts the 5-minute QR window.` : ''}
+      primaryLabel="Redeem" secondaryLabel="Cancel" variant="warning" loading={busy}
+      onSecondary={() => { if (!submitted.current) { lock.current = false; setConfirmation(null); } }}
+      onPrimary={async () => { if (confirmation && lock.current) await spend(confirmation.attempt); }} />
     {showBalance ? <View style={styles.balanceSection}><Text style={styles.balanceHeading}>Your Blood Points</Text>
       <View style={styles.pointsCircle}><Text style={styles.pointsNumber}>{summary?.current_balance ?? '--'}</Text><Text style={styles.pointsLabel}>Points</Text></View></View> : null}
     <View style={styles.rewardsHeader}><Text style={styles.rewardsHeading}>Available Rewards</Text>
       <Pressable onPress={() => router.navigate('/my-vouchers')} style={styles.myVouchersButton}><Text style={styles.myVouchersText}>My Vouchers</Text></Pressable></View>
-    {loading ? <Text>Loading rewards...</Text> : null}
-    {error ? <View><Text accessibilityRole="alert">{error}</Text><Pressable disabled={busy} onPress={() => void refresh()}><Text>Refresh rewards</Text></Pressable></View> : null}
+    {error ? <View><Text accessibilityRole="alert">{error}</Text><Pressable accessibilityRole="button" disabled={busy || loading || !!confirmation} onPress={() => void refresh()} style={styles.refreshButton}><Text style={styles.myVouchersText}>Retry</Text></Pressable></View> : null}
     {pending ? <Pressable disabled={busy} style={styles.myVouchersButton} onPress={() => { if (!lock.current) { lock.current = true; void spend(pending); } }}>
       <Text style={styles.myVouchersText}>{busy ? 'Submitting...' : 'Retry pending redemption'}</Text></Pressable> : null}
     {!loading && !error && items.length === 0 ? <Text style={{ color: COLORS.muted, marginVertical: 24 }}>No rewards are available right now. Check back later.</Text> : null}
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 16 }}>
       {items.map(item => {
+        const imageUrl = publicImageUrl(item.image_url, 'rewards');
         const unavailable = item.stock_quantity <= 0;
         const insufficient = !summary || summary.current_balance < item.points_cost;
         const disabled = unavailable || insufficient || busy || loading || !!pending;
-        return <View key={item.id} style={[styles.rewardCard, { flex: 0, width: '47%' }, unavailable && styles.rewardCardUnavailable]}>
+        return <View key={item.id} style={[styles.rewardCard, unavailable && styles.rewardCardUnavailable]}>
           <View style={[styles.rewardVisual, { backgroundColor: COLORS.softRed }]}>
-            {item.image_url ? <Image source={{ uri: item.image_url }} style={{ width: '100%', height: 96 }} resizeMode="cover" /> : <MaterialIcons name="card-giftcard" color={COLORS.brand} size={43} />}
+            {imageUrl ? <Image source={{ uri: imageUrl }} accessibilityLabel={item.name} style={styles.rewardImage} resizeMode="contain" /> : <MaterialIcons name="card-giftcard" color={COLORS.brand} size={43} />}
           </View><View style={styles.rewardBody}>
+            <View style={styles.rewardHeading}>
             <Text style={styles.rewardTitle}>{item.name}</Text>
-            {item.description ? <Text style={styles.costText}>{item.description}</Text> : null}
-            <Text style={styles.costText}>{item.points_cost} Blood Points</Text>
+            {item.voucher_value ? <Text style={styles.valueText}>₱{item.voucher_value} voucher</Text> : null}
+            </View>
+            {item.description ? <Text style={styles.costText} numberOfLines={2} ellipsizeMode="tail">{item.description}</Text> : null}
+            <Text style={styles.costText}>Redeem for {item.points_cost} Blood Points</Text>
             <Text style={styles.costText}>{item.stock_quantity} remaining</Text>
             <Pressable accessibilityRole="button" accessibilityState={{ disabled }} disabled={disabled} onPress={() => confirm(item)} style={[styles.redeemButton, disabled && styles.redeemButtonDisabled]}>
-              <Text style={styles.redeemButtonText}>{unavailable ? 'Out of stock' : insufficient ? 'Insufficient points' : 'Redeem'}</Text>
+              <Text style={[styles.redeemButtonText, disabled && styles.redeemButtonTextDisabled]}>{unavailable ? 'Out of Stock' : insufficient ? 'Insufficient points' : 'Redeem'}</Text>
             </Pressable>
           </View></View>;
       })}
@@ -240,8 +250,8 @@ const styles = StyleSheet.create({
   rewardRow: { gap: 12 },
   rowSeparator: { height: 12 },
   rewardCard: {
-    minHeight: 242,
-    flex: 1,
+    width: '100%',
+    flexDirection: 'row',
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -255,7 +265,12 @@ const styles = StyleSheet.create({
   },
   rewardCardUnavailable: { opacity: 0.72 },
   rewardVisual: {
+    width: 76,
     height: 96,
+    marginTop: 13,
+    marginLeft: 12,
+    borderRadius: 12,
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
@@ -270,15 +285,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#756B68',
   },
   unavailableBadgeText: { color: COLORS.white, fontSize: 9, fontWeight: '800' },
-  rewardBody: { flex: 1, padding: 13 },
-  rewardTitle: { minHeight: 38, color: COLORS.text, fontSize: 15, fontWeight: '800', lineHeight: 19 },
+  rewardImage: { width: 76, height: 96 },
+  rewardBody: { flex: 1, minWidth: 0, padding: 13 },
+  rewardHeading: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: 6 },
+  rewardTitle: { flexGrow: 1, flexShrink: 1, flexBasis: 85, color: COLORS.text, fontSize: 15, fontWeight: '800', lineHeight: 19 },
+  valueText: { color: COLORS.brand, fontSize: 13, fontWeight: '700', flexShrink: 1, textAlign: 'right' },
+  refreshButton: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
   costRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
-  costText: { flex: 1, color: COLORS.muted, fontSize: 11, fontWeight: '700' },
+  costText: { color: COLORS.muted, fontSize: 13, marginTop: 4 },
   redeemButton: {
-    minHeight: 40,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 'auto',
+    marginTop: 10,
     paddingHorizontal: 10,
     borderRadius: 13,
     backgroundColor: COLORS.brand,

@@ -1,12 +1,14 @@
+import { TabSkeleton } from '@/components/tab-skeleton';
 import { HomeDonationReminder } from '@/components/home-donation-reminder';
 import { FLOWIE_MASCOTS, HOME_MASCOT_CYCLE } from '@/constants/flowie-mascots';
 import { NotificationBell } from '@/components/notification-bell';
 import {useAuth} from '@/contexts/auth-context';
-import {boardItems,type DonationOpportunity} from '@/services/donations';
+import { announcementImageUrl, formatDonationDate, formatJoinedDate } from '@/services/announcement-presentation';
+import {boardItems, DONATION_STATUS, type DonationParticipation, type DonationOpportunity} from '@/services/donations';
 import {errorMessage} from '@/services/api';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Image,
   Pressable,
@@ -29,12 +31,11 @@ const COLORS = {
   white: '#FFFFFF',
 };
 
-const flowieMessages = (firstName: string) => [
-  `Hi ${firstName}! I'm here to help with your blood donation journey.`,
-  "Need help checking if you're ready to donate? Ask me anytime!",
-  'A healthy donor can make a life-saving difference.',
-  "Have questions about blood types or donation preparation? I'm here!",
-  "Don't forget—you can update your status through the Evaluation Form inside Flowie.",
+const FLOWIE_MESSAGES = [
+  'Need help with LifeFlow? Ask me anything.',
+  'Want to check your status? I can guide you.',
+  'Need help with points? I can explain them.',
+  'Have a donation question? Ask Flowie anytime.',
 ] as const;
 
 const GUIDE_STEPS = [
@@ -45,19 +46,54 @@ const GUIDE_STEPS = [
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { width } = useWindowDimensions();
+  const scrollRef = useRef<ScrollView>(null);
+  useFocusEffect(useCallback(() => {
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, []));
+  const { width, fontScale = 1 } = useWindowDimensions();
+  const [bubbleMeasurement, setBubbleMeasurement] = useState({ width, fontScale, height: 0 });
+  const bubbleHeight = Math.max(Math.ceil(72 * Math.max(1, fontScale)),
+    bubbleMeasurement.width === width && bubbleMeasurement.fontScale === fontScale ? Math.ceil(bubbleMeasurement.height + 18) : 0);
   const [flowieMessageIndex, setFlowieMessageIndex] = useState(0);
-  const stackFlowie = width < 370;
+  const compactFlowie = width < 340;
   // ========================================
   // LIVE ANNOUNCEMENT BOARD
   // Reloads on focus and periodically; expiration removes only the board item.
   // The Red Cross system card stays present even when loading fails.
   // ========================================
-  const {opportunities, profile}=useAuth();const [posts,setPosts]=useState<DonationOpportunity[]>([]);const [boardError,setBoardError]=useState('');const [clock,setClock]=useState(() => Date.now());
-  useFocusEffect(useCallback(()=>{let active=true;const load=()=>opportunities().then(r=>{if(active){setPosts(r.data);setBoardError('');}}).catch(e=>{if(active)setBoardError(errorMessage(e));});void load();const refresh=setInterval(()=>void load(),30000);const tick=setInterval(()=>setClock(Date.now()),1000);return()=>{active=false;clearInterval(refresh);clearInterval(tick);};},[opportunities]));
-  const board=boardItems(posts,clock);
-  const firstName = profile?.first_name?.trim() || 'Donor';
-  const messages = flowieMessages(firstName);
+  const [boardLoading, setBoardLoading] = useState(true);
+  const { opportunities, donationHistory, profile, loadProfile } = useAuth();
+  const [posts, setPosts] = useState<DonationOpportunity[]>([]);
+  const [boardError, setBoardError] = useState('');
+  const [recent, setRecent] = useState<DonationParticipation | null>(null);
+  const [activityError, setActivityError] = useState('');
+  const [clock, setClock] = useState(() => Date.now());
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    let refreshing = false;
+    const load = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      await Promise.allSettled([
+        // Session restoration initially has only the user. Hydrate the shared profile on Home too.
+        loadProfile(),
+        opportunities().then(result => {
+          if (active) { setPosts(result.data); setBoardError(''); }
+        }).catch(error => { if (active) setBoardError(errorMessage(error)); }),
+        donationHistory(1).then(result => {
+          if (active) { setRecent(result.data[0] ?? null); setActivityError(''); }
+        }).catch(error => { if (active) setActivityError(errorMessage(error)); }),
+      ]);
+      refreshing = false;
+      if (active) setBoardLoading(false);
+    };
+    void load();
+    const refresh = setInterval(() => void load(), 30000);
+    const tick = setInterval(() => setClock(Date.now()), 1000);
+    return () => { active = false; clearInterval(refresh); clearInterval(tick); };
+  }, [opportunities, donationHistory, loadProfile]));
+  const board = boardItems(posts, clock).slice(0, 2);
+  const firstName = profile?.first_name?.trim();
   const [mascotIndex, setMascotIndex] = useState(0);
 
   useFocusEffect(useCallback(() => {
@@ -70,7 +106,7 @@ export default function HomeScreen() {
 
   useEffect(() => {
     const intervalId = setInterval(() => {
-      setFlowieMessageIndex((currentIndex) => (currentIndex + 1) % flowieMessages('').length);
+      setFlowieMessageIndex((currentIndex) => (currentIndex + 1) % FLOWIE_MESSAGES.length);
     }, 4500);
 
     return () => clearInterval(intervalId);
@@ -95,45 +131,60 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView ref={scrollRef} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
+          {boardLoading ? <TabSkeleton /> : <>
+          <View style={styles.flowieSection}>
           <View style={styles.greetingBlock}>
-            <Text style={styles.greetingTitle}>Hello, {firstName}</Text>
+            {firstName ? <Text style={styles.greetingTitle}>Hello, {firstName}</Text> :
+              <View accessibilityRole="progressbar" accessibilityLabel="Loading greeting" accessibilityState={{ busy: true }} style={styles.greetingSkeleton} />}
           </View>
 
-          <View style={styles.flowieSection}>
-            <Pressable
-              accessibilityLabel="Open Flowie assistant"
-              accessibilityRole="button"
-              onPress={openFlowie}
-              style={({ pressed }) => [styles.flowieArea, pressed && styles.flowieAreaPressed]}>
-              <View style={[styles.flowieRow, stackFlowie && styles.flowieRowStacked]}>
+            <View style={styles.flowieArea}>
+              <View style={styles.flowieRow}>
                 <Image
                   accessibilityLabel="Flowie, the LifeFlow assistant"
                   resizeMode="contain"
                   source={FLOWIE_MASCOTS[HOME_MASCOT_CYCLE[mascotIndex]]}
-                  style={styles.flowieImage}
+                  style={[styles.flowieImage, compactFlowie && styles.flowieImageCompact]}
                 />
-                <View style={[styles.speechBubble, stackFlowie && styles.speechBubbleStacked]}>
-                  <View style={[styles.speechTail, stackFlowie && styles.speechTailStacked]} />
-                  <Text style={styles.flowieName}>Flowie</Text>
-                  <Text style={styles.flowieMessage}>{messages[flowieMessageIndex]}</Text>
+                <View style={styles.flowieRight}>
+                  <View style={[styles.speechBubble, { height: bubbleHeight }]}>
+                    <View style={styles.speechTail} />
+                    <Text style={styles.flowieMessage}>{FLOWIE_MESSAGES[flowieMessageIndex]}</Text>
+                    {/* Measure every candidate at the actual text width, reserving the tallest before rotation. */}
+                    <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.bubbleMeasurements}>
+                      {FLOWIE_MESSAGES.map(message => <Text key={message} style={styles.flowieMessage}
+                        onTextLayout={({ nativeEvent }) => {
+                          const height = nativeEvent.lines.reduce((total, line) => total + line.height, 0);
+                          setBubbleMeasurement(previous => {
+                            const current = previous.width === width && previous.fontScale === fontScale;
+                            return current && previous.height >= height ? previous : { width, fontScale, height: Math.max(current ? previous.height : 0, height) };
+                          });
+                        }}>{message}</Text>)}
+                    </View>
+                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={openFlowie}
+                    style={({ pressed }) => [
+                      styles.flowieButton,
+                      pressed && styles.flowieButtonPressed,
+                    ]}>
+                    <Text style={styles.flowieButtonText}>Ask Flowie</Text>
+                  </Pressable>
                 </View>
               </View>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={openFlowie}
-              style={({ pressed }) => [
-                styles.flowieButton,
-                pressed && styles.flowieButtonPressed,
-              ]}>
-              <Text style={styles.flowieButtonText}>Chat with Flowie</Text>
-            </Pressable>
+            </View>
           </View>
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Donation Opportunities</Text>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionHeading}>Latest Announcement</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="View all announcements" onPress={() => router.push('/announcements')} style={styles.viewAll}>
+                <Text style={styles.viewAllText}>View All</Text><MaterialIcons name="chevron-right" size={18} color={COLORS.brand} />
+              </Pressable>
+            </View>
 
             {boardError?<Text style={styles.cardDescription}>{boardError}</Text>:null}
             {board.map((announcement,index)=>announcement==='red-cross'?(<View key="red-cross" style={styles.redCrossCard}>
@@ -160,8 +211,8 @@ export default function HomeScreen() {
                   <Image
                     accessibilityLabel={`${announcement.title} illustration`}
                     resizeMode="contain"
-                    source={require('../../../assets/images/GoodMascot.png')}
-                    style={styles.announcementImage}
+                    source={announcementImageUrl(announcement.image_url) ? { uri: announcementImageUrl(announcement.image_url)! } : require('../../../assets/images/GoodMascot.png')}
+                    style={announcementImageUrl(announcement.image_url) ? { width: '100%', height: 158 } : styles.announcementImage}
                   />
                   <View style={styles.activeBadge}>
                     <Text style={styles.activeBadgeText}>{index===0?'PINNED':'ACTIVE BLOODLETTING'}</Text>
@@ -169,10 +220,10 @@ export default function HomeScreen() {
                 </View>
                 <View style={styles.announcementBody}>
                   <Text style={styles.cardTitle}>{announcement.title}</Text>
-                  <Text style={styles.cardDescription}>{announcement.description}</Text>
+                  <Text style={styles.cardDescription} numberOfLines={3} ellipsizeMode="tail">{announcement.description}</Text>
                   <View style={styles.detailRow}>
                     <MaterialIcons name="event" color={COLORS.brand} size={17} />
-                    <Text style={styles.cardMeta}>{announcement.event_date}</Text>
+                    <Text style={styles.cardMeta}>{formatDonationDate(announcement.event_date ?? announcement.donation_date)}</Text>
                   </View>
                   <View style={styles.detailRow}>
                     <MaterialIcons name="location-on" color={COLORS.brand} size={17} />
@@ -193,6 +244,26 @@ export default function HomeScreen() {
           </View>
 
           <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionHeading}>Recent Activity</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="View all activity" onPress={() => router.push('/(tabs)/activity')} style={styles.viewAll}>
+                <Text style={styles.viewAllText}>View All</Text><MaterialIcons name="chevron-right" size={18} color={COLORS.brand} />
+              </Pressable>
+            </View>
+            {activityError ? <Text style={styles.cardDescription}>{activityError}</Text> : null}
+            {recent ? <Pressable accessibilityRole="button" accessibilityLabel="View recent activity" onPress={() => router.push({ pathname: '/activity/[id]', params: { id: String(recent.id) } })} style={({ pressed }) => [styles.guideCard, pressed && styles.pressed]}>
+              <Text style={styles.cardTitle} numberOfLines={2}>{recent.opportunity.title}</Text>
+              <View style={styles.activityStatus}>
+                <MaterialIcons name={recent.status === 'completed' ? 'check-circle-outline' : 'history'} size={20} color={COLORS.brand} />
+                <Text style={styles.viewAllText}>{DONATION_STATUS[recent.status]}</Text>
+              </View>
+              <Text style={styles.cardMeta}>{recent.opportunity.event_date
+                ? formatDonationDate(recent.opportunity.event_date)
+                : 'Joined ' + formatJoinedDate(recent.joined_at)}</Text>
+            </Pressable> : !activityError ? <View style={styles.guideCard}><Text style={styles.cardDescription}>No donation activity yet. Your latest activity will appear here.</Text></View> : null}
+          </View>
+
+          <View style={styles.section}>
             <Text style={styles.sectionTitle}>How to Use LifeFlow</Text>
             <View style={styles.guideCard}>
               {GUIDE_STEPS.map(([title, description], index) => (
@@ -208,6 +279,7 @@ export default function HomeScreen() {
               ))}
             </View>
           </View>
+          </>}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -215,7 +287,12 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: COLORS.background },
+  safeArea: { flex: 1, backgroundColor: 'transparent' },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  sectionHeading: { flex: 1, color: COLORS.text, fontSize: 20, fontWeight: '800' },
+  viewAll: { flexDirection: 'row', alignItems: 'center', minHeight: 44 },
+  viewAllText: { color: COLORS.brand, fontSize: 14, fontWeight: '700' },
+  activityStatus: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   fixedHeader: {
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
@@ -258,17 +335,19 @@ const styles = StyleSheet.create({
   scrollContent: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 32 },
   content: { width: '100%', maxWidth: 560, alignSelf: 'center', gap: 25 },
   greetingBlock: { paddingHorizontal: 2 },
-  greetingTitle: { color: COLORS.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.6 },
+  greetingTitle: { color: COLORS.text, fontSize: 24, fontWeight: '800', letterSpacing: -0.6 },
+  greetingSkeleton: { width: 165, height: 29, borderRadius: 10, backgroundColor: '#EEE5DF' },
   flowieSection: { gap: 14 },
-  flowieArea: { paddingHorizontal: 2, borderRadius: 20 },
-  flowieAreaPressed: { opacity: 0.78, transform: [{ scale: 0.99 }] },
-  flowieRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  flowieRowStacked: { flexDirection: 'column', gap: 0 },
-  flowieImage: { width: 145, height: 145 },
+  flowieArea: { padding: 14, borderRadius: 24, borderWidth: 1, borderColor: COLORS.border, backgroundColor: '#FFF0E8' },
+  flowieRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  flowieRight: { flex: 1, minWidth: 0, gap: 10 },
+  flowieImage: { width: 105, height: 125 },
+  flowieImageCompact: { width: 82, height: 98 },
   speechBubble: {
     position: 'relative',
-    flex: 1,
-    padding: 17,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: COLORS.border,
     borderRadius: 19,
@@ -279,11 +358,11 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
-  speechBubbleStacked: { width: '100%', flex: 0 },
   speechTail: {
     position: 'absolute',
     left: -9,
-    top: 48,
+    top: '50%',
+    marginTop: -8,
     width: 17,
     height: 17,
     borderLeftWidth: 1,
@@ -292,18 +371,15 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     transform: [{ rotate: '45deg' }],
   },
-  speechTailStacked: { left: 34, top: -9, transform: [{ rotate: '135deg' }] },
-  flowieName: { color: COLORS.brand, fontSize: 18, fontWeight: '800' },
-  flowieMessage: { marginTop: 5, color: COLORS.text, fontSize: 14, lineHeight: 21 },
+  flowieMessage: { color: COLORS.text, fontSize: 14, lineHeight: 21 },
+  bubbleMeasurements: { position: 'absolute', left: 10, right: 10, top: 8, opacity: 0 },
   flowieButton: {
-    width: '82%',
-    maxWidth: 320,
-    minHeight: 50,
-    alignSelf: 'center',
+    width: '100%',
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 13,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
     borderRadius: 16,
     backgroundColor: COLORS.brand,
   },

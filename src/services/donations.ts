@@ -5,7 +5,7 @@ import { apiRequest } from './api';
 // Only backend verification creates trusted outcomes; possible points are informational.
 // ========================================
 export type DonationStatus = 'pending' | 'for_verification' | 'needs_revision' | 'completed' | 'rejected' | 'cancelled';
-export type DonationOpportunity = { id:number|null; source_type?:'admin_announcement'|'red_cross_dagupan'; title:string; description:string; location:string; event_date:string|null; start_time:string|null; end_time:string|null; points_reward:number; published_at:string|null; expires_at:string|null; status:string };
+export type DonationOpportunity = { id:number|null; source_type?:'admin_announcement'|'red_cross_dagupan'; image_url?:string|null; donation_date?:string|null; title:string; description:string; location:string; event_date:string|null; start_time:string|null; end_time:string|null; points_reward:number; published_at:string|null; expires_at:string|null; status:string };
 export type DonationParticipation = { id:number; source_type?:'admin_announcement'|'red_cross_dagupan'; status:DonationStatus; joined_at:string; cancelled_at:string|null; proof_size:number|null; proof_original_name:string|null; proof_uploaded_at:string|null; verified_at:string|null; rejection_reason:string|null; revision_reason:string|null; opportunity:DonationOpportunity };
 export type DonationPage = { data:DonationParticipation[]; current_page:number; last_page:number; total:number };
 export type DonationSummary = { total_donations:number; achievement:{key:string;label:string} };
@@ -35,8 +35,8 @@ export const donationApi={
  history:(token:string,page=1,status?:DonationStatus)=>apiRequest<DonationPage>('/donation-participations?page='+page+(status?'&status='+status:''),{token}),
  summary:(token:string)=>apiRequest<DonationSummary>('/donation-summary',{token}),
  detail:(token:string,id:string)=>apiRequest<{participation:DonationParticipation}>('/donation-participations/'+encodeURIComponent(id),{token}),
- opportunities:(token:string)=>apiRequest<{data:DonationOpportunity[]}>('/donation-opportunities',{token}),
- opportunity:(token:string,id:string)=>apiRequest<{opportunity:DonationOpportunity}>('/donation-opportunities/'+encodeURIComponent(id),{token}),
+ opportunities:(token:string)=>apiRequest<{data:DonationOpportunity[]}>('/announcements',{token}),
+ opportunity:(token:string,id:string)=>apiRequest<{opportunity:DonationOpportunity}>((id==='red-cross-dagupan'?'/donation-opportunities/':'/announcements/')+encodeURIComponent(id),{token}),
  join:(token:string,id:string)=>apiRequest<{participation:DonationParticipation}>('/donation-opportunities/'+encodeURIComponent(id)+'/join',{token,method:'POST'}),
  cancel:(token:string,id:string)=>apiRequest<{participation:DonationParticipation}>('/donation-participations/'+encodeURIComponent(id)+'/cancel',{token,method:'POST'}),
  proof:(token:string,id:string,file:ProofUpload)=>apiRequest<{participation:DonationParticipation}>('/donation-participations/'+encodeURIComponent(id)+'/proof',{token,method:'POST',body:file,timeoutMs:120000}),

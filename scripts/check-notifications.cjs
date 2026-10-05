@@ -51,6 +51,7 @@ async function serviceChecks() {
   assert.equal(sent.path, '/notifications/read-all');
   assert.equal(service.notificationDestination({type:'donation_completed',data:{participation_id:12}}).params.id, '12');
   assert.equal(service.notificationDestination({type:'donation_needs_revision',data:{participation_id:12}}).pathname, '/activity/[id]');
+  assert.equal(service.notificationDestination({type:'donation_cooldown_complete',data:null}).pathname, '/(tabs)/status');
   assert.equal(service.notificationDestination({type:'admin_announcement',data:{opportunity_id:8}}).pathname, '/announcement/[id]');
   for (const id of [-1,0,1.5,'12','../12',Number.MAX_SAFE_INTEGER+1,null]) {
     assert.equal(service.notificationDestination({type:'donation_rejected',data:{participation_id:id}}), null);

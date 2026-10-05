@@ -1,4 +1,4 @@
-import { requestFlowieChat, type FlowieHistoryEntry } from '@/services/flowie-chat';
+import { flowieApi, requestFlowieChat, type FlowieChatResult, type FlowieConversation, type FlowieDetail, type FlowieHistoryEntry, type FlowieMutation, type FlowiePage } from '@/services/flowie-chat';
 import type { ProofUpload } from '@/services/proof-storage';
 import type { ProfileMascotKey } from '@/constants/profile-settings';
 import { rewardsApi, type PointSummary, type PointTransaction, type Voucher, type VoucherStatus, type Page, type Catalogue, type RedemptionResponse, type VoucherResponse } from '@/services/rewards';
@@ -6,7 +6,7 @@ import { notificationApi, type HomeReminders, type NotificationPage, type Import
 import { donationApi, type DonationOpportunity, type DonationParticipation, type DonationPage, type DonationSummary, type DonationStatus } from '@/services/donations';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ApiError, errorMessage } from '@/services/api';
-import { authApi, type AuthResponse, type PendingRegistration, type DonorProfile, type ProfileForm, type RegisterForm, type User } from '@/services/auth';
+import { authApi, type AuthResponse, type LoginCodeResponse, type PendingRegistration, type DonorProfile, type ProfileForm, type RegisterForm, type User } from '@/services/auth';
 import { eligibilityApi, type EligibilityState, type EligibilityAnswers, type EligibilityAssessment } from '@/services/eligibility';
 import { tokenStorage } from '@/services/token-storage';
 
@@ -16,13 +16,21 @@ import { tokenStorage } from '@/services/token-storage';
 // The token stays private to this provider and storage.
 // ========================================
 type AuthContextValue = {
-  flowieChat: (message: string, history: FlowieHistoryEntry[]) => Promise<{ reply: string }>;
+  flowieChat: (message: string, history: FlowieHistoryEntry[], conversationId?: number) => Promise<FlowieChatResult>;
+  flowieHistory: (page?: number) => Promise<FlowiePage<FlowieConversation>>;
+  flowieDeleted: (page?: number) => Promise<FlowiePage<FlowieConversation>>;
+  flowieDetail: (id: number, page?: number) => Promise<FlowieDetail>;
+  endFlowie: (id: number) => Promise<FlowieMutation>;
+  deleteFlowie: (id: number) => Promise<FlowieMutation>;
+  restoreFlowie: (id: number) => Promise<FlowieMutation>;
   user: User | null; profile: DonorProfile | null; restoring: boolean; sessionError: string;
   busy: boolean; restore: () => Promise<void>;
-  login: (email: string, password: string) => Promise<void>;
+  requestLoginCode: (mobile: string) => Promise<LoginCodeResponse>;
+  login: (mobile: string, code: string) => Promise<void>;
   register: (form: RegisterForm) => Promise<PendingRegistration>;
   verifyRegistration: (pendingToken: string, code: string) => Promise<void>;
-  requestEmailChange: (password: string, email: string) => Promise<PendingRegistration>;
+  confirmEmailLogin: (mobile: string, code: string) => Promise<void>;
+  requestEmailChange: (email: string) => Promise<PendingRegistration>;
   resendEmailChange: (pendingToken: string) => Promise<{resend_after: number; expires_in: number}>;
   verifyEmailChange: (pendingToken: string, code: string) => Promise<void>;
   changePassword: (current: string, password: string, confirmation: string) => Promise<void>;
@@ -198,7 +206,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw error;
     }
   }, [clearSession]);
-  const flowieChat = useCallback((message: string, history: FlowieHistoryEntry[]) => donationRequest(saved => requestFlowieChat(saved, message, history)), [donationRequest]);
+  const flowieChat = useCallback((message: string, history: FlowieHistoryEntry[], id?: number) => donationRequest(saved => requestFlowieChat(saved, message, history, id)), [donationRequest]);
+  const flowieHistory = useCallback((page?: number) => donationRequest(saved => flowieApi.history(saved, page)), [donationRequest]);
+  const flowieDeleted = useCallback((page?: number) => donationRequest(saved => flowieApi.deleted(saved, page)), [donationRequest]);
+  const flowieDetail = useCallback((id: number, page?: number) => donationRequest(saved => flowieApi.detail(saved, id, page)), [donationRequest]);
+  const endFlowie = useCallback((id: number) => donationRequest(saved => flowieApi.end(saved, id)), [donationRequest]);
+  const deleteFlowie = useCallback((id: number) => donationRequest(saved => flowieApi.remove(saved, id)), [donationRequest]);
+  const restoreFlowie = useCallback((id: number) => donationRequest(saved => flowieApi.restore(saved, id)), [donationRequest]);
   const donationHistory = useCallback((page = 1, status?: DonationStatus) => donationRequest(saved => donationApi.history(saved, page, status)), [donationRequest]);
   const donationSummary = useCallback(() => donationRequest(donationApi.summary), [donationRequest]);
   const donationDetail = useCallback((id: string) => donationRequest(saved => donationApi.detail(saved, id)), [donationRequest]);
@@ -264,13 +278,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return warning;
   });
 
-  return <AuthContext.Provider value={{ homeReminders, flowieChat, pointsSummary, pointTransactions, rewards, redeemReward, vouchers, voucher, activateVoucher, listNotifications, notificationCount, readNotification, readAllNotifications, registerDeviceToken, unregisterDeviceToken, user, profile, restoring, sessionError, busy,
+  return <AuthContext.Provider value={{ homeReminders, flowieChat, flowieHistory, flowieDeleted, flowieDetail, endFlowie, deleteFlowie, restoreFlowie, pointsSummary, pointTransactions, rewards, redeemReward, vouchers, voucher, activateVoucher, listNotifications, notificationCount, readNotification, readAllNotifications, registerDeviceToken, unregisterDeviceToken, user, profile, restoring, sessionError, busy,
     restore: async () => { setRestoring(true); await restore(); },
-    login: (email, password) => exclusive(async () => acceptSession(await authApi.login(email, password))),
+    requestLoginCode: mobile => exclusive(() => authApi.requestLoginCode(mobile)),
+    login: (mobile, code) => exclusive(async () => acceptSession(await authApi.login(mobile, code))),
     register: (form) => exclusive(() => authApi.register(form)),
     verifyRegistration: (pendingToken, code) => exclusive(async () => acceptSession(await authApi.verifyRegistration(pendingToken, code))),
     eligibilityState, latestAssessment, submitAssessment, donationHistory, donationSummary, donationDetail, opportunities, opportunity, joinOpportunity, cancelParticipation, submitProof,
-    requestEmailChange: (password, email) => exclusive(() => donationRequest(saved => authApi.requestEmailChange(saved, password, email))),
+    confirmEmailLogin: (mobile, code) => exclusive(async () => { await donationRequest(saved => authApi.confirmEmailLogin(saved, mobile, code)); }),
+    requestEmailChange: email => exclusive(() => donationRequest(saved => authApi.requestEmailChange(saved, email))),
     resendEmailChange: pending => exclusive(() => donationRequest(saved => authApi.resendEmailChange(saved, pending))),
     verifyEmailChange: (pending, code) => exclusive(async () => {
       const response = await donationRequest(saved => authApi.verifyEmailChange(saved, pending, code));

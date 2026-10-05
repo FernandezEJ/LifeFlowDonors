@@ -46,7 +46,6 @@ async function requestChecks() {
       accepted_terms: true, acknowledged_privacy: true, acknowledged_prescreening: true,
       first_name: 'Integration', middle_name: null, last_name: 'Check', email: fixture.email,
       mobile_number: fixture.mobileNumber, birth_date: '2000-02-29', gender: 'Female', blood_type: 'O+',
-      password: fixture.password, password_confirmation: fixture.password,
     });
     assert.equal(request.headers.Accept, 'application/json');
     assert.equal(request.headers['Content-Type'], 'application/json');
@@ -117,7 +116,10 @@ function providerHarness(initialToken = null) {
     // imports donation and eligibility services during initialization.
     // ========================================
     // Rewards now share the protected account request wrapper.
-    '@/services/flowie-chat': { requestFlowieChat: async()=>({reply:'Guide'}) },
+    '@/services/flowie-chat': { requestFlowieChat: (...args)=>backend.flowieChat(...args), flowieApi: {
+      history: (...args)=>backend.flowieHistory(...args), deleted: (...args)=>backend.flowieDeleted(...args), detail: (...args)=>backend.flowieDetail(...args),
+      end: (...args)=>backend.endFlowie(...args), remove: (...args)=>backend.deleteFlowie(...args), restore: (...args)=>backend.restoreFlowie(...args),
+    } },
     '@/services/rewards': { rewardsApi: {} },
     '@/services/notifications': { notificationApi: {} },
     '@/services/donations': { donationApi: {join:(...args)=>backend.join(...args)} },
@@ -183,7 +185,25 @@ async function providerChecks() {
   await h.render().logout();
   rejectJoin(new api.ApiError('Changed', 409, {}, {reason:'active_participation_exists',participation_id:77}));
   await hiddenConflict;
-  console.log('PASS: token persistence, restore/revocation/offline retry, profile state, logout/cleanup failures, duplicate submission lock');
+  h = providerHarness(); await h.render().login(fixture.email, fixture.password);
+  const flowieCalls = [];
+  for (const method of ['flowieChat','flowieHistory','flowieDeleted','flowieDetail','endFlowie','deleteFlowie','restoreFlowie']) {
+    h.backend[method] = async (...args) => { flowieCalls.push([method, ...args]); return {reply:'Actual reply',conversation_id:3}; };
+  }
+  await h.render().flowieChat('Question', [], 3); await h.render().flowieHistory(2); await h.render().flowieDeleted(2);
+  await h.render().flowieDetail(3, 2); await h.render().endFlowie(3); await h.render().deleteFlowie(3); await h.render().restoreFlowie(3);
+  assert.ok(flowieCalls.every(call=>call[1]==='test-only')); assert.equal(flowieCalls[0][4],3); assert.equal(flowieCalls[3][3],2);
+  let resolveOldChat;
+  h.backend.flowieDetail = () => new Promise(resolve=>{resolveOldChat=resolve;});
+  const oldChat = h.render().flowieDetail(3);
+  const discarded = assert.rejects(oldChat,error=>error.status===401 && error.data===undefined);
+  await h.render().logout();
+  h.backend.login = async()=>({user:{id:8,email:'second@example.test'},token:'second-only'});
+  await h.render().login('second@example.test','unused');
+  resolveOldChat({conversation:{id:3},messages:{data:[{content:'First donor private text'}]}}); await discarded;
+  assert.equal(h.render().user.id,8); assert.equal(h.saved(),'second-only');
+  await h.render().logout(); await assert.rejects(h.render().flowieHistory(),{status:401});
+  console.log('PASS: token persistence, restore/revocation/offline retry, profile state, logout/cleanup failures, duplicate submission lock, protected Flowie lifecycle and discarded cross-session messages');
 }
 
 /* ========================================

@@ -1,4 +1,4 @@
-import { RewardCatalogue } from '@/components/reward-catalogue';
+import { TabSkeleton } from '@/components/tab-skeleton';
 import { useAuth } from '@/contexts/auth-context';
 import { errorMessage } from '@/services/api';
 import type { Page, PointTransaction } from '@/services/rewards';
@@ -33,6 +33,12 @@ const FILTERS: readonly { label: string; value: TransactionFilter }[] = [
 
 export default function PointsScreen() {
   const router = useRouter();
+  const scrollRef = useRef<ScrollView>(null);
+  const historyScrollRef = useRef<ScrollView>(null);
+  useFocusEffect(useCallback(() => {
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+    historyScrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, []));
   const [selectedFilter, setSelectedFilter] = useState<TransactionFilter>('all');
 
 
@@ -40,8 +46,27 @@ export default function PointsScreen() {
   // PRIVATE PAGINATED LEDGER
   // Filters query the whole server history; focus refreshes after spending.
   // ========================================
-  const { pointTransactions } = useAuth();
+  const { pointTransactions, pointsSummary } = useAuth();
   const [balance, setBalance] = useState<number | null>(null);
+  const [balanceLoading, setBalanceLoading] = useState(true);
+  const [balanceError, setBalanceError] = useState('');
+  const balanceGeneration = useRef(0);
+  const loadBalance = useCallback(async () => {
+    const current = ++balanceGeneration.current;
+    setBalanceLoading(true); setBalanceError('');
+    try {
+      const summary = await pointsSummary();
+      if (current === balanceGeneration.current) setBalance(summary.current_balance);
+    } catch (cause) {
+      if (current === balanceGeneration.current) setBalanceError(errorMessage(cause));
+    } finally {
+      if (current === balanceGeneration.current) setBalanceLoading(false);
+    }
+  }, [pointsSummary]);
+  useFocusEffect(useCallback(() => {
+    void loadBalance();
+    return () => { balanceGeneration.current++; };
+  }, [loadBalance]));
   const [page, setPage] = useState<Page<PointTransaction> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -66,18 +91,20 @@ export default function PointsScreen() {
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView ref={scrollRef} contentContainerStyle={styles.scrollContent} nestedScrollEnabled showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
+          {balance === null && balanceLoading ? <TabSkeleton variant="summary" /> : <>
           <View style={styles.balanceSection}>
             <Text style={styles.balanceHeading}>Your Blood Points</Text>
             <View
               accessibilityLabel={`${(balance ?? '--')} Blood Points`}
               accessibilityRole="text"
               style={styles.pointsCircle}>
-              {/* Balance comes from the same catalogue response used for spending. */}
+              {/* The server summary refreshes after returning from Redeem. */}
               <Text style={styles.pointsNumber}>{(balance ?? '--')}</Text>
               <Text style={styles.pointsLabel}>Points</Text>
             </View>
+            <View style={styles.pointsActions}>
             <Pressable
               accessibilityRole="button"
               onPress={() => router.push('/redeem')}
@@ -87,10 +114,14 @@ export default function PointsScreen() {
               ]}>
               <Text style={styles.redeemButtonText}>Redeem</Text>
             </Pressable>
+            <Pressable accessibilityRole="button" onPress={() => router.push('/my-vouchers')} style={({ pressed }) => [styles.vouchersButton, pressed && styles.pressed]}>
+              <Text style={styles.vouchersText}>My Vouchers</Text>
+            </Pressable>
+            </View>
           </View>
-
-          <RewardCatalogue onBalance={setBalance} />
+          {balanceError ? <View><Text accessibilityRole="alert">{balanceError}</Text><Pressable accessibilityRole="button" disabled={balanceLoading} onPress={() => void loadBalance()} style={styles.retry}><Text style={styles.vouchersText}>Retry balance</Text></Pressable></View> : null}
           <View style={styles.transactionsSection}>
+            <Text style={styles.historyHeading}>Points History</Text>
             <View style={styles.filterBar}>
               {FILTERS.map((filter) => {
                 const selected = selectedFilter === filter.value;
@@ -99,7 +130,7 @@ export default function PointsScreen() {
                   <Pressable
                     accessibilityRole="button"
                     key={filter.value}
-                    onPress={() => { if (selectedFilter !== filter.value) { setPage(null); setSelectedFilter(filter.value); } }}
+                    onPress={() => { if (selectedFilter !== filter.value) { setPage(null); setLoading(true); setSelectedFilter(filter.value); } }}
                     style={({ pressed }) => [
                       styles.filterButton,
                       selected && styles.filterButtonSelected,
@@ -113,9 +144,12 @@ export default function PointsScreen() {
               })}
             </View>
 
-            {loading ? <Text>Loading transactions...</Text> : null}
+            {loading && !page ? <TabSkeleton /> : null}
             {error ? <View><Text accessibilityRole="alert">{error}</Text><Pressable onPress={() => void load()}><Text>Retry</Text></Pressable></View> : null}
-            <View style={styles.transactionList}>
+            {page || !loading ? <ScrollView ref={historyScrollRef} key={selectedFilter} accessibilityLabel="Points history" nestedScrollEnabled
+              showsVerticalScrollIndicator={false} scrollEnabled={filteredTransactions.length > 5} bounces={false}
+              style={[styles.historyViewport, filteredTransactions.length > 5 && styles.historyLimited]}
+              contentContainerStyle={styles.transactionList}>
               {filteredTransactions.length > 0 ? (
                 filteredTransactions.map((transaction) => {
                   const earned = transaction.amount > 0;
@@ -140,12 +174,13 @@ export default function PointsScreen() {
               ) : (
                 <View style={styles.emptyState}>
                   <MaterialIcons name="receipt-long" color={COLORS.muted} size={28} />
-                  <Text style={styles.emptyText}>{loading ? 'Loading...' : error ? 'History unavailable.' : 'No transactions yet.'}</Text>
+                  <Text style={styles.emptyText}>{error ? 'History unavailable.' : 'No transactions yet.'}</Text>
                 </View>
               )}
-            </View>
-            {page && page.current_page < page.last_page ? <Pressable disabled={loading} onPress={() => void load(page.current_page + 1)}><Text>Load more transactions</Text></Pressable> : null}
+            {page && page.current_page < page.last_page ? <Pressable style={styles.retry} disabled={loading} onPress={() => void load(page.current_page + 1)}><Text>{loading ? 'Loading more...' : 'Load more transactions'}</Text></Pressable> : null}
+            </ScrollView> : null}
           </View>
+          </>}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -153,7 +188,7 @@ export default function PointsScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: COLORS.background },
+  safeArea: { flex: 1, backgroundColor: 'transparent' },
   fixedHeader: {
     zIndex: 10,
     borderBottomWidth: 1,
@@ -196,6 +231,11 @@ const styles = StyleSheet.create({
   scrollContent: { paddingHorizontal: 20, paddingTop: 24, paddingBottom: 28 },
   content: { width: '100%', maxWidth: 620, alignSelf: 'center', gap: 28 },
   balanceSection: { alignItems: 'center' },
+  pointsActions: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 18 },
+  vouchersButton: { flexGrow: 1, flexBasis: 130, alignItems: 'center', justifyContent: 'center', minHeight: 50, paddingHorizontal: 12, borderRadius: 16, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.white },
+  vouchersText: { color: COLORS.brand, fontSize: 15, fontWeight: '700' },
+  retry: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
+  historyHeading: { color: COLORS.text, fontSize: 17, fontWeight: '700', marginBottom: 12 },
   balanceHeading: { color: COLORS.text, fontSize: 20, fontWeight: '800' },
   pointsCircle: {
     width: 154,
@@ -222,20 +262,22 @@ const styles = StyleSheet.create({
   },
   pointsLabel: { color: COLORS.muted, fontSize: 14, fontWeight: '700' },
   redeemButton: {
-    minWidth: 174,
+    flexGrow: 1,
+    flexBasis: 130,
     minHeight: 50,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 18,
-    paddingHorizontal: 28,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     borderRadius: 16,
-    backgroundColor: COLORS.brand,
+    backgroundColor: COLORS.white,
   },
   redeemButtonPressed: {
-    backgroundColor: COLORS.brandPressed,
+    opacity: 0.7,
     transform: [{ scale: 0.99 }],
   },
-  redeemButtonText: { color: COLORS.white, fontSize: 15, fontWeight: '800' },
+  redeemButtonText: { color: COLORS.brand, fontSize: 15, fontWeight: '700' },
   transactionsSection: {
     padding: 15,
     borderWidth: 1,
@@ -262,7 +304,9 @@ const styles = StyleSheet.create({
   filterButtonPressed: { opacity: 0.75 },
   filterText: { color: COLORS.text, fontSize: 13, fontWeight: '600' },
   filterTextSelected: { color: COLORS.white, fontWeight: '700' },
-  transactionList: { gap: 10, marginTop: 13 },
+  historyViewport: { marginTop: 13, flexGrow: 0, flexShrink: 0 },
+  historyLimited: { maxHeight: 420 },
+  transactionList: { gap: 10 },
   transactionCard: {
     minHeight: 76,
     flexDirection: 'row',

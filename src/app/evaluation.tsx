@@ -1,52 +1,46 @@
+import { TabSkeleton } from '@/components/tab-skeleton';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Stack, useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { NotificationBell } from '@/components/notification-bell';
 import { errorMessage } from '@/services/api';
-import { useEligibilityCooldown, formatEligibilityWait } from '@/hooks/use-eligibility-cooldown';
+import { useEligibilityCooldown } from '@/hooks/use-eligibility-cooldown';
 import { EligibilityCooldownError, SCREENING_NOTICE, type EligibilityAnswers, type EligibilityAssessment, type EligibilityResult } from '@/services/eligibility';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 // ========================================
 // SELF-ASSESSMENT QUESTION FLOW
 // Answers stay in this screen until review. Only Laravel evaluates them.
 // ========================================
-type Question = { key: keyof EligibilityAnswers; text: string; numeric?: boolean; pregnancy?: boolean };
+type Question = { key: keyof EligibilityAnswers; text: string };
 export const QUESTIONS: readonly Question[] = [
-  { key: 'weight', text: 'What is your current weight in kilograms?', numeric: true },
-  { key: 'sleepHours', text: 'How many hours did you sleep last night?', numeric: true },
-  { key: 'currentSymptoms', text: 'Do you currently have fever, cough, colds, sore throat, or otherwise feel unwell?' },
-  { key: 'donatedWithinThreeMonths', text: 'Have you donated blood within the last 3 months?' },
-  { key: 'feelsWell', text: 'Do you feel well enough to donate today?' },
-  { key: 'currentlyPregnant', text: 'Are you currently pregnant?', pregnancy: true },
-  { key: 'takingAntibioticsForActiveInfection', text: 'Are you currently taking antibiotics for an active infection?' },
-  { key: 'stillRecoveringFromProcedure', text: 'Are you still recovering from surgery, a medical procedure, or a recent hospitalization?' },
-  { key: 'activeOrRecoveringInfection', text: 'Do you currently have an active infection or are you still recovering from one?' },
-  { key: 'weakDizzyOrUnusuallyTired', text: 'Are you currently feeling weak, dizzy, unusually tired, or physically unwell today?' },
+  { key: 'weightAtLeast50Kg', text: 'Do you weigh at least 50 kg?' },
+  { key: 'sleptAtLeastFiveHours', text: 'Have you had at least 5 hours of sleep before your planned donation?' },
+  { key: 'eatenProperMeal', text: 'Have you eaten a proper meal before your planned donation?' },
+  { key: 'avoidedAlcoholFor24Hours', text: 'Have you avoided drinking alcohol within the last 24 hours?' },
+  { key: 'threeMonthsSinceLastDonation', text: 'Have at least 3 months passed since your last completed blood donation?' },
+  { key: 'recentFeverInfectionOrIllness', text: 'Have you had a fever, infection, or illness recently?' },
+  { key: 'unusualBleedingWeaknessOrDizziness', text: 'Have you recently experienced unusual bleeding, severe weakness, or dizziness?' },
+  { key: 'recentSurgeryOrMajorProcedure', text: 'Have you recently undergone surgery or a major medical or dental procedure?' },
+  { key: 'medicationAffectingDonation', text: 'Are you currently taking medication that may affect blood donation?' },
+  { key: 'conditionOrTreatmentRequiringWait', text: 'Have you had any recent condition or treatment that a blood donation facility previously told you requires waiting before donating again?' },
 ];
-type Draft = Partial<Record<keyof EligibilityAnswers, string>>;
-export function validAnswer(question: Question, value = ''): boolean {
-  if (question.numeric) {
-    const normalized = value.trim().replace(',', '.');
-    if (!/^\d+(\.\d+)?$/.test(normalized)) return false;
-    const number = Number(normalized);
-    return Number.isFinite(number) && (question.key === 'weight' ? number > 0 : number >= 0 && number <= 24);
-  }
-  return value === 'YES' || value === 'NO' || (!!question.pregnancy && value === 'NOT_APPLICABLE');
+type Draft = Partial<EligibilityAnswers>;
+export function validAnswer(_question: Question, value = ''): boolean {
+  return value === 'YES' || value === 'NO';
 }
 function answerLabel(value?: string) {
   return value === 'YES' ? 'Yes' : value === 'NO' ? 'No' : value === 'NOT_APPLICABLE' ? 'Not applicable' : value || 'Not answered';
 }
 const RESULTS: Record<EligibilityResult, { title: string; copy: string; color: string }> = {
-  eligible: { title: 'Ready to proceed', copy: 'Based on your answers, you may proceed to the donation facility for final screening.', color: '#287A47' },
-  not_eligible: { title: 'Not ready to donate right now', copy: 'Based on your answers, one or more factors suggest that you should wait before donating.', color: '#B52E2E' },
+  eligible: { title: 'Ready to proceed', copy: 'Based on your answers, you may proceed with the donation process.', color: '#287A47' },
+  not_eligible: { title: 'Not Eligible for Now', copy: 'One or more of your answers did not meet LifeFlow\'s current pre-screening criteria.', color: '#B52E2E' },
   // Preserve historical output without re-evaluating old answers.
-  temporarily_ineligible: { title: 'Not ready to donate right now', copy: 'Based on your answers, one or more factors may mean you should wait before donating.', color: '#B52E2E' },
-  needs_further_screening: { title: 'Previous assessment: facility review advised', copy: 'This saved assessment used an earlier questionnaire. It has not been re-evaluated. Please confirm with the donation facility.', color: '#514644' },
+  temporarily_ineligible: { title: 'Not Eligible for Now', copy: 'Based on your answers, one or more factors may mean you should wait before donating.', color: '#B52E2E' },
+  needs_further_screening: { title: 'Not Eligible for Now', copy: 'This saved assessment used an earlier questionnaire. It has not been re-evaluated. Please confirm with the donation facility.', color: '#514644' },
 };
-const PREPARATION = ['Get enough rest', 'Eat a proper meal', 'Stay hydrated', 'Prepare ID / required documents', 'Check donation location and time'];
 
 // Shared accessible buttons keep event handlers outside render-time execution.
 function AssessmentButton({ label, onPress, disabled = false, secondary = false, busy = false }: {
@@ -67,12 +61,14 @@ export default function EvaluationScreen() {
   const [saved, setSaved] = useState<EligibilityAssessment | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [conflict, setConflict] = useState(false);
   const submitting = useRef(false);
   const scroll = useRef<ScrollView>(null);
   const blocked = loading || !cooldown.canSubmit;
   const latest = cooldown.state?.assessment;
   const result = saved && (!latest || saved.id >= latest.id) ? saved : latest;
-  const showResult = !!result && (!!saved || !!cooldown.state?.cooldown_active);
+  const showResult = !!result && (!!saved || (step === QUESTIONS.length && !conflict && !!cooldown.state?.cooldown_active));
+  const showCooldown = !!cooldown.state?.cooldown_active && !showResult;
   const question = QUESTIONS[step];
   const go = (next: number) => {
     if (blocked) return;
@@ -87,14 +83,14 @@ export default function EvaluationScreen() {
   const submit = async () => {
     if (submitting.current || blocked || step !== QUESTIONS.length || !QUESTIONS.every(q => validAnswer(q, draft[q.key]))) return;
     submitting.current = true; setLoading(true); setError('');
-    const answers = { ...draft, weight: Number(draft.weight!.replace(',', '.')), sleepHours: Number(draft.sleepHours!.replace(',', '.')) } as EligibilityAnswers;
+    const answers = { ...draft } as EligibilityAnswers;
     try {
       setSaved(await submitAssessment(answers));
       await cooldown.reload();
     } catch (failure) {
       if (failure instanceof EligibilityCooldownError) {
         cooldown.accept(failure.state);
-        setSaved(failure.state.assessment);
+        setConflict(true);
       } else {
         setError(errorMessage(failure));
         await cooldown.reload();
@@ -117,20 +113,23 @@ export default function EvaluationScreen() {
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView ref={scroll} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.scroll}>
           <View style={styles.content}>
-            {cooldown.loading ? <Text style={styles.body}>Checking evaluation availability...</Text> : null}
+            {cooldown.loading && !cooldown.state && !saved ? <TabSkeleton /> : null}
             {cooldown.error ? <View style={styles.notice}>
               <Text accessibilityRole="alert" style={styles.body}>{cooldown.error}</Text>
               {<AssessmentButton label={'Retry availability check'} onPress={() => void cooldown.reload()} disabled={loading} busy={loading} />}
             </View> : null}
-            {error ? <Text accessibilityRole="alert" style={styles.body}>{error}</Text> : null}
-            {cooldown.state?.cooldown_active ? <View style={styles.notice}>
-              <Text style={styles.subheading}>You already completed an evaluation recently.</Text>
-              <Text style={styles.body}>{formatEligibilityWait(cooldown.remaining)}</Text>
-              <Text style={styles.body}>Available again: {new Date(cooldown.state.next_allowed_at!).toLocaleString()}</Text>
+            {error && !showResult ? <Text accessibilityRole="alert" style={styles.body}>{error}</Text> : null}
+            {showCooldown ? <View style={styles.notice}>
+              <MaterialIcons name="schedule" size={28} color="#D93A3A" />
+              <Text style={styles.subheading}>Self-Assessment Not Yet Available</Text>
+              <Text style={styles.body}>You recently completed a self-assessment. You can complete another one after the current 24-hour assessment period ends.</Text>
+              {cooldown.state?.next_allowed_at ? <Text style={styles.body}>Available again: {new Date(cooldown.state.next_allowed_at).toLocaleString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</Text> : null}
+              <AssessmentButton label="Close" onPress={() => router.back()} />
             </View> : null}
 
             {/* PRE-SCREENING RESULT: display saved Laravel output, never a local decision. */}
             {showResult && result ? <>
+              <View style={styles.complete}><MaterialIcons name="check-circle" size={22} color="#287A47" /><Text style={styles.subheading}>Assessment Complete</Text></View>
               <View style={styles.card} accessibilityLiveRegion="polite">
                 <Text style={styles.eyebrow}>Your Pre-Screening Result</Text>
                 <Text style={[styles.title, { color: RESULTS[result.result].color }]}>{RESULTS[result.result].title}</Text>
@@ -138,20 +137,15 @@ export default function EvaluationScreen() {
                 {result.reasons.map((reason, index) => <Text key={index} style={styles.reason}>{reason}</Text>)}
                 <Text style={styles.body}>{SCREENING_NOTICE}</Text>
               </View>
-              {<AssessmentButton label={'View Status'} onPress={() => router.push('/(tabs)/status')} busy={loading} />}
-              {<AssessmentButton label={'Back to Flowie'} onPress={() => router.push('/flowie')} disabled={false} secondary={true} busy={loading} />}
-              {/* This facility note is informational, not an additional result. */}
-              <View style={styles.card}>
-                <Text style={styles.subheading}>Check with the donation facility</Text>
-                <Text style={styles.body}>Recently had a tattoo or piercing, started a new medication, or have another health concern? Donation rules can vary, so confirm with the donation facility before donating.</Text>
+              <View style={styles.notice}>
+                <MaterialIcons name="info-outline" size={24} color="#766A68" />
+                <Text style={styles.subheading}>Important Reminder</Text>
+                <Text style={styles.body}>Recent tattoos or body piercings may require a waiting period before blood donation.</Text>
+                <Text style={styles.body}>This self-assessment is only a pre-screening guide. Final eligibility will still be confirmed by the donation facility.</Text>
               </View>
-              {/* Preparation is informational and is never part of the answer payload. */}
-              <View style={styles.card}>
-                <Text style={styles.subheading}>Preparation Check</Text>
-                <Text style={styles.body}>These reminders do not affect your pre-screening result.</Text>
-                {PREPARATION.map(item => <Text key={item} style={styles.body}>{item}</Text>)}
-              </View>
-              {cooldown.canSubmit ? <AssessmentButton label={'Start a new assessment'} onPress={() => { setSaved(null); setDraft({}); go(-1); }} busy={loading} /> : null}
+              <AssessmentButton label="View Status" onPress={() => router.push('/(tabs)/status')} />
+              <AssessmentButton label="Back to Flowie" onPress={() => router.push('/flowie')} secondary />
+              {cooldown.canSubmit ? <AssessmentButton label={'Start a new assessment'} onPress={() => { setSaved(null); setConflict(false); setDraft({}); go(-1); }} busy={loading} /> : null}
             </> : cooldown.state?.cooldown_active ? null : step === -1 ? <View style={styles.card}>
               <Text style={styles.title}>Donation Readiness Self-Assessment</Text>
               <Text style={styles.body}>This quick self-assessment helps you check your current readiness before visiting a donation facility.</Text>
@@ -165,20 +159,14 @@ export default function EvaluationScreen() {
                 <View style={[styles.progressFill, { width: (((step + 1) * 10) + '%') as `${number}%` }]} />
               </View>
               <Text style={styles.title}>{question.text}</Text>
-              {question.numeric ? <TextInput key={question.key} accessibilityLabel={question.text}
-                keyboardType="decimal-pad" editable={!blocked} value={draft[question.key] || ''}
-                placeholder={question.key === 'weight' ? 'Weight in kg' : 'Hours of sleep'}
-                placeholderTextColor="#766A68" style={styles.input} maxLength={12}
-                onChangeText={value => setDraft(current => ({ ...current, [question.key]: value }))} /> :
-                (question.pregnancy ? ['YES', 'NO', 'NOT_APPLICABLE'] : ['YES', 'NO']).map(value => (
-                  <Pressable key={value} accessibilityRole="radio" accessibilityLabel={answerLabel(value)}
-                    accessibilityState={{ checked: draft[question.key] === value, disabled: blocked }} disabled={blocked}
-                    onPress={() => { if (!blocked) setDraft(current => ({ ...current, [question.key]: value })); }}
-                    style={[styles.option, draft[question.key] === value && styles.selected]}>
-                    <Text style={[styles.body, draft[question.key] === value && styles.selectedText]}>{answerLabel(value)}</Text>
-                  </Pressable>
-                ))}
-              {question.numeric ? <Text style={styles.hint}>{question.key === 'weight' ? 'Enter a number greater than zero.' : 'Enter hours from 0 to 24.'}</Text> : null}
+              {(['YES', 'NO'] as const).map(value => (
+                <Pressable key={value} accessibilityRole="radio" accessibilityLabel={answerLabel(value)}
+                  accessibilityState={{ checked: draft[question.key] === value, disabled: blocked }} disabled={blocked}
+                  onPress={() => { if (!blocked) setDraft(current => ({ ...current, [question.key]: value })); }}
+                  style={[styles.option, draft[question.key] === value && styles.selected]}>
+                  <Text style={[styles.body, draft[question.key] === value && styles.selectedText]}>{answerLabel(value)}</Text>
+                </Pressable>
+              ))}
               {<AssessmentButton label={'Next'} onPress={() => { if (validAnswer(question, draft[question.key])) go(step + 1); }} disabled={blocked || !validAnswer(question, draft[question.key])} busy={loading} />}
               {<AssessmentButton label={'Back'} onPress={() => go(step - 1)} disabled={blocked} secondary={true} busy={loading} />}
               <Text style={styles.hint}>{SCREENING_NOTICE}</Text>
@@ -188,7 +176,7 @@ export default function EvaluationScreen() {
               <Text style={styles.body}>Please check all 10 answers. You can submit one assessment every 24 hours.</Text>
               {QUESTIONS.map((q, index) => <View key={q.key} style={styles.reviewRow}>
                 <Text style={styles.subheading}>{index + 1}. {q.text}</Text>
-                <Text style={styles.body}>{answerLabel(draft[q.key])}{q.key === 'weight' ? ' kg' : q.key === 'sleepHours' ? ' hours' : ''}</Text>
+                <Text style={styles.body}>{answerLabel(draft[q.key])}</Text>
               </View>)}
               {<AssessmentButton label={'Edit Answers'} onPress={() => go(0)} disabled={blocked} secondary={true} busy={loading} />}
               {<AssessmentButton label={loading ? 'Submitting Assessment...' : 'Submit Assessment'} onPress={() => void submit()} disabled={blocked} busy={loading} />}
@@ -202,6 +190,7 @@ export default function EvaluationScreen() {
 }
 
 const styles = StyleSheet.create({
+  complete: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   flex: { flex: 1 }, safeArea: { flex: 1, backgroundColor: '#FFF9F2' },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F0E2DC' },
   headerTitle: { flex: 1, textAlign: 'center', color: '#372E2E', fontSize: 17, fontWeight: '800' },

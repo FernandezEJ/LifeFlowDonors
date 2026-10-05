@@ -25,10 +25,10 @@ export default function RedeemScreen() {
   return <><Stack.Screen options={{ headerShown: false }} />
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
       <View style={styles.fixedHeader}><View style={styles.header}>
-        <Pressable accessibilityLabel="Go back" onPress={() => router.back()} style={styles.backButton}><MaterialIcons name="arrow-back" color={COLORS.text} size={23} /></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)/points')} style={styles.backButton}><MaterialIcons name="arrow-back" color={COLORS.text} size={23} /></Pressable>
         <Text style={styles.headerTitle}>Redeem</Text><NotificationBell />
       </View></View>
-      <ScrollView contentContainerStyle={styles.listContent}><RewardCatalogue showBalance /></ScrollView>
+      <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}><RewardCatalogue showBalance /></ScrollView>
     </SafeAreaView></>;
 }
 // Existing layout styles.

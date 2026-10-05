@@ -34,5 +34,4 @@ export function profileMascotImage(value: unknown) {
 export const ACCOUNT_SETTINGS = [
   { key: 'avatar', title: 'Change Avatar', description: 'Choose your LifeFlow mascot', icon: 'face' },
   { key: 'email', title: 'Change Email', description: 'Update your verified email address', icon: 'mail-outline' },
-  { key: 'password', title: 'Change Password', description: 'Update your account password', icon: 'lock-outline' },
 ] as const;

@@ -1,5 +1,5 @@
 import { ProfileMascotSelector } from '@/components/profile-mascot-selector';
-import { ChangeEmailForm, ChangePasswordForm } from '@/components/account-settings-forms';
+import { ChangeEmailForm } from '@/components/account-settings-forms';
 import { useAuth } from '@/contexts/auth-context';
 import { useLocalSearchParams } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
@@ -12,7 +12,7 @@ export default function ProfileSettingScreen() {
   const { setting } = useLocalSearchParams<{ setting?: string | string[] }>();
   const item = ACCOUNT_SETTINGS.find(entry => entry.key === setting);
   return <ProfileSettingsPage title={item?.title ?? 'Profile Settings'} fallback="/profile-settings">
-    {item?.key === 'email' ? <ChangeEmailForm key={user?.id} /> : item?.key === 'password' ? <ChangePasswordForm key={user?.id} /> : item?.key === 'avatar' ? <ProfileMascotSelector key={user?.id} /> : <View style={styles.card}>
+    {item?.key === 'email' ? <ChangeEmailForm key={user?.id} /> : item?.key === 'avatar' ? <ProfileMascotSelector key={user?.id} /> : <View style={styles.card}>
       <Text style={styles.message}>This setting is not available.</Text>
     </View>}
   </ProfileSettingsPage>;

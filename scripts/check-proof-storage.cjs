@@ -86,11 +86,13 @@ async function main(){
  assert.ok(!fs.existsSync('src/services/firebase.ts'));
  console.log('PASS: native/web multipart files, MIME/size checks, private API payload, automatic boundary, sanitized development diagnostics, no Storage imports');
 }
-async function screenChecks(reconciled=false, cancelled=false, needsRevision=false) {
+async function screenChecks(reconciled=false, cancelled=false, needsRevision=false, finalStatus=null, duration=200, cleanupPhase=null, cancelAction=false) {
   const slots = []; let cursor = 0; let focused = false; let focus;
-  let uploads = 0; let submissions = 0; let finishSave;
+  const stateWrites = [], timers = new Map(), delays = [];
+  let now = 0, timerId = 0;
+  let uploads = 0; let submissions = 0; let finishSave; let finishFailure; let cancellations=0;
   let failSave = false;
-  const pending = { id: 34, status: needsRevision?'needs_revision':'pending', revision_reason:'Please upload a clearer image.', opportunity: { title: 'Drive', points_reward: 300 } };
+  const pending = { id: 34, status: finalStatus || (needsRevision?'needs_revision':'pending'), revision_reason:'Please upload a clearer image.', rejection_reason:'Invalid certificate.', proof_original_name:'IMG_20260928_114941.jpg', opportunity: { title: 'Drive', points_reward: 300 } };
   let selected = 0;
   const jsx = (type, props) => ({ type, props });
   const screen = load('src/app/activity/[id].tsx', {
@@ -98,19 +100,25 @@ async function screenChecks(reconciled=false, cancelled=false, needsRevision=fal
     'expo-router': { Stack: { Screen: 'Screen' }, useRouter: () => ({ back() {} }), useLocalSearchParams: () => ({ id: '34' }), useFocusEffect: fn => { if (!focused) { focused = true; focus = fn; } } },
     react: {
       useCallback: fn => fn,
-      useState: initial => { const i = cursor++; if (!(i in slots)) slots[i] = initial; return [slots[i], value => { slots[i] = typeof value === 'function' ? value(slots[i]) : value; }]; },
+      useState: initial => { const i = cursor++; if (!(i in slots)) slots[i] = initial; return [slots[i], value => { stateWrites.push(i); slots[i] = typeof value === 'function' ? value(slots[i]) : value; }]; },
       useRef: initial => { const i = cursor++; return slots[i] ||= { current: initial }; },
     },
     'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
-    'react-native': { Alert: { alert() {} }, Pressable: 'Pressable', ScrollView: 'ScrollView', StyleSheet: { create: x => x }, Text: 'Text', View: 'View' },
+    'react-native': { Alert: { alert() {} }, Image: 'Image', Modal: 'Modal', Pressable: 'Pressable', ScrollView: 'ScrollView', StyleSheet: { create: x => x }, Text: 'Text', View: 'View' },
     'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
-    '@/contexts/auth-context': { useAuth: () => ({ user: { id: 12 }, donationDetail: async () => ({ participation: pending }), cancelParticipation: async () => {}, submitProof: async () => {
-      submissions++; if (failSave) { if(reconciled)pending.status='for_verification'; throw new Error('Offline'); }
+    '@/components/confirmation-modal': { ConfirmationModal: 'ConfirmationModal' },
+    '@/contexts/auth-context': { useAuth: () => ({ user: { id: 12 }, donationDetail: async () => ({ participation: pending }), cancelParticipation: async () => {cancellations++;return {participation:{...pending,status:'cancelled'}};}, submitProof: async () => {
+      submissions++; if (failSave) return new Promise((_resolve,reject)=>{finishFailure=()=>{if(reconciled)pending.status='for_verification';reject(new Error('Offline'));};});
       return new Promise(resolve => { finishSave = () => resolve({ participation: { ...pending, status: 'for_verification' } }); });
     } }) },
     '@/services/api': { errorMessage: error => error.message },
-    '@/services/donations': { DONATION_STATUS: { pending: 'Pending', for_verification: 'For Verification', needs_revision: 'Needs Revision' } },
+    '@/services/donations': { DONATION_STATUS: { pending: 'Pending', for_verification: 'For Verification', needs_revision: 'Needs Revision', completed: 'Completed', rejected: 'Rejected', cancelled: 'Cancelled' } },
     '@/services/proof-storage': { pickProofFile: async () => { selected++; return cancelled ? null : {}; }, prepareProofUpload: () => { uploads++; return {}; }, reportProofFailure() {} },
+    '../../../assets/images/LogoMascot.png': 'LogoMascot',
+  }, {
+    Date: { now: () => now },
+    setTimeout: (callback, delay) => { const id=++timerId; delays.push(delay); timers.set(id,{callback,due:now+delay}); return id; },
+    clearTimeout: id => timers.delete(id),
   });
   const render = () => { cursor = 0; return screen.default(); };
   function nodes(tree) {
@@ -119,13 +127,106 @@ async function screenChecks(reconciled=false, cancelled=false, needsRevision=fal
     return [tree, ...nodes(tree.props?.children)];
   }
   const button = (tree, label) => nodes(tree).find(n => n.type === 'Pressable' && nodes(n.props.children).some(child => child.type === 'Text' && child.props.children === label));
+  const loading = tree => nodes(tree).find(n=>n.type==='Modal');
+  const checkLoading = (tree, expectSubmit=true) => {
+    const modal=loading(tree);assert.ok(modal);assert.equal(modal.props.visible,true);
+    assert.equal(modal.props.transparent,true);assert.equal(modal.props.animationType,'none');
+    const content=nodes(modal),image=content.find(n=>n.type==='Image');
+    assert.equal(image.props.source,'LogoMascot');assert.equal(image.props.fadeDuration,0);
+    assert.equal(image.props.resizeMode,'contain');assert.ok(fs.existsSync('assets/images/LogoMascot.png'));
+    const text=content.find(n=>n.type==='Text');
+    assert.equal(text.props.children,'Flowie is submitting your proof...');assert.equal(text.props.style.textAlign,'center');
+    assert.equal(text.props.accessibilityLiveRegion,'polite');
+    const safeArea=content.find(n=>n.type==='SafeAreaView');
+    assert.equal(safeArea.props.style.backgroundColor,'#FFF9F2');
+    assert.equal(safeArea.props.style.alignItems,'center');assert.equal(safeArea.props.style.justifyContent,'center');
+    assert.equal(safeArea.props.edges.join(','),'top,bottom');assert.equal(safeArea.props.accessibilityViewIsModal,true);
+    assert.equal(safeArea.props.accessibilityState.busy,true);
+    assert.ok(!content.some(n=>n.type==='Pressable'||n.type==='ActivityIndicator'||String(n.type).includes('Animated')));
+    assert.ok(!nodes(tree).some(n=>['Uploading files...','Uploading proof...'].includes(n.props?.children)));
+    const submit=button(tree,'Retry Proof Upload');
+    if(expectSubmit){assert.ok(submit);assert.equal(submit.props.disabled,true);assert.equal(submit.props.accessibilityState.busy,true);}
+    modal.props.onRequestClose();assert.ok(loading(render()),'Back cannot dismiss an unfinished upload');
+  };
   const flush = () => new Promise(resolve => setImmediate(resolve));
-  render(); focus(); await flush();
+  const advance = async milliseconds => {
+    now+=milliseconds;
+    for(const [id,timer] of timers){if(timer.due<=now){timers.delete(id);timer.callback();}}
+    await flush();
+  };
+  const finishMinimum = async staleSubmit => {
+    if(duration<800){
+      assert.equal(delays.at(-1),800-duration,'Only the remaining minimum duration is scheduled');
+      assert.equal(timers.size,1);
+      checkLoading(render(),!reconciled && !nodes(render()).some(n=>n.props?.children==='For Verification'));
+      await advance(799-duration);
+      assert.ok(loading(render()),'Overlay remains visible until 800 ms total');
+      const before=submissions;staleSubmit.props.onPress();await flush();
+      assert.equal(submissions,before,'Submit lock remains active during the minimum-display wait');
+      await advance(1);
+    }else{
+      assert.equal(timers.size,0,'Long uploads add no closing delay');
+      assert.equal(delays.length,0,'No minimum-display timer for uploads lasting at least 800 ms');
+    }
+    assert.equal(loading(render()),undefined);
+    assert.equal(timers.size,0);
+  };
+  render(); const cleanup=focus(); await flush();
+  assert.equal(loading(render()),undefined);
+  if(cancelAction){
+    const confirmation=()=>nodes(render()).find(n=>n.type==='ConfirmationModal').props;
+    button(render(),'Cancel Participation').props.onPress();
+    assert.equal(cancellations,0);assert.equal(confirmation().visible,true);
+    assert.equal(confirmation().secondaryLabel,'Keep activity');assert.equal(confirmation().primaryLabel,'Cancel participation');
+    assert.equal(confirmation().dismissible,false);
+    confirmation().onSecondary();assert.equal(confirmation().visible,false);assert.equal(cancellations,0);
+    button(render(),'Cancel Participation').props.onPress();const accept=confirmation().onPrimary;
+    accept();accept();await flush();assert.equal(cancellations,1);assert.equal(submissions,0);
+    assert.ok(nodes(render()).some(n=>n.props?.children==='Cancelled.'));assert.equal(button(render(),'Cancel Participation'),undefined);
+    return;
+  }
+  if(finalStatus){
+    const expected={for_verification:'For Verification.',completed:'Donation Verified.',rejected:'Rejected.',cancelled:'Cancelled.'}[finalStatus];
+    assert.ok(nodes(render()).some(n=>n.props?.children===expected));
+    assert.ok(!nodes(render()).some(n=>n.props?.children===pending.proof_original_name));
+    if(finalStatus==='rejected'){
+      assert.ok(nodes(render()).some(n=>n.props?.children==='Reason:'));
+      assert.ok(nodes(render()).some(n=>n.props?.children===pending.rejection_reason));
+    }else assert.ok(!nodes(render()).some(n=>n.props?.children==='Reason:'));
+    assert.equal(button(render(),'Upload Proof'),undefined);
+    assert.equal(button(render(),'Upload New Proof'),undefined);
+    assert.equal(submissions,0);
+    return;
+  }
   const upload = button(render(), needsRevision?'Upload New Proof':'Upload Proof');
   if(needsRevision){assert.ok(nodes(render()).some(n=>n.props?.children==='Please upload a clearer image.'));assert.equal(button(render(),'Cancel Participation'),undefined);}
   failSave = true;
   upload.props.onPress(); upload.props.onPress(); await flush();
   if(cancelled){assert.equal(submissions,0);assert.ok(button(render(), 'Upload Proof'));return;}
+  checkLoading(render());
+  assert.equal(now,0);assert.equal(timers.size,0,'Network request starts before any display-delay timer');
+  assert.equal(submissions,1);button(render(),'Retry Proof Upload').props.onPress();await flush();
+  assert.equal(submissions,1,'Duplicate taps while the mascot is visible do not resubmit');
+  checkLoading(render());
+  if(cleanupPhase==='network'){
+    cleanup();const writes=stateWrites.filter(i=>i===3).length;
+    finishFailure();await flush();await advance(1000);
+    assert.equal(timers.size,0);assert.equal(delays.length,0);
+    assert.equal(stateWrites.filter(i=>i===3).length,writes,'No new overlay state updates after leaving during upload');
+    return;
+  }
+  await advance(duration);
+  finishFailure();await flush();
+  if(cleanupPhase==='timer'){
+    assert.equal(timers.size,1);cleanup();const writes=stateWrites.filter(i=>i===3).length;
+    assert.equal(timers.size,0,'Leaving clears the pending minimum-display timer');
+    await advance(1000);
+    assert.equal(stateWrites.filter(i=>i===3).length,writes,'Cancelled wait does not update overlay state');
+    assert.equal(slots[2],false,'Cancelled wait resolves and releases the existing submit lock');
+    return;
+  }
+  await finishMinimum(upload);
+  assert.equal(loading(render()),undefined,'Failed requests close the overlay');
   if(reconciled){assert.equal(submissions,1);assert.equal(button(render(), 'Cancel Participation'),undefined);return;}
   assert.equal(uploads, 1);
   assert.equal(selected, 1);
@@ -133,15 +234,31 @@ async function screenChecks(reconciled=false, cancelled=false, needsRevision=fal
   assert.ok(nodes(render()).some(n => n.props?.children === (needsRevision?'Needs Revision':'Pending')));
   const retry = button(render(), 'Retry Proof Upload');
   assert.ok(retry);
+  assert.equal(retry.props.disabled,false);assert.ok(nodes(render()).some(n=>n.type==='Text'&&String(n.props.children).includes('Offline')));
   failSave = false; retry.props.onPress(); await flush();
   assert.equal(uploads, 2);
   assert.equal(selected, 1);
   assert.equal(submissions, 2);
+  checkLoading(render());retry.props.onPress();await flush();assert.equal(submissions,2);
   if(!needsRevision)assert.equal(button(render(), 'Cancel Participation').props.disabled, true);
   assert.ok(nodes(render()).some(n => n.props?.children === (needsRevision?'Needs Revision':'Pending')));
+  await advance(duration);
   finishSave(); await flush();
+  await finishMinimum(retry);
+  assert.equal(loading(render()),undefined,'Successful requests close the overlay');
   assert.ok(nodes(render()).some(n => n.props?.children === 'For Verification'));
   assert.equal(button(render(), 'Cancel Participation'), undefined);
-  console.log('PASS: screen duplicate lock, pending until confirmation, cached-file retry, cancellation removed after success');
+  console.log(`PASS: ${needsRevision?'resubmission':'upload'} ${duration} ms success/failure, 800 ms minimum only, immediate request, duplicate lock, cached retry, static mascot`);
 }
-main().then(()=>screenChecks()).then(()=>screenChecks(true)).then(()=>screenChecks(false,true)).then(()=>screenChecks(false,false,true)).then(()=>screenChecks(true,false,true)).catch(error => { console.error(error); process.exitCode = 1; });
+main().then(async()=>{
+  for(const duration of [0,200,799,800,1500,5000]){
+    await screenChecks(false,false,false,null,duration);
+    await screenChecks(false,false,true,null,duration);
+  }
+  await screenChecks(true);await screenChecks(false,true);await screenChecks(true,false,true);
+  for(const status of ['for_verification','completed','rejected','cancelled'])await screenChecks(false,false,false,status);
+  for(const phase of ['network','timer'])await screenChecks(false,false,false,null,200,phase);
+  await screenChecks(false,false,false,null,200,null,true);
+  console.log('PASS: reconciliation, picker cancellation, read-only statuses and display-timer cleanup on leaving');
+})
+  .catch(error => { console.error(error); process.exitCode = 1; });

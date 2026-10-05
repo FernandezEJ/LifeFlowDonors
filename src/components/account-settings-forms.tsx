@@ -38,12 +38,13 @@ function Success({ message }: { message: string }) {
 
 // ========================================
 // CHANGE EMAIL VERIFICATION
-// Passwords and pending authorization stay in screen memory.
+// Current-email OTP confirmation precedes the existing new-email verification.
 // Only a confirmed backend response completes the change.
 // ========================================
 export function ChangeEmailForm() {
   const auth = useAuth();
-  const [password, setPassword] = useState('');
+  const [confirming, setConfirming] = useState(false);
+  const currentConfirmed = useRef(false);
   const [email, setEmail] = useState('');
   const [pending, setPending] = useState<PendingRegistration | null>(null);
   const [code, setCode] = useState('');
@@ -68,7 +69,7 @@ export function ChangeEmailForm() {
     const version = generation.current;
     const active = () => version === generation.current;
     try { await action(active); } catch (e) { if (active()) setError(feedback(e)); }
-    finally { lock.current = false; if (active()) { setWorking(false); setPassword(''); } }
+    finally { lock.current = false; if (active()) setWorking(false); }
   };
   const wait = (seconds: number) => { const now = Date.now(); setClock(now); setResendAt(now + seconds * 1000); };
   if (success) return <Success message="Email changed successfully." />;
@@ -89,16 +90,32 @@ export function ChangeEmailForm() {
           const response = await auth.resendEmailChange(pending.pending_token);
           if (active()) { wait(response.resend_after); setCode(''); }
         })} />
-      <Action title="Change Email Address" disabled={busy} onPress={() => { setPending(null); setCode(''); setPassword(''); setError(''); setResendAt(0); }} />
+      <Action title="Change Email Address" disabled={busy} onPress={() => { currentConfirmed.current = false; setPending(null); setConfirming(false); setCode(''); setError(''); setResendAt(0); }} />
+    </> : confirming ? <>
+      <Text accessibilityRole="header" style={styles.label}>Confirm Current Email</Text>
+      <Text style={styles.copy}>Enter the login code sent to your current email. It expires after 10 minutes.</Text>
+      <TextInput accessibilityLabel="Current email code" value={code} onChangeText={value => setCode(value.replace(/[^0-9]/g, '').slice(0, 6))}
+        keyboardType="number-pad" maxLength={6} editable={!busy} style={styles.input} autoComplete="one-time-code" />
+      <Action title={working ? 'Please wait...' : 'Confirm & Send New Email Code'} disabled={busy || !/^[0-9]{6}$/.test(code)} onPress={() => void run(async active => {
+        // A retry after new-email validation fails must not reuse the already-consumed login code.
+        if (!currentConfirmed.current) { await auth.confirmEmailLogin(auth.profile?.mobile_number ?? '', code); currentConfirmed.current = true; }
+        if (!active()) return;
+        const response = await auth.requestEmailChange(email);
+        if (active()) { setPending(response); setCode(''); wait(response.resend_after); }
+      })} />
+      <Action title={remaining ? `Resend code in ${remaining}s` : 'Resend current email code'} disabled={busy || remaining > 0} onPress={() => void run(async active => {
+        const response = await auth.requestLoginCode(auth.profile?.mobile_number ?? '');
+        if (active()) { currentConfirmed.current = false; wait(response.resend_after); setCode(''); }
+      })} />
+      <Action title="Change Email Address" disabled={busy} onPress={() => { currentConfirmed.current = false; setConfirming(false); setCode(''); setError(''); }} />
     </> : <>
-      <PasswordField label="Current Password" value={password} onChange={setPassword} disabled={busy} />
       <View style={styles.field}><Text style={styles.label}>New Email</Text>
         <TextInput accessibilityLabel="New Email" value={email} onChangeText={setEmail} editable={!busy} keyboardType="email-address"
           autoCapitalize="none" autoCorrect={false} maxLength={254} style={styles.input} /></View>
-      <Action title={working ? 'Sending...' : 'Send Verification Code'} disabled={busy || !password || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || email.trim().toLowerCase() === auth.user?.email.toLowerCase()}
+      <Action title={working ? 'Sending...' : 'Send Current Email Code'} disabled={busy || !auth.profile?.mobile_number || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || email.trim().toLowerCase() === auth.user?.email.toLowerCase()}
         onPress={() => void run(async active => {
-          const response = await auth.requestEmailChange(password, email);
-          if (active()) { setPending(response); wait(response.resend_after); }
+          const response = await auth.requestLoginCode(auth.profile?.mobile_number ?? '');
+          if (active()) { currentConfirmed.current = false; setConfirming(true); setCode(''); wait(response.resend_after); }
         })} />
     </>}
     {error ? <><Text accessibilityRole="alert" style={styles.error}>{error}</Text>

@@ -20,8 +20,10 @@ export function useEligibilityCooldown() {
   const [error, setError] = useState('');
   const generation = useRef(0);
   const focused = useRef(false);
+  const owner = useRef(user?.id);
   const origin = useRef(0);
   const checkedDeadline = useRef(false);
+  const checkedDonationDeadline = useRef(false);
 
   // Invalidate older responses, including a GET started before a POST conflict.
   const accept = useCallback((saved: EligibilityState) => {
@@ -29,6 +31,7 @@ export function useEligibilityCooldown() {
     generation.current++;
     origin.current = performance.now();
     checkedDeadline.current = false;
+    checkedDonationDeadline.current = false;
     setState(saved); setRemaining(saved.remaining_seconds);
     setError(''); setLoading(false);
   }, []);
@@ -48,7 +51,7 @@ export function useEligibilityCooldown() {
   // Recheck on entry and foreground. Blur discards responses from this screen.
   useFocusEffect(useCallback(() => {
     focused.current = true;
-    setState(null);
+    if (owner.current !== user?.id) { setState(null); owner.current = user?.id; }
     // Session changes clear availability before requesting private history.
     if (!user?.id) {
       setLoading(false);
@@ -63,13 +66,18 @@ export function useEligibilityCooldown() {
   }, [reload, user?.id]));
 
   useEffect(() => {
-    if (!state?.cooldown_active) return;
+    if (!state?.cooldown_active && !state?.is_on_donation_cooldown) return;
     const tick = () => {
       if (!focused.current || AppState.currentState !== 'active') return;
-      const seconds = Math.max(0, Math.ceil(state.remaining_seconds - (performance.now() - origin.current) / 1000));
+      const elapsed = (performance.now() - origin.current) / 1000;
+      const seconds = Math.max(0, Math.ceil(state.remaining_seconds - elapsed));
       setRemaining(seconds);
-      if (seconds === 0 && !checkedDeadline.current) {
-        checkedDeadline.current = true;
+      const assessmentDue = state.cooldown_active && seconds === 0 && !checkedDeadline.current;
+      const donationDue = state.is_on_donation_cooldown && Number.isFinite(state.donation_cooldown_remaining_seconds)
+        && state.donation_cooldown_remaining_seconds! <= elapsed && !checkedDonationDeadline.current;
+      if (assessmentDue || donationDue) {
+        if (donationDue) checkedDonationDeadline.current = true;
+        if (assessmentDue) checkedDeadline.current = true;
         void reload();
       }
     };

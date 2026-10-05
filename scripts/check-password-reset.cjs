@@ -39,9 +39,9 @@ function host(){
  native.KeyboardAvoidingView='KeyboardAvoidingView';native.Platform={OS:'android'};
  const routes=[],router={push:r=>routes.push(['push',r]),replace:r=>routes.push(['replace',r])};
  const loginHost=host();
- const login=load('src/app/(auth)/login.tsx',{...shared,react:loginHost.react,'expo-router':{useRouter:()=>router},'@/contexts/auth-context':{useAuth:()=>({busy:false,login:()=>{throw Error('Unexpected login');}})},'@/services/api':api});
- button(loginHost.render(login.default),'Forgot Password').props.onPress();
- assert.deepEqual(routes.pop(),['push','/(auth)/forgot-password']);
+ const login=load('src/app/(auth)/login.tsx',{...shared,react:loginHost.react,'expo-router':{useRouter:()=>router,useFocusEffect:loginHost.focus},'@/contexts/auth-context':{useAuth:()=>({busy:false,login:()=>{throw Error('Unexpected login');}})},'@/services/api':api},{setInterval:()=>0,clearInterval:()=>{}});
+ assert.equal(button(loginHost.render(login.default),'Forgot Password'),undefined);
+ assert.doesNotMatch(texts(loginHost.render(login.default)),/Password/);loginHost.unmount();
  function screen(){
   const h=host(),timers=new Set();let clock=0;
   const requests=[],backend={request:async()=>({message:contract.RESET_NOTICE,resend_after:60}),verify:async()=>({reset_token:'a'.repeat(64),expires_in:600}),reset:async()=>({message:'success'})};

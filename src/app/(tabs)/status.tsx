@@ -1,9 +1,11 @@
+import { TabSkeleton } from '@/components/tab-skeleton';
 import { NotificationBell } from '@/components/notification-bell';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useRef } from 'react';
 
 import { useEligibilityCooldown, formatEligibilityWait } from '@/hooks/use-eligibility-cooldown';
-import { SCREENING_NOTICE, type EligibilityAnswers } from '@/services/eligibility';
+import { SCREENING_NOTICE, formatDonationRestDate, type EligibilityAssessment } from '@/services/eligibility';
 import { type ImageSourcePropType, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -43,14 +45,14 @@ const STATUS_PRESENTATION: Record<
     color: COLORS.green,
   },
   NOT_ELIGIBLE: {
-    title: 'Not ready to donate right now',
+    title: 'Not Eligible for Now',
     description: 'Based on your latest self-assessment, one or more factors suggest that you should wait before donating.',
     icon: 'cancel',
     background: COLORS.softRed,
     color: COLORS.brand,
   },
   NEEDS_SCREENING: {
-    title: 'Previous assessment: facility review advised',
+    title: 'Not Eligible for Now',
     description: 'This saved assessment used an earlier questionnaire. It has not been re-evaluated. Please confirm with the donation facility.',
     icon: 'pending', background: COLORS.softAmber, color: COLORS.amber,
   },
@@ -65,16 +67,16 @@ const STATUS_PRESENTATION: Record<
 
 // ========================================
 // STATUS MASCOT STATE
-// No concerned artwork exists in the checked assets. Supply that asset here
-// when available; the known happy mascot is an explicit temporary fallback.
+// Donation rest takes precedence; otherwise use the saved assessment result.
 // ========================================
-const STATUS_MASCOTS: { happy: ImageSourcePropType; concerned: ImageSourcePropType | null } = {
+const STATUS_MASCOTS: { happy: ImageSourcePropType; rest: ImageSourcePropType; concerned: ImageSourcePropType | null } = {
   happy: require('../../../assets/images/HappyMascot.png'),
+  rest: require('../../../assets/images/RestMascot.png'),
   concerned: require('../../../assets/images/SadMascot.png'),
 };
 
 // Display saved values only. Missing legacy fields never become invented answers.
-const ANSWER_LABELS: readonly { key: keyof EligibilityAnswers; label: string }[] = [
+const LEGACY_ANSWER_LABELS: readonly { key: string; label: string }[] = [
   { key: 'weight', label: 'Weight' },
   { key: 'sleepHours', label: 'Sleep last night' },
   { key: 'currentSymptoms', label: 'Current symptoms' },
@@ -86,7 +88,22 @@ const ANSWER_LABELS: readonly { key: keyof EligibilityAnswers; label: string }[]
   { key: 'activeOrRecoveringInfection', label: 'Active infection / recovering from one' },
   { key: 'weakDizzyOrUnusuallyTired', label: 'Weak, dizzy, unusually tired, or physically unwell' },
 ];
-function displayAnswer(key: keyof EligibilityAnswers, value: unknown): string {
+const ANSWER_LABELS = [
+  { key: 'weightAtLeast50Kg', label: 'Do you weigh at least 50 kg?' },
+  { key: 'sleptAtLeastFiveHours', label: 'Have you had at least 5 hours of sleep before your planned donation?' },
+  { key: 'eatenProperMeal', label: 'Have you eaten a proper meal before your planned donation?' },
+  { key: 'avoidedAlcoholFor24Hours', label: 'Have you avoided drinking alcohol within the last 24 hours?' },
+  { key: 'threeMonthsSinceLastDonation', label: 'Have at least 3 months passed since your last completed blood donation?' },
+  { key: 'recentFeverInfectionOrIllness', label: 'Have you had a fever, infection, or illness recently?' },
+  { key: 'unusualBleedingWeaknessOrDizziness', label: 'Have you recently experienced unusual bleeding, severe weakness, or dizziness?' },
+  { key: 'recentSurgeryOrMajorProcedure', label: 'Have you recently undergone surgery or a major medical or dental procedure?' },
+  { key: 'medicationAffectingDonation', label: 'Are you currently taking medication that may affect blood donation?' },
+  { key: 'conditionOrTreatmentRequiringWait', label: 'Have you had any recent condition or treatment that a blood donation facility previously told you requires waiting before donating again?' },
+];
+function answerLabels(assessment: EligibilityAssessment | null) {
+  return assessment && 'weightAtLeast50Kg' in assessment.answers ? ANSWER_LABELS : LEGACY_ANSWER_LABELS;
+}
+function displayAnswer(key: string, value: unknown): string {
   if (key === 'weight' || key === 'sleepHours') {
     if (typeof value !== 'number' || !Number.isFinite(value)) return 'Not recorded';
     return key === 'weight' ? value + ' kg' : value + (value === 1 ? ' hour' : ' hours');
@@ -104,6 +121,10 @@ function displayServerDate(value: string | null | undefined, empty: string): str
 
 export default function StatusScreen() {
   const router = useRouter();
+  const scrollRef = useRef<ScrollView>(null);
+  useFocusEffect(useCallback(() => {
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, []));
   // ========================================
   // LATEST SAVED PRE-SCREENING
   // Cancels stale screen updates on blur and never substitutes a mock result.
@@ -114,10 +135,15 @@ export default function StatusScreen() {
   const state: EligibilityStatus = !assessment ? 'EVALUATION_REQUIRED'
     : assessment.result === 'eligible' ? 'ELIGIBLE'
     : assessment.result === 'needs_further_screening' ? 'NEEDS_SCREENING' : 'NOT_ELIGIBLE';
-  const presentation = STATUS_PRESENTATION[state];
-  const showReason = !!assessment?.reasons.length;
-  const mascot = !loading && !error && state === 'NOT_ELIGIBLE'
-    ? STATUS_MASCOTS.concerned ?? STATUS_MASCOTS.happy : STATUS_MASCOTS.happy;
+  const onRest = cooldown.state?.is_on_donation_cooldown === true;
+  const presentation = onRest ? {
+    title: 'Donation Rest Period', description: 'You recently completed a blood donation.',
+    icon: 'pending' as const, background: COLORS.softAmber, color: COLORS.amber,
+  } : STATUS_PRESENTATION[state];
+  const showReason = !onRest && !!assessment?.reasons.length;
+  const mascot = onRest ? STATUS_MASCOTS.rest
+    : (!loading || !!cooldown.state) && !error && (state === 'NOT_ELIGIBLE' || state === 'NEEDS_SCREENING')
+      ? STATUS_MASCOTS.concerned ?? STATUS_MASCOTS.happy : STATUS_MASCOTS.happy;
   // ========================================
   // DONOR SUMMARY
   // Server timestamps precede all ten saved answers. No eligibility calculation
@@ -127,7 +153,7 @@ export default function StatusScreen() {
     { label: 'Assessed', value: displayServerDate(assessment?.assessed_at, 'Not assessed'), icon: 'event' as const, wide: true },
     { label: 'Next self-assessment available', value: assessment
       ? displayServerDate(cooldown.state?.next_allowed_at, 'Not recorded') : 'Not available', icon: 'update' as const, wide: true },
-    ...ANSWER_LABELS.map(({ key, label }, index) => ({
+    ...answerLabels(assessment).map(({ key, label }, index) => ({
       label: (index + 1) + '. ' + label,
       value: displayAnswer(key, assessment?.answers?.[key]),
       icon: key === 'weight' ? 'monitor-weight' as const : 'fact-check' as const,
@@ -144,8 +170,9 @@ export default function StatusScreen() {
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView ref={scrollRef} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
+          {loading && !cooldown.state ? <TabSkeleton variant="summary" /> : <>
           <View style={[styles.statusCard, { backgroundColor: presentation.background }]}>
             <View style={styles.mascotArea}>
               <Image
@@ -160,9 +187,14 @@ export default function StatusScreen() {
             </View>
             <View style={styles.statusContent}>
               <Text style={[styles.statusTitle, { color: presentation.color }]}>
-                {loading ? 'Loading pre-screening…' : error ? 'Pre-screening unavailable' : presentation.title}
+                {onRest ? presentation.title : loading && !cooldown.state ? 'Loading pre-screening…' : error ? 'Pre-screening unavailable' : presentation.title}
               </Text>
-              <Text style={styles.statusDescription}>{error || presentation.description}</Text>
+              <Text style={styles.statusDescription}>{onRest ? presentation.description : error || presentation.description}</Text>
+              {onRest ? <>
+                <Text style={styles.statusDescription}>You can donate again on:</Text>
+                <Text style={[styles.statusTitle, { color: presentation.color }]}>{formatDonationRestDate(cooldown.state?.next_eligible_donation_at)}</Text>
+                <Text style={styles.statusDescription}>Your 3-month donation rest period helps ensure enough recovery time before your next donation.</Text>
+              </> : null}
             </View>
           </View>
 
@@ -223,6 +255,7 @@ export default function StatusScreen() {
           {error ? <Pressable accessibilityRole="button" onPress={() => void cooldown.reload()} style={styles.updateButton}>
             <Text style={styles.updateButtonText}>Retry availability check</Text>
           </Pressable> : null}
+          </>}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -230,7 +263,7 @@ export default function StatusScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: COLORS.background },
+  safeArea: { flex: 1, backgroundColor: 'transparent' },
   fixedHeader: {
     zIndex: 10,
     borderBottomWidth: 1,

@@ -1,7 +1,8 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { ConfirmationModal } from '@/components/confirmation-modal';
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, AppState, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AppState, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import VoucherQR from 'react-qr-code';
 import { NotificationBell } from '@/components/notification-bell';
@@ -41,6 +42,7 @@ export default function VoucherScreen() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [confirmActivation, setConfirmActivation] = useState(false);
   const generation = useRef(0);
   const lock = useRef(false);
   const submitted = useRef(false);
@@ -100,10 +102,7 @@ export default function VoucherScreen() {
   const confirm = () => {
     if (lock.current || loading || busy || voucher?.status !== 'available') return;
     lock.current = true;
-    Alert.alert('Attention', ACTIVATION_WARNING, [
-      { text: 'Cancel', style: 'cancel', onPress: () => { lock.current = false; } },
-      { text: 'Activate', onPress: () => void activate() },
-    ], { cancelable: false });
+    setConfirmActivation(true);
   };
 
   // ========================================
@@ -145,7 +144,9 @@ export default function VoucherScreen() {
         </> : null}
         <Pressable style={styles.backToVouchersButton} onPress={() => router.dismissTo('/my-vouchers')}><Text style={styles.activateButtonText}>Back to My Vouchers</Text></Pressable>
       </View></ScrollView>
-    </SafeAreaView></>;
+    </SafeAreaView>
+    <ConfirmationModal visible={confirmActivation} icon="timer" variant="warning" title="Attention" message={ACTIVATION_WARNING} secondaryLabel="Cancel" primaryLabel="Activate" dismissible={false} onSecondary={()=>{setConfirmActivation(false);lock.current=false;}} onPrimary={()=>{setConfirmActivation(false);return activate();}} />
+    </>;
 }
 // Existing card, warning and button styles are retained.
 const styles = StyleSheet.create({

@@ -5,8 +5,8 @@ import { apiRequest } from './api';
 // Navigation metadata contains IDs only; no token or private donor details.
 // ========================================
 export type ImportantNotification = {
-  id: number; type: 'admin_announcement' | 'donation_completed' | 'donation_rejected' | 'donation_needs_revision' | 'donation_reminder';
-  title: string; message: string; data: { opportunity_id?: number | null; participation_id?: number; event_date?: string; reminder_date?: string } | null;
+  id: number; type: 'admin_announcement' | 'donation_completed' | 'donation_rejected' | 'donation_needs_revision' | 'donation_reminder' | 'donation_cooldown_complete';
+  title: string; message: string; data: { opportunity_id?: number | null; participation_id?: number | null; event_date?: string; reminder_date?: string; last_completed_donation_at?: string; next_eligible_donation_at?: string } | null;
   read_at: string | null; created_at: string;
 };
 export type NotificationPage = { data: ImportantNotification[]; current_page: number; last_page: number; total: number };
@@ -28,6 +28,7 @@ export const notificationApi = {
 // against the owned notification API and use the server's returned record.
 // ========================================
 export function notificationDestination(item: ImportantNotification) {
+  if (item.type === 'donation_cooldown_complete') return { pathname: '/(tabs)/status' as const };
   const id = item.type === 'admin_announcement' ? item.data?.opportunity_id : item.data?.participation_id;
   if (!Number.isSafeInteger(id) || !id || id < 1) return null;
   if (item.type === 'admin_announcement') return { pathname: '/announcement/[id]' as const, params: { id: String(id) } };

@@ -1,6 +1,8 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Tabs } from 'expo-router';
+import { type ReactNode } from 'react';
+import { TabLeaveProvider, useTabLeave } from '@/contexts/tab-leave-context';
 import { type ColorValue, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -46,7 +48,21 @@ function CommunityTabIcon({ color, focused, name }: CommunityTabIconProps) {
   );
 }
 
-export default function TabLayout() {
+export default function TabLayout() { return <TabLeaveProvider><MainTabs /></TabLeaveProvider>; }
+
+// Keep the top Safe Area uniformly cream; circles sit behind the opaque tab headers.
+function TabScreenBackground({ children, topInset }: { children: ReactNode; topInset: number }) {
+  return <View style={styles.screen}>
+    <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.backgroundAccents, { top: topInset }]}>
+      <View style={styles.topAccent} />
+      <View style={styles.bottomAccent} />
+    </View>
+    {children}
+  </View>;
+}
+
+function MainTabs() {
+  const { requestLeave } = useTabLeave();
   const insets = useSafeAreaInsets();
   const bottomInset = Math.max(insets.bottom, 10);
   const tabBarBottom = bottomInset + TAB_BAR_GAP;
@@ -54,6 +70,14 @@ export default function TabLayout() {
 
   return (
     <Tabs
+      screenLayout={({ children }) => <TabScreenBackground topInset={insets.top}>{children}</TabScreenBackground>}
+      screenListeners={({ navigation, route }) => ({ tabPress: event => {
+        const state = navigation.getState();
+        if (state.routes[state.index].name === 'profile' && route.name !== 'profile') {
+          event.preventDefault();
+          requestLeave(() => navigation.navigate(route.name));
+        }
+      } })}
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: COLORS.brand,
@@ -134,6 +158,10 @@ export default function TabLayout() {
 }
 
 const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: COLORS.background },
+  backgroundAccents: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, overflow: 'hidden' },
+  topAccent: { position: 'absolute', width: 420, height: 420, borderRadius: 210, top: -300, right: -310, backgroundColor: '#FDECE6', opacity: 0.35 },
+  bottomAccent: { position: 'absolute', width: 460, height: 460, borderRadius: 230, bottom: -280, left: -290, backgroundColor: '#FCE9E2', opacity: 0.65 },
   tabBar: {
     position: 'absolute',
     left: 16,

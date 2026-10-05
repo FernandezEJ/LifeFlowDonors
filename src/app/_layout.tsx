@@ -59,8 +59,12 @@ function SessionNavigator() {
           <Stack.Screen name="voucher" options={{ title: 'Voucher' }} />
           <Stack.Screen name="my-vouchers" />
           <Stack.Screen name="flowie" />
+          <Stack.Screen name="flowie-history" />
+          <Stack.Screen name="flowie-recently-deleted" />
+          <Stack.Screen name="flowie-conversation/[id]" />
           <Stack.Screen name="evaluation" />
           <Stack.Screen name="activity/[id]" />
+          <Stack.Screen name="announcements" options={{ headerShown: false }} />
           <Stack.Screen name="announcement/[id]" />
         </Stack.Protected>
       </Stack>

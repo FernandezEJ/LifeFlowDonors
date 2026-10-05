@@ -2,14 +2,13 @@ import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/d
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useState } from 'react';
 import { Modal, Platform, Pressable, Text, View } from 'react-native';
+import { latestBirthDate } from '@/services/auth';
+export { latestBirthDate } from '@/services/auth';
 
 export type BirthDatePickerProps = { value: string; onChange: (value: string) => void; disabled?: boolean };
 // Local calendar components avoid UTC offsets changing the selected birthday.
 export function displayBirthDate(date: Date) {
   return [date.getMonth() + 1, date.getDate(), date.getFullYear()].map((value, index) => String(value).padStart(index === 2 ? 4 : 2, '0')).join('/');
-}
-export function latestBirthDate() {
-  const date = new Date(); date.setHours(0, 0, 0, 0); date.setDate(date.getDate() - 1); return date;
 }
 export default function BirthDatePicker({ value, onChange, disabled }: BirthDatePickerProps) {
   const [open, setOpen] = useState(false);
@@ -24,10 +23,11 @@ export default function BirthDatePicker({ value, onChange, disabled }: BirthDate
     const [month, day, year] = value.split('/').map(Number);
     const selected = latestBirthDate();
     if (value) selected.setFullYear(year, month - 1, day);
+    if (!Number.isFinite(selected.getTime()) || selected > latestBirthDate()) selected.setTime(latestBirthDate().getTime());
     setDraft(selected);
     if (Platform.OS === 'android') {
       DateTimePickerAndroid.open({ value: selected, mode: 'date', display: 'calendar', maximumDate: latestBirthDate(),
-        onChange: (event, date) => { if (event.type === 'set' && date) confirm(date); } });
+        onValueChange: (_, date) => confirm(date), onDismiss: () => setOpen(false) });
     } else setOpen(true);
   };
   return <>
@@ -41,7 +41,7 @@ export default function BirthDatePicker({ value, onChange, disabled }: BirthDate
         <View style={{ padding: 20, backgroundColor: '#FFFFFF', borderRadius: 20 }}>
           <Text style={{ fontSize: 20, color: '#372E2E' }}>Birth Date</Text>
           <DateTimePicker value={draft} mode="date" display="spinner" themeVariant="light" maximumDate={latestBirthDate()}
-            onChange={(_, date) => { if (date) setDraft(date); }} />
+            onValueChange={(_, date) => setDraft(date)} onDismiss={() => setOpen(false)} />
           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
             <Pressable accessibilityRole="button" onPress={() => setOpen(false)} style={{ padding: 16 }}><Text>Cancel</Text></Pressable>
             <Pressable accessibilityRole="button" onPress={() => confirm(draft)} style={{ padding: 16 }}><Text>Confirm</Text></Pressable>

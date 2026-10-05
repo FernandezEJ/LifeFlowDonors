@@ -117,7 +117,7 @@ const styles = StyleSheet.create({
   assistantRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', paddingRight: 16 },
   avatar: { width: 30, height: 36, marginTop: 17 }, assistantContent: { flex: 1, minWidth: 0, gap: 9 },
   sender: { fontSize: 12, lineHeight: 18, fontWeight: '600' },
-  bubble: { padding: 15, borderWidth: 1, borderRadius: 20 },
-  assistantBubble: { borderTopLeftRadius: 5, gap: 12 },
-  userBubble: { alignSelf: 'flex-end', maxWidth: '86%', borderBottomRightRadius: 5 },
+  bubble: { padding: 15, borderWidth: 1, borderRadius: 22 },
+  assistantBubble: { borderTopLeftRadius: 10, gap: 12 },
+  userBubble: { alignSelf: 'flex-end', maxWidth: '86%', borderBottomRightRadius: 10 },
 });

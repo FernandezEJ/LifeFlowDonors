@@ -14,6 +14,7 @@ function load(path, imports, globals = {}) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   vm.runInNewContext(code, { module, exports: module.exports, require: name => {
+    if (name === '@/components/tab-skeleton') return { TabSkeleton: 'TabSkeleton' };
     if (!(name in imports)) throw Error('Unexpected import: ' + name);
     return imports[name];
   }, ...globals });
@@ -26,6 +27,7 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 class ApiError extends Error { constructor(message, status = 0) { super(message); this.status = status; } }
 let sent;
 const service = load('src/services/rewards.ts', { './api': { apiRequest: async (path, options) => { sent = { path, ...options }; return {}; } } });
+const presentation = load('src/services/announcement-presentation.ts', { './api': { API_BASE_URL: 'http://device.test:8000/api' } }, { URL });
 
 // ========================================
 // SMALL REACT LIFECYCLE HARNESS
@@ -53,7 +55,7 @@ function harness(path, auth, extra = {}, props = {}, componentName = 'default') 
     useRef: initial => { const i = cursor++; return slots[i] ||= { current: initial }; },
     useCallback: memo, useEffect: effect,
   };
-  const router = { navigate: route => routes.push(route), push: route => routes.push(route), back() {}, dismissTo: route => routes.push(route) };
+  const router = { navigate: route => routes.push(route), push: route => routes.push(route), canGoBack: () => true, back: () => routes.push('back'), replace: route => routes.push(route), dismissTo: route => routes.push(route) };
   const imports = {
     react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
     'expo-router': { Stack: { Screen: 'Screen' }, useFocusEffect: fn => effect(fn, [fn]), useRouter: () => router, useLocalSearchParams: () => ({ id: '1' }) },
@@ -63,8 +65,10 @@ function harness(path, auth, extra = {}, props = {}, componentName = 'default') 
       Pressable: 'Pressable', Text: 'Text', View: 'View', ScrollView: 'ScrollView', FlatList: 'FlatList', Image: 'Image', StyleSheet: { create: value => value } },
     '@/contexts/auth-context': { useAuth: () => auth },
     '@/components/notification-bell': { NotificationBell: 'Bell' },
+    '@/components/confirmation-modal': { ConfirmationModal: 'ConfirmationModal' },
     '@/services/api': { ApiError, errorMessage: error => error.message },
     '@/services/rewards': service,
+    '@/services/announcement-presentation': presentation,
     'react-qr-code': { __esModule: true, default: 'QR' },
     ...extra,
   };
@@ -103,7 +107,7 @@ async function serviceChecks() {
 async function catalogueChecks() {
   let inventory = [], balance = 650, pending = null, calls = [], fail = false, balances = [];
   const user = { id: 1 };
-  const reward = { id: 3, name: 'Test reward', points_cost: 300, stock_quantity: 1, description: null, image_url: null };
+  const reward = { id: 3, name: 'Test reward', voucher_value: '100.00', points_cost: 300, stock_quantity: 1, description: null, image_url: null };
   const auth = { user, rewards: async () => ({ data: inventory, request_key: 'fixed-request' }),
     pointsSummary: async () => ({ current_balance: balance, total_earned: 650, total_spent: 650 - balance }),
     redeemReward: async (id, key) => { calls.push([id, key]); if (fail) throw new ApiError('Lost response');
@@ -116,24 +120,104 @@ async function catalogueChecks() {
   assert.ok(button(tree, 'My Vouchers'));
   screen.close(); inventory = [reward]; screen = make(); tree = await screen.settle();
   const redeem = button(tree, 'Redeem'); redeem.props.onPress(); redeem.props.onPress();
-  assert.equal(screen.alerts.length, 1);
-  assert.equal(screen.alerts[0][1], 'Redeem this reward for 300 points?');
-  screen.alerts[0][2][0].onPress(); assert.equal(calls.length, 0);
+  const modal = () => nodes(screen.render()).find(n => n.type === 'ConfirmationModal').props;
+  assert.equal(screen.alerts.length, 0);
+  assert.equal(modal().visible, true);
+  assert.match(modal().message, /Test reward.*100.00/);
+  assert.match(modal().message, /300 points/);
+  assert.match(modal().message, /cashier\/counter/);
+  modal().onSecondary(); assert.equal(calls.length, 0); assert.equal(modal().visible, false);
   button(screen.render(), 'Redeem').props.onPress();
   fail = true;
-  const confirm = screen.alerts[1][2][1].onPress; confirm(); confirm();
+  const confirm = modal().onPrimary; confirm(); confirm();
   await screen.settle(); assert.equal(calls.length, 1); assert.equal(balances.at(-1), 650); assert.ok(pending);
   screen.close();
   // Reopening retains the exact request key; a retry can finish after stock is exhausted.
   inventory = [{ ...reward, stock_quantity: 0 }]; screen = make(); tree = await screen.settle();
-  assert.ok(button(tree, 'Out of stock').props.disabled);
+  assert.ok(button(tree, 'Out of Stock').props.disabled);
+  button(tree, 'Out of Stock').props.onPress(); assert.equal(calls.length, 1);
   fail = false; button(tree, 'Retry pending redemption').props.onPress(); await screen.settle();
   assert.equal(calls.length, 2); assert.deepEqual(calls[0], calls[1]);
   assert.equal(pending, null); assert.equal(balances.at(-1), 350); assert.equal(screen.routes[0], '/my-vouchers');
   screen.close();
   inventory = [{ ...reward, points_cost: 900 }]; screen = make(); tree = await screen.settle();
   assert.ok(button(tree, 'Insufficient points').props.disabled);
+  button(tree, 'Insufficient points').props.onPress(); assert.equal(calls.length, 2);
   screen.close();
+  inventory = [{ ...reward, stock_quantity: 0 }]; screen = make(); tree = await screen.settle();
+  assert.match(text(tree), /100.00/); assert.ok(button(tree, 'Out of Stock').props.disabled);
+  assert.equal(button(tree, 'Refresh rewards'), undefined);
+  inventory = [reward]; const currentRewards = auth.rewards; auth.rewards = () => currentRewards(); tree = await screen.settle();
+  assert.equal(button(tree, 'Redeem').props.disabled, false, 'Replenished active stock is redeemable after refresh');
+  const original = auth.rewards;
+  auth.rewards = async () => { throw new ApiError('Offline'); };
+  tree = await screen.settle(); assert.match(text(tree), /Test reward/); assert.match(text(tree), /Offline/); assert.ok(button(tree, 'Retry'));
+  auth.rewards = original; button(tree, 'Retry').props.onPress(); tree = await screen.settle(); assert.doesNotMatch(text(tree), /Offline/);
+  screen.close();
+}
+
+async function pointsNavigationChecks() {
+  let summaryCalls = 0, catalogueCalls = 0, finish;
+  const auth = {
+    pointsSummary: async () => { summaryCalls++; return { current_balance: 650 }; },
+    rewards: async () => { catalogueCalls++; return { data: [] }; },
+    pointTransactions: async () => ({ data: [], current_page: 1, last_page: 1 }),
+  };
+  const screen = harness('src/app/(tabs)/points.tsx', auth);
+  assert.ok(nodes(screen.render()).some(n => n.type === 'TabSkeleton'));
+  let tree = await screen.settle(); assert.match(text(tree), /650/); assert.equal(summaryCalls, 1); assert.equal(catalogueCalls, 0);
+  assert.doesNotMatch(text(tree), /Available Rewards/);
+  button(tree, 'Redeem').props.onPress(); assert.equal(screen.routes.pop(), '/redeem');
+  button(tree, 'My Vouchers').props.onPress(); assert.equal(screen.routes.pop(), '/my-vouchers');
+  auth.pointsSummary = () => new Promise(resolve => { finish = resolve; });
+  tree = await screen.settle(); assert.match(text(tree), /650/); assert.ok(!nodes(tree).some(n => n.type === 'TabSkeleton'));
+  finish({ current_balance: 350 }); tree = await screen.settle(); assert.match(text(tree), /350/);
+  auth.pointsSummary = async () => { throw new ApiError('Balance unavailable'); };
+  tree = await screen.settle(); assert.match(text(tree), /350/); assert.ok(button(tree, 'Retry balance')); screen.close();
+  const redeem = harness('src/app/redeem.tsx', {}, { '@/components/reward-catalogue': { RewardCatalogue: 'RewardCatalogue' } });
+  tree = redeem.render(); assert.equal(nodes(tree).filter(n => n.type === 'RewardCatalogue').length, 1);
+  nodes(tree).find(n => n.props?.accessibilityLabel === 'Go back').props.onPress(); assert.equal(redeem.routes.pop(), 'back'); redeem.close();
+}
+
+async function polishChecks() {
+  for (const host of ['localhost', '127.0.0.1:8000', '[::1]:8000']) {
+    assert.equal(presentation.publicImageUrl(`http://${host}/storage/rewards/test.png`, 'rewards'), 'http://device.test:8000/storage/rewards/test.png');
+  }
+  assert.equal(presentation.publicImageUrl('/storage/rewards/test.png', 'rewards'), 'http://device.test:8000/storage/rewards/test.png');
+  assert.equal(presentation.publicImageUrl('https://cdn.test/reward.png', 'rewards'), 'https://cdn.test/reward.png');
+  for (const url of [null, '', '/storage/private/test.png', 'file:///private/test.png', 'http://localhost/storage/proofs/test.png']) {
+    assert.equal(presentation.publicImageUrl(url, 'rewards'), null);
+  }
+  let finish;
+  const auth = { user: { id: 1 }, rewards: () => new Promise(resolve => { finish = resolve; }), pointsSummary: async () => ({ current_balance: 800 }), redeemReward: async () => { throw Error('Unexpected redemption'); } };
+  const storage = { read: async () => null };
+  const catalogue = harness('src/components/reward-catalogue.tsx', auth, { '@/services/redemption-storage': { redemptionStorage: storage } }, { showBalance: true }, 'RewardCatalogue');
+  let tree = await catalogue.settle(); assert.equal(tree.type, 'TabSkeleton'); assert.doesNotMatch(text(tree), /Loading|Refreshing|--/);
+  const reward = { id: 1, name: 'Image reward', image_url: 'http://localhost/storage/rewards/test.png', voucher_value: '250.00', points_cost: 100, stock_quantity: 8 };
+  finish({ data: [reward], request_key: 'image-request' }); tree = await catalogue.settle();
+  const image = nodes(tree).find(n => n.type === 'Image'); assert.equal(image.props.source.uri, 'http://device.test:8000/storage/rewards/test.png'); assert.equal(image.props.resizeMode, 'contain');
+  assert.match(text(tree), /Redeem for 100 Blood Points/); assert.match(text(tree), /8 remaining/); assert.equal(button(tree, 'Refresh rewards'), undefined);
+  auth.rewards = () => new Promise(resolve => { finish = resolve; }); tree = await catalogue.settle();
+  assert.match(text(tree), /Image reward/); assert.ok(!nodes(tree).some(n => n.type === 'TabSkeleton')); assert.doesNotMatch(text(tree), /Refreshing/);
+  finish({ data: [], request_key: 'empty-request' }); tree = await catalogue.settle(); assert.match(text(tree), /No rewards are available/); catalogue.close();
+
+  const calls = []; let finishHistory;
+  const rows = Array.from({ length: 7 }, (_, i) => ({ id: i + 1, amount: 100, description: 'Donation ' + i, created_at: '2026-09-28T00:00:00Z' }));
+  const pointsAuth = { pointsSummary: async () => ({ current_balance: 800 }), pointTransactions: async (page, type) => { calls.push({ page, type }); return { data: rows, current_page: page, last_page: 2 }; } };
+  const points = harness('src/app/(tabs)/points.tsx', pointsAuth);
+  assert.equal(nodes(points.render()).filter(n => n.type === 'TabSkeleton').length, 1);
+  tree = await points.settle();
+  const history = () => nodes(points.render()).find(n => n.props?.accessibilityLabel === 'Points history');
+  for (const [label, type] of [['All', undefined], ['Earned', 'donation_reward'], ['Redeemed', 'reward_redemption']]) {
+    button(points.render(), label).props.onPress(); tree = await points.settle();
+    assert.equal(calls.at(-1).type, type); assert.equal(history().props.scrollEnabled, true); assert.equal(history().props.nestedScrollEnabled, true);
+    assert.equal(history().props.showsVerticalScrollIndicator, false); assert.equal(history().props.style[1].maxHeight, 420);
+    button(tree, 'Load more transactions').props.onPress(); await points.settle(); assert.equal(calls.at(-1).page, 2);
+  }
+  pointsAuth.pointTransactions = () => new Promise(resolve => { finishHistory = resolve; }); tree = await points.settle();
+  assert.match(text(tree), /Donation/); assert.doesNotMatch(text(tree), /Refreshing|Loading\.\.\./); assert.ok(!nodes(tree).some(n => n.type === 'TabSkeleton'));
+  finishHistory({ data: rows.slice(0, 5), current_page: 1, last_page: 1 }); tree = await points.settle(); assert.equal(history().props.scrollEnabled, false);
+  pointsAuth.pointTransactions = async () => ({ data: [], current_page: 1, last_page: 1 }); tree = await points.settle(); assert.match(text(tree), /No transactions yet/); points.close();
 }
 
 // ========================================
@@ -176,10 +260,13 @@ async function voucherChecks() {
   const screen = harness('src/app/voucher.tsx', auth); let tree = await screen.settle();
   assert.equal(nodes(tree).filter(n => n.type === 'QR').length, 0);
   button(tree, 'Activate').props.onPress(); button(tree, 'Activate').props.onPress();
-  assert.equal(screen.alerts.length, 1); assert.match(screen.alerts[0][1], /directly in front of the cashier/);
-  screen.alerts[0][2][0].onPress(); assert.equal(activations, 0);
+  const confirmation=()=>nodes(screen.render()).find(n=>n.type==='ConfirmationModal').props;
+  assert.equal(screen.alerts.length,0);assert.equal(confirmation().visible,true);assert.equal(confirmation().title,'Attention');
+  assert.match(confirmation().message,/directly in front of the cashier/);assert.equal(confirmation().dismissible,false);
+  assert.equal(confirmation().secondaryLabel,'Cancel');assert.equal(confirmation().primaryLabel,'Activate');
+  confirmation().onSecondary();assert.equal(confirmation().visible,false);assert.equal(activations,0);
   button(screen.render(), 'Activate').props.onPress();
-  const confirm = screen.alerts[1][2][1].onPress; confirm(); confirm();
+  const confirm = confirmation().onPrimary; confirm(); confirm();
   tree = await screen.settle(); assert.equal(activations, 1);
   assert.equal(nodes(tree).find(n => n.type === 'QR').props.value, 'opaque-server-token');
   assert.match(text(tree), /05:00 remaining/);
@@ -197,7 +284,7 @@ async function voucherChecks() {
 }
 
 (async () => {
-  await serviceChecks(); await catalogueChecks(); await historyChecks(); await voucherChecks();
+  await serviceChecks(); await catalogueChecks(); await pointsNavigationChecks(); await polishChecks(); await historyChecks(); await voucherChecks();
   assert.equal(fs.existsSync('src/services/mock-voucher-store.ts'), false);
   console.log('Points/rewards/voucher client checks passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

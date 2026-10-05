@@ -1,7 +1,10 @@
+import { announcementImageUrl, formatDonationDate } from '@/services/announcement-presentation';
+import { ConfirmationModal } from '@/components/confirmation-modal';
+import { formatDonationRestDate } from '@/services/eligibility';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import {Stack,useFocusEffect,useLocalSearchParams,useRouter} from 'expo-router';
-import {useCallback,useRef,useState} from 'react';
-import {Alert,Pressable,ScrollView,StyleSheet,Text,View} from 'react-native';
+import {useCallback,useRef,useState,type ComponentProps} from 'react';
+import {Image,Pressable,ScrollView,StyleSheet,Text,View} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useAuth} from '@/contexts/auth-context';
 import {ApiError,errorMessage} from '@/services/api';
@@ -26,31 +29,32 @@ const COLORS = {
 export default function AnnouncementScreen(){
  const router=useRouter();const {id}=useLocalSearchParams<{id:string}>();const {opportunity,joinOpportunity,donationHistory,eligibilityState}=useAuth();
  const generation=useRef(0);
+ const [rest,setRest]=useState<{date?:string|null}|null>(null);
+ const [dialog,setDialog]=useState<Omit<ComponentProps<typeof ConfirmationModal>,'visible'>|null>(null);
  const [item,setItem]=useState<DonationOpportunity|null>(null);const [error,setError]=useState('');const [busy,setBusy]=useState(false);const lock=useRef(false);
  const load=useCallback(async()=>{const version=++generation.current;setItem(null);setError('');try{const r=await opportunity(id);if(version===generation.current)setItem(r.opportunity);}catch(e){if(version===generation.current)setError(errorMessage(e));}},[id,opportunity]);
  useFocusEffect(useCallback(()=>{void load();return()=>{generation.current++;};},[load]));
  const release=()=>{lock.current=false;setBusy(false);};
- const blocked=(reason:string, participationId?:number, remaining?:number)=>{
+ const blocked=(reason:string, participationId?:number, remaining?:number, nextDate?:string|null)=>{
    if(reason==='active_participation_exists' && typeof participationId==='number' && Number.isSafeInteger(participationId) && participationId>0){
-     Alert.alert('You already have an active donation activity','Complete or cancel your current activity before joining another donation opportunity.',[
-       {text:'Close'},{text:'View Activity',onPress:()=>router.push({pathname:'/activity/[id]',params:{id:String(participationId)}})}]);
+     setDialog({title:'You already have an active donation activity',message:'Complete or cancel your current activity before joining another donation opportunity.',icon:'event-note',secondaryLabel:'Close',primaryLabel:'View Activity',dismissible:false,onSecondary:()=>{},onPrimary:()=>router.push({pathname:'/activity/[id]',params:{id:String(participationId)}})});
+   }else if(reason==='donation_cooldown_active'){
+     setRest({date:nextDate});
    }else if(reason==='evaluation_required'){
-     Alert.alert('Complete Your Pre-Screening','You need a current LifeFlow self-assessment before joining this donation activity.',[
-       {text:'Cancel',style:'cancel'},{text:'Evaluate with Flowie',onPress:()=>router.push('/evaluation')}]);
+     setDialog({title:'Complete Your Pre-Screening',message:'You need a current LifeFlow self-assessment before joining this donation activity.',icon:'fact-check',secondaryLabel:'Cancel',primaryLabel:'Evaluate with Flowie',dismissible:false,onSecondary:()=>{},onPrimary:()=>router.push('/evaluation')});
    }else if(reason==='evaluation_not_eligible'){
      const minutes=typeof remaining==='number' && Number.isFinite(remaining)?Math.ceil(Math.max(0,remaining)/60):0;
-     Alert.alert('Not Ready to Donate Right Now','Your latest pre-screening is still active, and you are not ready to donate right now. You can reassess when the 24-hour window ends. Final eligibility is determined by the donation facility.'+
-       (minutes?'\nAvailable again in '+Math.floor(minutes/60)+'h '+minutes%60+'m':''),[
-       {text:'Close'},{text:'View Status',onPress:()=>router.push('/(tabs)/status')}]);
+     setDialog({title:'Not Ready to Donate Right Now',message:'Your latest pre-screening is still active, and you are not ready to donate right now. You can reassess when the 24-hour window ends. Final eligibility is determined by the donation facility.'+
+       (minutes?'\nAvailable again in '+Math.floor(minutes/60)+'h '+minutes%60+'m':''),icon:'schedule',variant:'warning',secondaryLabel:'Close',primaryLabel:'View Status',dismissible:false,onSecondary:()=>{},onPrimary:()=>router.push('/(tabs)/status')});
    }else{return false;}
    return true;
  };
  const failure=(e:unknown)=>{
-   const data=e instanceof ApiError && e.status===409?e.data as {reason?:string;participation_id?:number;remaining_seconds?:number}|undefined:undefined;
-   if(!data || !blocked(data.reason || '',data.participation_id,data.remaining_seconds))setError(errorMessage(e));
+   const data=e instanceof ApiError && e.status===409?e.data as {reason?:string;participation_id?:number;remaining_seconds?:number;next_eligible_donation_at?:string|null}|undefined:undefined;
+   if(!data || !blocked(data.reason || '',data.participation_id,data.remaining_seconds,data.next_eligible_donation_at))setError(errorMessage(e));
  };
  const confirm=async()=>{
-   if(!item || lock.current)return;
+   if(!item || lock.current || rest)return;
    lock.current=true;setBusy(true);setError('');
    const version=generation.current;
    try{
@@ -61,6 +65,9 @@ export default function AnnouncementScreen(){
      if(active){blocked('active_participation_exists',active.id);release();return;}
      const state=await eligibilityState();
      if(version!==generation.current){release();return;}
+     if(state.is_on_donation_cooldown){
+       blocked('donation_cooldown_active',undefined,undefined,state.next_eligible_donation_at);release();return;
+     }
      if(!state.assessment || !state.cooldown_active || state.remaining_seconds<=0){
        blocked('evaluation_required');release();return;
      }
@@ -70,9 +77,7 @@ export default function AnnouncementScreen(){
      // Keep the lock through the dialog; consume callbacks once, including Cancel.
      let consumed=false;
      const cancel=()=>{if(!consumed){consumed=true;release();}};
-     Alert.alert('Confirm Donation',item.title,[
-       {text:'Cancel',style:'cancel',onPress:cancel},
-       {text:'Confirm',onPress:()=>{
+     setDialog({title:'Confirm Donation',message:item.title,icon:'favorite-border',secondaryLabel:'Cancel',primaryLabel:'Confirm',dismissOnBackdrop:true,onSecondary:cancel,onPrimary:()=>{
          if(consumed)return;consumed=true;
          if(version!==generation.current){release();return;}
          void (async()=>{
@@ -82,14 +87,14 @@ export default function AnnouncementScreen(){
            }catch(e){if(version===generation.current)failure(e);}
            finally{release();}
          })();
-       }},
-     ],{cancelable:true,onDismiss:cancel});
+       }});
    }catch(e){if(version===generation.current)failure(e);release();}
  };
+ const confirmation=dialog ?? {title:'Donation Rest Period',icon:'hourglass-empty' as const,message:'You recently completed a donation and are still within the 3-month rest period. You can donate again starting '+formatDonationRestDate(rest?.date)+'.',secondaryLabel:'Close',primaryLabel:'View Status',onSecondary:()=>setRest(null),onPrimary:()=>{setRest(null);router.push('/(tabs)/status');}};
  return <><Stack.Screen options={{headerShown:false}}/><SafeAreaView edges={['top','bottom']} style={styles.safeArea}><View style={styles.header}><Pressable accessibilityLabel="Go back" onPress={()=>router.canGoBack()?router.back():router.replace('/(tabs)')} style={styles.backButton}><MaterialIcons name="arrow-back" size={23}/></Pressable><Text style={styles.headerTitle}>{id==='red-cross-dagupan'?'Donation Option':'Announcement'}</Text></View><ScrollView contentContainerStyle={styles.scrollContent}><View style={styles.content}>
  {error?<><Text accessibilityRole="alert" style={styles.description}>{error}</Text>{!item?<Pressable onPress={()=>void load()}><Text style={styles.description}>Retry donation details</Text></Pressable>:null}</>:null}
- {item?<><Text style={styles.title}>{item.title}</Text><View style={styles.detailsCard}><Text style={styles.detailValue}>{item.event_date || 'Confirm donation arrangements with the chapter.'} {item.start_time || ''}</Text><Text style={styles.detailValue}>{item.location}</Text><Text style={styles.description}>{item.description}</Text></View><Text style={styles.description}>Verified donations earn 300 points for your first donation, increasing by 50 to a maximum of 500 per donation.</Text><Text style={styles.description}>Final donation eligibility is determined by the facility. Use the existing self-assessment to prepare, and bring the required identification or documents.</Text><View style={{flexDirection:'row',gap:12}}><Pressable onPress={()=>router.push('/evaluation')} style={styles.uploadButton}><Text style={styles.uploadButtonText}>Evaluate</Text></Pressable><Pressable disabled={busy} onPress={()=>void confirm()} style={styles.uploadButton}><Text style={styles.uploadButtonText}>{busy?'Joining…':'Go Donate'}</Text></Pressable></View></>:!error?<Text>Loading announcement…</Text>:null}
- </View></ScrollView></SafeAreaView></>;
+ {item?<>{announcementImageUrl(item.image_url) ? <Image source={{uri:announcementImageUrl(item.image_url)!}} accessibilityLabel={item.title} resizeMode="contain" style={{width:'100%',height:220,borderRadius:16}}/> : null}<Text style={styles.title}>{item.title}</Text><View style={styles.detailsCard}><Text style={styles.detailValue}>{formatDonationDate(item.event_date ?? item.donation_date, 'Confirm donation arrangements with the chapter.')} {item.start_time || ''}</Text><Text style={styles.detailValue}>{item.location}</Text><Text style={styles.description}>{item.description}</Text></View><Text style={styles.description}>Verified donations earn 300 points for your first donation, increasing by 50 to a maximum of 500 per donation.</Text><Text style={styles.description}>Final donation eligibility is determined by the facility. Use the existing self-assessment to prepare, and bring the required identification or documents.</Text><View style={{flexDirection:'row',gap:12}}><Pressable onPress={()=>router.push('/evaluation')} style={styles.uploadButton}><Text style={styles.uploadButtonText}>Evaluate</Text></Pressable><Pressable disabled={busy} onPress={()=>void confirm()} style={styles.uploadButton}><Text style={styles.uploadButtonText}>{busy?'Joining…':'Go Donate'}</Text></Pressable></View></>:!error?<Text>Loading announcement…</Text>:null}
+ </View></ScrollView></SafeAreaView><ConfirmationModal {...confirmation} visible={!!dialog || !!rest} onSecondary={()=>{setDialog(null);confirmation.onSecondary();}} onPrimary={()=>{setDialog(null);return confirmation.onPrimary();}} /></>;
 }
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },

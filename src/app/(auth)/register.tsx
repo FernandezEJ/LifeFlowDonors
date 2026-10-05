@@ -2,7 +2,7 @@ import { useAuth } from '@/contexts/auth-context';
 import { errorMessage } from '@/services/api';
 import { RegistrationLegal, PRESCREENING_ACKNOWLEDGEMENT } from '@/components/registration-legal';
 import BirthDatePicker from '@/components/birth-date-picker';
-import { authApi, formErrors } from '@/services/auth';
+import { authApi, formErrors, latestBirthDate, ADULT_DONOR_NOTICE } from '@/services/auth';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
@@ -46,8 +46,6 @@ type FormState = {
   lastName: string;
   email: string;
   mobileNumber: string;
-  password: string;
-  confirmPassword: string;
   birthDate: string;
   gender: Gender;
   bloodType: BloodType;
@@ -62,8 +60,6 @@ const INITIAL_FORM: FormState = {
   lastName: '',
   email: '',
   mobileNumber: '',
-  password: '',
-  confirmPassword: '',
   birthDate: '',
   gender: '',
   bloodType: '',
@@ -107,8 +103,6 @@ export default function RegisterScreen() {
   const [requestError, setRequestError] = useState('');
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const [errors, setErrors] = useState<FormErrors>({});
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const [legalDocument, setLegalDocument] = useState<'terms' | 'privacy' | null>(null);
   const [pending, setPending] = useState<string | null>(null);
@@ -120,7 +114,7 @@ export default function RegisterScreen() {
   useFocusEffect(useCallback(() => () => {
     generation.current++; lock.current = false; setWorking(false);
     setPending(null); setCode(''); setLegalDocument(null);
-    setForm(current => ({ ...current, password: '', confirmPassword: '', acceptedTerms: false, acknowledgedPrivacy: false, acknowledgedPrescreening: false }));
+    setForm(current => ({ ...current, acceptedTerms: false, acknowledgedPrivacy: false, acknowledgedPrescreening: false }));
   }, []));
   useEffect(() => {
     const timer = setInterval(() => setResendSeconds(Math.max(0, Math.ceil((resendDeadline.current - performance.now()) / 1000))), 1000);
@@ -130,7 +124,6 @@ export default function RegisterScreen() {
   const changeEmail = () => {
     if (lock.current) return;
     generation.current++; setPending(null); setCode(''); setRequestError(''); setErrors({});
-    setForm(current => ({ ...current, password: '', confirmPassword: '' }));
   };
   const verify = async () => {
     if (lock.current || !pending) return;
@@ -180,20 +173,8 @@ export default function RegisterScreen() {
 
     if (!form.mobileNumber.trim()) {
       nextErrors.mobileNumber = 'Mobile number is required.';
-    } else if (!/^(?:\+63|0)9\d{9}$/.test(normalizedMobile)) {
+    } else if (!/^(?:\+?63|0)9\d{9}$/.test(normalizedMobile)) {
       nextErrors.mobileNumber = 'Enter a valid Philippine mobile number.';
-    }
-
-    if (!form.password) {
-      nextErrors.password = 'Password is required.';
-    } else if (form.password.length < 8) {
-      nextErrors.password = 'Password must be at least 8 characters.';
-    }
-
-    if (!form.confirmPassword) {
-      nextErrors.confirmPassword = 'Please confirm your password.';
-    } else if (form.password !== form.confirmPassword) {
-      nextErrors.confirmPassword = 'Passwords do not match.';
     }
 
     if (!form.birthDate.trim()) {
@@ -211,16 +192,13 @@ export default function RegisterScreen() {
     }
 
     if (form.firstName.trim().length > 80) nextErrors.firstName = 'Use at most 80 characters.';
-    if (form.middleName.trim().length > 80) nextErrors.middleName = 'Use at most 80 characters.';
+    if (form.middleName.trim() && !/^\p{L}$/u.test(form.middleName.trim().toUpperCase())) nextErrors.middleName = 'Enter one alphabetic middle initial.';
     if (form.lastName.trim().length > 80) nextErrors.lastName = 'Use at most 80 characters.';
     if (form.email.trim().length > 255) nextErrors.email = 'Use at most 255 characters.';
-    const passwordBytes = Array.from(form.password).reduce((total, character) => { const point = character.codePointAt(0)!; return total + (point <= 127 ? 1 : point <= 2047 ? 2 : point <= 65535 ? 3 : 4); }, 0);
-    if (passwordBytes > 72 || form.password.includes('\0')) nextErrors.password = 'Use at most 72 bytes without null characters.';
     if (isValidBirthDate(form.birthDate)) {
       const [month, day, year] = form.birthDate.split('/').map(Number);
-      const today = new Date(); today.setHours(0, 0, 0, 0);
       const birthday = new Date(); birthday.setHours(0, 0, 0, 0); birthday.setFullYear(year, month - 1, day);
-      if (year < 1 || birthday >= today) nextErrors.birthDate = 'Choose a birth date before today.';
+      if (year < 1 || birthday > latestBirthDate()) nextErrors.birthDate = ADULT_DONOR_NOTICE;
     }
     if (!form.acceptedTerms) nextErrors.acceptedTerms = 'Accept the Terms and Conditions.';
     if (!form.acknowledgedPrivacy) nextErrors.acknowledgedPrivacy = 'Acknowledge the Privacy Policy.';
@@ -242,8 +220,6 @@ export default function RegisterScreen() {
       const response = await register(form);
       if (request !== generation.current) return;
       setPending(response.pending_token); setCode(''); startResendWait();
-      setForm(current => ({ ...current, password: '', confirmPassword: '' }));
-      setShowPassword(false); setShowConfirmPassword(false);
     } catch (error) {
       if (request === generation.current) { setErrors(formErrors(error)); setRequestError(errorMessage(error)); }
     } finally { if (request === generation.current) { lock.current = false; setWorking(false); } }
@@ -324,12 +300,12 @@ export default function RegisterScreen() {
                 />
               </FormField>
 
-              <FormField label="Middle Name" error={errors.middleName}>
+              <FormField label="Middle Initial (Optional)" error={errors.middleName}>
                 <TextInput
-                  autoCapitalize="words"
-                  autoComplete="name-middle"
-                  onChangeText={(value) => updateField('middleName', value)}
-                  placeholder="Enter your middle name"
+                  autoCapitalize="characters"
+                  maxLength={1}
+                  onChangeText={(value) => updateField('middleName', value.toUpperCase())}
+                  placeholder="Middle initial (optional)"
                   placeholderTextColor={COLORS.muted}
                   style={styles.input}
                   value={form.middleName}
@@ -372,58 +348,6 @@ export default function RegisterScreen() {
                   style={[styles.input, errors.mobileNumber && styles.inputError]}
                   value={form.mobileNumber}
                 />
-              </FormField>
-
-              <FormField label="Password" error={errors.password}>
-                <View style={[styles.passwordInput, errors.password && styles.inputError]}>
-                  <TextInput
-                    autoCapitalize="none"
-                    autoComplete="new-password"
-                    onChangeText={(value) => updateField('password', value)}
-                    placeholder="Create a password"
-                    placeholderTextColor={COLORS.muted}
-                    secureTextEntry={!showPassword}
-                    style={styles.passwordTextInput}
-                    value={form.password}
-                  />
-                  <Pressable
-                    accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
-                    accessibilityRole="button"
-                    hitSlop={8}
-                    onPress={() => setShowPassword((visible) => !visible)}>
-                    <MaterialIcons
-                      color={COLORS.muted}
-                      name={showPassword ? 'visibility-off' : 'visibility'}
-                      size={22}
-                    />
-                  </Pressable>
-                </View>
-              </FormField>
-
-              <FormField label="Confirm Password" error={errors.confirmPassword}>
-                <View style={[styles.passwordInput, errors.confirmPassword && styles.inputError]}>
-                  <TextInput
-                    autoCapitalize="none"
-                    autoComplete="new-password"
-                    onChangeText={(value) => updateField('confirmPassword', value)}
-                    placeholder="Confirm your password"
-                    placeholderTextColor={COLORS.muted}
-                    secureTextEntry={!showConfirmPassword}
-                    style={styles.passwordTextInput}
-                    value={form.confirmPassword}
-                  />
-                  <Pressable
-                    accessibilityLabel={showConfirmPassword ? 'Hide password' : 'Show password'}
-                    accessibilityRole="button"
-                    hitSlop={8}
-                    onPress={() => setShowConfirmPassword((visible) => !visible)}>
-                    <MaterialIcons
-                      color={COLORS.muted}
-                      name={showConfirmPassword ? 'visibility-off' : 'visibility'}
-                      size={22}
-                    />
-                  </Pressable>
-                </View>
               </FormField>
 
               <FormField label="Birth Date" error={errors.birthDate}>

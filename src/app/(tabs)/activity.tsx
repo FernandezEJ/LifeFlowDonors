@@ -1,3 +1,4 @@
+import { TabSkeleton } from '@/components/tab-skeleton';
 import { NotificationBell } from '@/components/notification-bell';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
@@ -5,7 +6,7 @@ import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-n
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '@/contexts/auth-context';
 import { errorMessage } from '@/services/api';
-import { DONATION_STATUS, DONATION_STATUS_DESCRIPTION, type DonationPage, type DonationStatus } from '@/services/donations';
+import { DONATION_STATUS, DONATION_STATUS_DESCRIPTION, type DonationPage, type DonationParticipation, type DonationStatus } from '@/services/donations';
 const COLORS = {
   background: '#FFF9F2',
   brand: '#D93A3A',
@@ -24,19 +25,24 @@ const COLORS = {
 // ========================================
 export default function ActivityScreen() {
   const router = useRouter();
+  const scrollRef = useRef<FlatList<DonationParticipation>>(null);
+  useFocusEffect(useCallback(() => {
+    scrollRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, []));
   const { donationHistory } = useAuth();
   const [status, setStatus] = useState<DonationStatus | undefined>();
   const [page, setPage] = useState<DonationPage | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const generation = useRef(0);
   const lock = useRef(false);
+  const previousStatus = useRef(status);
   const [refresh, setRefresh] = useState(0);
   useFocusEffect(useCallback(() => {
     // Retry changes restart the focused history request.
     void refresh;
     const version = ++generation.current;
-    lock.current = true; setLoading(true); setError(''); setPage(null);
+    lock.current = true; setLoading(true); setError(''); if (previousStatus.current !== status) setPage(null); previousStatus.current = status;
     donationHistory(1, status).then(data => { if (generation.current === version) setPage(data); })
       .catch(e => { if (generation.current === version) setError(errorMessage(e)); })
       .finally(() => { if (generation.current === version) { lock.current = false; setLoading(false); } });
@@ -55,14 +61,14 @@ export default function ActivityScreen() {
     <View style={styles.fixedHeader}><View style={styles.header}><Text style={styles.headerTitle}>Activity</Text>
       {/* Shared backend unread count refreshes on focus. */}<NotificationBell />
     </View></View>
-    <FlatList data={page?.data || []} keyExtractor={item => String(item.id)} contentContainerStyle={styles.listContent}
+    <FlatList ref={scrollRef} showsVerticalScrollIndicator={false} data={page?.data || []} keyExtractor={item => String(item.id)} contentContainerStyle={styles.listContent}
       ListHeaderComponent={<View style={styles.listHeader}>
         <Text style={styles.subtitle}>Your donation activities</Text>
-        <ScrollView horizontal contentContainerStyle={styles.filters}>{([undefined, 'pending', 'for_verification', 'needs_revision', 'completed', 'rejected', 'cancelled'] as const).map(value => <Pressable key={value || 'all'} onPress={() => setStatus(value)} style={[styles.filterChip, value === status && styles.filterChipSelected]}><Text style={[styles.filterText, value === status && styles.filterTextSelected]}>{value ? DONATION_STATUS[value] : 'All'}</Text></Pressable>)}</ScrollView>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>{([undefined, 'pending', 'for_verification', 'needs_revision', 'completed', 'rejected', 'cancelled'] as const).map(value => <Pressable key={value || 'all'} onPress={() => setStatus(value)} style={[styles.filterChip, value === status && styles.filterChipSelected]}><Text style={[styles.filterText, value === status && styles.filterTextSelected]}>{value ? DONATION_STATUS[value] : 'All'}</Text></Pressable>)}</ScrollView>
         <Text style={styles.historyTitle}>Joined activities {page ? '(' + page.total + ')' : ''}</Text>
         {error ? <Pressable onPress={() => setRefresh(n => n + 1)}><Text accessibilityRole="alert" style={styles.subtitle}>{error} Tap to retry.</Text></Pressable> : null}
       </View>}
-      ListEmptyComponent={<Text style={styles.subtitle}>{loading ? 'Loading records…' : error ? '' : 'No joined activities yet.'}</Text>}
+      ListEmptyComponent={loading && !page ? <TabSkeleton /> : <Text style={styles.subtitle}>{error ? '' : 'No joined activities yet.'}</Text>}
       renderItem={({item}) => <View style={styles.card}>
         <Text style={styles.cardTitle}>{item.opportunity.title}</Text>
         <Text style={styles.detailText}>{item.opportunity.event_date || 'Confirm arrangements with the chapter'}</Text><Text style={styles.organizer}>{item.opportunity.location}</Text>
@@ -74,7 +80,7 @@ export default function ActivityScreen() {
   </SafeAreaView>;
 }
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: COLORS.background },
+  safeArea: { flex: 1, backgroundColor: 'transparent' },
   fixedHeader: {
     zIndex: 10,
     borderBottomWidth: 1,

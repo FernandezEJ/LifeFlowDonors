@@ -1,215 +1,92 @@
 import { useAuth } from '@/contexts/auth-context';
 import { ApiError, errorMessage } from '@/services/api';
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useRouter } from 'expo-router';
-import { useState } from 'react';
-import {
-  Image,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-const COLORS = {
-  background: '#FFF9F2',
-  brand: '#D93A3A',
-  brandPressed: '#BE2F2F',
-  text: '#372E2E',
-  muted: '#766A68',
-  border: '#E8DDD6',
-  inputBackground: '#FFFFFF',
-  error: '#C92A2A',
-  white: '#FFFFFF',
-};
-
-type LoginErrors = {
-  identifier?: string;
-  password?: string;
-};
+const COLORS = { background: '#FFF9F2', brand: '#D93A3A', brandPressed: '#BE2F2F', text: '#372E2E', muted: '#766A68', border: '#E8DDD6', inputBackground: '#FFFFFF', error: '#C92A2A', white: '#FFFFFF' };
 
 export default function LoginScreen() {
   const router = useRouter();
-  // ========================================
-  // LOGIN STATE
-  // Shares the root session and shows safe request feedback.
-  // ========================================
-  const { login, busy } = useAuth();
-  const [requestError, setRequestError] = useState('');
-  const [identifier, setIdentifier] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [errors, setErrors] = useState<LoginErrors>({});
-
-  const updateIdentifier = (value: string) => {
-    setIdentifier(value);
-
-    if (errors.identifier) {
-      setErrors((current) => ({ ...current, identifier: undefined }));
-    }
+  const { requestLoginCode, login, busy } = useAuth();
+  const [mobile, setMobile] = useState('');
+  const [code, setCode] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const [error, setError] = useState('');
+  const [action, setAction] = useState<'request' | 'verify' | null>(null);
+  const [remaining, setRemaining] = useState(0);
+  const deadline = useRef(0), lock = useRef(false), generation = useRef(0);
+  const working = busy || action !== null;
+  // Codes and pending login state stay in memory; existing session storage receives only verified tokens.
+  useFocusEffect(useCallback(() => () => { generation.current++; setCode(''); setVerifying(false); setError(''); setAction(null); }, []));
+  useEffect(() => {
+    const timer = setInterval(() => setRemaining(Math.max(0, Math.ceil((deadline.current - performance.now()) / 1000))), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const run = async (kind: 'request' | 'verify', operation: (active: () => boolean) => Promise<void>) => {
+    if (lock.current || busy) return;
+    lock.current = true; setAction(kind); setError('');
+    const version = generation.current;
+    try { await operation(() => version === generation.current); }
+    catch (failure) {
+      if (version === generation.current) setError(failure instanceof ApiError && failure.fields.code?.length ? failure.fields.code.join('\n') : errorMessage(failure));
+    } finally { lock.current = false; if (version === generation.current) setAction(null); }
   };
-
-  const updatePassword = (value: string) => {
-    setPassword(value);
-
-    if (errors.password) {
-      setErrors((current) => ({ ...current, password: undefined }));
-    }
+  const request = () => {
+    if (verifying && performance.now() < deadline.current) return;
+    if (!/^(?:0|\+?63)9\d{9}$/.test(mobile.replace(/[\s()-]/g, ''))) { setError('Enter a valid Philippine mobile number.'); return; }
+    void run('request', async active => {
+      const response = await requestLoginCode(mobile);
+      if (active()) { setVerifying(true); setCode(''); deadline.current = performance.now() + response.resend_after * 1000; setRemaining(response.resend_after); }
+    });
   };
-
-  // ========================================
-  // LOGIN FORM VALIDATION
-  // Matches the email-only endpoint; Laravel verifies the actual password.
-  // ========================================
-  const validateForm = () => {
-    const nextErrors: LoginErrors = {};
-
-    if (!identifier.trim()) {
-      nextErrors.identifier = 'Email address is required.';
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier.trim())) {
-      nextErrors.identifier = 'Enter a valid email address.';
-    }
-
-    if (!password) {
-      nextErrors.password = 'Password is required.';
-    }
-
-    setErrors(nextErrors);
-    return Object.keys(nextErrors).length === 0;
+  const verify = () => {
+    if (!/^\d{6}$/.test(code)) { setError('Enter the 6-digit login code.'); return; }
+    void run('verify', async () => { await login(mobile, code); });
   };
-
-  // ========================================
-  // LARAVEL LOGIN
-  // The backend accepts email and password; the session gate opens tabs.
-  // ========================================
-  const handleLogin = async () => {
-    if (busy || !validateForm()) return;
-    setRequestError('');
-    try { await login(identifier, password); }
-    catch (error) {
-      setRequestError(errorMessage(error));
-      if (error instanceof ApiError) setErrors({ identifier: error.fields.email?.join('\n'), password: error.fields.password?.join('\n') });
-    }
-  };
-
-  const handleForgotPassword = () => {
-    if (!busy) router.push('/(auth)/forgot-password');
-  };
-
-  return (
-    <SafeAreaView style={styles.safeArea}>
-      <View style={styles.decorativeCircleTop} />
-      <View style={styles.decorativeCircleBottom} />
-
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.keyboardView}>
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}>
-          <View style={styles.content}>
-            <View style={styles.header}>
-              <Image
-                accessibilityLabel="LifeFlow mascot"
-                resizeMode="contain"
-                source={require('../../../assets/images/LogoMascot.png')}
-                style={styles.logo}
-              />
-              <Text style={styles.title}>Welcome to LifeFlow</Text>
-              <Text style={styles.subtitle}>Sign in to continue your LifeFlow journey.</Text>
-            </View>
-
-            <View style={styles.form}>
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Email Address</Text>
-                <TextInput
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="email-address"
-                  onChangeText={updateIdentifier}
-                  placeholder="Enter your email"
-                  placeholderTextColor={COLORS.muted}
-                  style={[styles.input, errors.identifier && styles.inputError]}
-                  value={identifier}
-                />
-                {errors.identifier ? (
-                  <Text style={styles.errorText}>{errors.identifier}</Text>
-                ) : null}
-              </View>
-
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Password</Text>
-                <View style={[styles.passwordInput, errors.password && styles.inputError]}>
-                  <TextInput
-                    autoCapitalize="none"
-                    autoComplete="current-password"
-                    onChangeText={updatePassword}
-                    onSubmitEditing={handleLogin}
-                    placeholder="Enter your password"
-                    placeholderTextColor={COLORS.muted}
-                    returnKeyType="done"
-                    secureTextEntry={!showPassword}
-                    style={styles.passwordTextInput}
-                    value={password}
-                  />
-                  <Pressable
-                    accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
-                    accessibilityRole="button"
-                    hitSlop={8}
-                    onPress={() => setShowPassword((visible) => !visible)}>
-                    <MaterialIcons
-                      color={COLORS.muted}
-                      name={showPassword ? 'visibility-off' : 'visibility'}
-                      size={22}
-                    />
-                  </Pressable>
-                </View>
-                {errors.password ? <Text style={styles.errorText}>{errors.password}</Text> : null}
-              </View>
-
-              <Pressable
-                accessibilityRole="link"
-                hitSlop={8}
-                onPress={handleForgotPassword}
-                style={styles.forgotButton}>
-                <Text style={styles.forgotText}>Forgot Password?</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.actions}>
-              {requestError ? <Text accessibilityRole="alert" style={styles.errorText}>{requestError}</Text> : null}
-              <Pressable
-                accessibilityRole="button"
-                disabled={busy}
-                onPress={handleLogin}
-                style={({ pressed }) => [
-                  styles.primaryButton,
-                  pressed && styles.primaryButtonPressed,
-                ]}>
-                <Text style={styles.primaryButtonText}>{busy ? 'Logging in...' : 'Login'}</Text>
-              </Pressable>
-
-              <View style={styles.registerRow}>
-                <Text style={styles.accountText}>Don&apos;t have an account?</Text>
-                <Pressable
-                  accessibilityRole="link"
-                  hitSlop={8}
-                  onPress={() => router.push('/(auth)/register')}>
-                  <Text style={styles.registerText}>Register</Text>
-                </Pressable>
-              </View>
+  return <SafeAreaView style={styles.safeArea}>
+    <View style={styles.decorativeCircleTop} /><View style={styles.decorativeCircleBottom} />
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.keyboardView}>
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <View style={styles.content}>
+          <View style={styles.header}>
+            <Image accessibilityLabel="LifeFlow mascot" resizeMode="contain" source={require('../../../assets/images/LogoMascot.png')} style={styles.logo} />
+            <Text accessibilityRole="header" style={styles.title}>{verifying ? 'Verify Your Login' : 'Welcome to LifeFlow'}</Text>
+            <Text style={styles.subtitle}>{verifying ? 'We sent a verification code to the email linked to this mobile number.' : 'We’ll send a verification code to the email linked to your LifeFlow account.'}</Text>
+          </View>
+          <View style={styles.form}>
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>{verifying ? '6-digit login code' : 'Mobile Number'}</Text>
+              {verifying ? <TextInput accessibilityLabel="6-digit login code" autoComplete="one-time-code" keyboardType="number-pad" maxLength={6} editable={!working}
+                value={code} onChangeText={value => setCode(value.replace(/[^0-9]/g, '').slice(0, 6))} onSubmitEditing={verify} style={styles.input} />
+                : <TextInput accessibilityLabel="Mobile Number" autoComplete="tel" keyboardType="phone-pad" autoCorrect={false} editable={!working}
+                  value={mobile} onChangeText={setMobile} placeholder="09XXXXXXXXX" placeholderTextColor={COLORS.muted} onSubmitEditing={request} style={styles.input} />}
+              {verifying ? <Text style={styles.subtitle}>Code expires after 10 minutes. Delivery may take a moment.</Text> : null}
             </View>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
-  );
+          <View style={styles.actions}>
+            {error ? <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text> : null}
+            <Pressable accessibilityRole="button" disabled={working} onPress={verifying ? verify : request} style={styles.primaryButton}>
+              <Text style={styles.primaryButtonText}>{action === 'verify' ? 'Verifying...' : action === 'request' ? 'Sending...' : verifying ? 'Verify' : 'Continue'}</Text>
+            </Pressable>
+            {verifying ? <View style={styles.verificationActions}>
+              <Text style={[styles.accountText, styles.verificationHelper]}>Didn’t receive the code?</Text>
+              <Pressable accessibilityRole="button" disabled={working || remaining > 0} onPress={request} style={styles.verificationTextAction}>
+                <Text style={[styles.verificationActionText, (working || remaining > 0) && styles.verificationActionDisabled]}>{remaining > 0 ? 'Resend code in ' + remaining + 's' : 'Resend Code'}</Text>
+              </Pressable>
+              <Pressable accessibilityRole="button" disabled={working} onPress={() => { if (lock.current) return; generation.current++; setVerifying(false); setCode(''); setError(''); }} style={styles.verificationTextAction}>
+                <Text style={[styles.verificationActionText, styles.verificationSecondaryText, working && styles.verificationActionDisabled]}>Change Number</Text>
+              </Pressable>
+            </View> : <View style={styles.registerRow}>
+              <Text style={styles.accountText}>Don’t have an account?</Text>
+              <Pressable accessibilityRole="link" disabled={working} onPress={() => router.push('/(auth)/register')} style={{ padding: 12, minHeight: 44 }}><Text style={styles.registerText}>Register</Text></Pressable>
+            </View>}
+          </View>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  </SafeAreaView>;
 }
 
 const styles = StyleSheet.create({
@@ -363,6 +240,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 5,
+  },
+  verificationActions: {
+    gap: 4,
+  },
+  verificationHelper: {
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  verificationTextAction: {
+    minHeight: 48,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  verificationActionText: {
+    color: COLORS.brand,
+    fontSize: 15,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  verificationSecondaryText: {
+    fontWeight: '500',
+  },
+  verificationActionDisabled: {
+    color: COLORS.muted,
   },
   accountText: {
     color: COLORS.text,

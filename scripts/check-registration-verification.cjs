@@ -34,26 +34,55 @@ function host(){
  await authService.authApi.resendRegistration('pending');assert.deepEqual(JSON.parse(JSON.stringify(requests[2].options.body)),{pending_token:'pending'});
  const legal=load('src/components/registration-legal.tsx',shared);
  native.KeyboardAvoidingView='KeyboardAvoidingView';native.Modal='Modal';native.Platform={OS:'android'};
+ // Passwordless API contract, Philippine calendar boundary and legacy initial display.
+ assert.equal(requests[0].options.body.password,undefined);assert.equal(requests[0].options.body.password_confirmation,undefined);
+ await authService.authApi.requestLoginCode('09171234567');
+ assert.equal(requests.at(-1).path,'/auth/request-login-code');assert.deepEqual(JSON.parse(JSON.stringify(requests.at(-1).options.body)),{mobile_number:'09171234567'});
+ await authService.authApi.login('+639171234567','012345');
+ assert.equal(requests.at(-1).path,'/auth/verify-login-code');assert.deepEqual(JSON.parse(JSON.stringify(requests.at(-1).options.body)),{mobile_number:'+639171234567',code:'012345'});
+ const cutoff=authService.latestBirthDate(new Date('2026-09-30T16:00:00Z'));assert.equal(cutoff.getFullYear(),2008);assert.equal(cutoff.getMonth(),9);assert.equal(cutoff.getDate(),1);
+ assert.equal(authService.middleInitial(' santos '),'S');assert.equal(authService.middleInitial(null),'');
+ // Exercise the actual login handlers: duplicate taps, invalid/expired codes, resend, back and verified session handoff.
+ const lh=host(),loginTimers=new Set(),loginRoutes=[];let loginClock=0,requested=0,logged=0,sessionAccepted=false;
+ let requestGate=deferred(),loginFailure=null;
+ const loginAuth={busy:false,requestLoginCode:async number=>{assert.equal(number,'09171234567');requested++;return requestGate.promise;},login:async(number,code)=>{assert.equal(number,'09171234567');assert.equal(code,'012345');logged++;if(loginFailure)throw loginFailure;sessionAccepted=true;}};
+ const loginScreen=load('src/app/(auth)/login.tsx',{...shared,react:lh.react,'expo-router':{useRouter:()=>({push:route=>loginRoutes.push(route)}),useFocusEffect:lh.focus},'@/contexts/auth-context':{useAuth:()=>loginAuth},'@/services/api':api},
+ {performance:{now:()=>loginClock},setInterval:fn=>{loginTimers.add(fn);return fn;},clearInterval:fn=>loginTimers.delete(fn)});
+ const lv=()=>lh.render(loginScreen.default),loginInput=()=>nodes(lv()).find(n=>n.type==='TextInput');
+ assert.match(texts(lv()),/Mobile Number/);assert.doesNotMatch(texts(lv()),/Password/);assert.equal(nodes(lv()).filter(n=>n.type==='TextInput').length,1);
+ button(lv(),'Register').props.onPress();assert.equal(loginRoutes.pop(),'/(auth)/register');
+ loginInput().props.onChangeText('09171234567');const continueLogin=button(lv(),'Continue').props.onPress;continueLogin();continueLogin();assert.equal(requested,1);assert.equal(button(lv(),'Sending...').props.disabled,true);
+ requestGate.resolve({resend_after:60,expires_in:600});await flush();assert.match(texts(lv()),/Verify Your Login/);assert.equal(button(lv(),'Resend code in 60s').props.disabled,true);
+ assert.equal(loginInput().props.keyboardType,'number-pad');assert.equal(loginInput().props.maxLength,6);assert.doesNotMatch(texts(lv()),/@/);
+ loginInput().props.onChangeText('12x');button(lv(),'Verify').props.onPress();assert.match(texts(lv()),/6-digit login code/);assert.equal(logged,0);
+ for(const message of ['The login code is invalid.','The login code has expired.']){
+   loginFailure=new api.ApiError(message,422,{code:[message]});loginInput().props.onChangeText('012345');const submit=button(lv(),'Verify').props.onPress;submit();submit();await flush();assert.ok(texts(lv()).includes(message));
+ }
+ assert.equal(logged,2);assert.equal(sessionAccepted,false);
+ loginClock=60000;loginTimers.forEach(fn=>fn());requestGate=deferred();button(lv(),'Resend Code').props.onPress();requestGate.resolve({resend_after:60,expires_in:600});await flush();assert.equal(requested,2);assert.equal(loginInput().props.value,'');
+ button(lv(),'Change Number').props.onPress();assert.match(texts(lv()),/Welcome to LifeFlow/);assert.equal(loginInput().props.value,'09171234567');
+ requestGate=deferred();button(lv(),'Continue').props.onPress();requestGate.resolve({resend_after:60,expires_in:600});await flush();loginFailure=null;loginInput().props.onChangeText('012345');button(lv(),'Verify').props.onPress();await flush();assert.equal(sessionAccepted,true);
+ lh.unmount();assert.equal(loginTimers.size,0);assert.equal(loginInput().props.value,'09171234567');
  // Native picker uses calendar days, preserves Cancel and rejects future selections.
  const dh=host();let pickerOptions,selected='09/13/2004';
- const picker=load('src/components/birth-date-picker.tsx',{...shared,react:dh.react,'@react-native-community/datetimepicker':{__esModule:true,default:'DateTimePicker',DateTimePickerAndroid:{open:options=>{pickerOptions=options;}}}});
+ const picker=load('src/components/birth-date-picker.tsx',{...shared,'@/services/auth':authService,react:dh.react,'@react-native-community/datetimepicker':{__esModule:true,default:'DateTimePicker',DateTimePickerAndroid:{open:options=>{pickerOptions=options;}}}});
  const dateView=()=>dh.render(()=>picker.default({value:selected,onChange:v=>{selected=v;}}));
  nodes(dateView()).find(n=>n.props?.accessibilityLabel==='Choose birth date').props.onPress();
  assert.equal(pickerOptions.mode,'date');assert.equal(pickerOptions.display,'calendar');
  assert.ok(pickerOptions.maximumDate < new Date());
- pickerOptions.onChange({type:'dismissed'},new Date(2001,1,1));assert.equal(selected,'09/13/2004');
- pickerOptions.onChange({type:'set'},new Date(2099,1,1));assert.equal(selected,'09/13/2004');
- pickerOptions.onChange({type:'set'},new Date(2000,1,29));assert.equal(selected,'02/29/2000');
+ assert.equal(pickerOptions.onChange,undefined);pickerOptions.onDismiss();assert.equal(selected,'09/13/2004');
+ pickerOptions.onValueChange({},new Date(2099,1,1));assert.equal(selected,'09/13/2004');
+ pickerOptions.onValueChange({},new Date(2000,1,29));assert.equal(selected,'02/29/2000');
  assert.equal(nodes(dateView()).filter(n=>n.type==='TextInput').length,0);
  native.Platform.OS='ios';
  nodes(dateView()).find(n=>n.props?.accessibilityLabel==='Choose birth date').props.onPress();
- const change=()=>nodes(dateView()).find(n=>n.type==='DateTimePicker').props.onChange;
+ const change=()=>nodes(dateView()).find(n=>n.type==='DateTimePicker').props.onValueChange;
  change()({},new Date(2001,2,15));button(dateView(),'Cancel').props.onPress();assert.equal(selected,'02/29/2000');
  nodes(dateView()).find(n=>n.props?.accessibilityLabel==='Choose birth date').props.onPress();
  change()({},new Date(2001,2,15));button(dateView(),'Confirm').props.onPress();assert.equal(selected,'03/15/2001');
  assert.equal(nodes(dateView()).find(n=>n.type==='DateTimePicker').props.display,'spinner');
  // Browser fallback keeps draft dates separate until confirmed.
- const wh=host(),web=load('src/components/birth-date-picker.web.tsx',{...shared,react:wh.react});
+ const wh=host(),web=load('src/components/birth-date-picker.web.tsx',{...shared,'@/services/auth':authService,react:wh.react});
  const wv=()=>wh.render(()=>web.default({value:selected,onChange:v=>{selected=v;}}));
  nodes(wv()).find(n=>n.props?.accessibilityLabel==='Choose birth date').props.onPress();
  nodes(wv()).find(n=>n.type==='input').props.onChange({target:{value:'2099-01-01'}});
@@ -73,10 +102,10 @@ function host(){
  {performance:{now:()=>clock},setInterval:fn=>{timers.add(fn);return fn;},clearInterval:fn=>timers.delete(fn)});
  const view=()=>h.render(screen.default);
  assert.match(texts(view()),/Create Your Account/);
- for(const name of ['First Name','Middle Name','Last Name','Email Address','Mobile Number','Password','Confirm Password','Birth Date','Gender','Blood Type'])assert.ok(texts(view()).includes(name));
+ for(const name of ['First Name','Middle Initial (Optional)','Last Name','Email Address','Mobile Number','Birth Date','Gender','Blood Type'])assert.ok(texts(view()).includes(name));
+ assert.doesNotMatch(texts(view()),/Password/);
  const input=(placeholder,value)=>nodes(view()).find(n=>n.type==='TextInput'&&n.props.placeholder===placeholder).props.onChangeText(value);
  input('Enter your first name','Test');input('Enter your last name','Donor');input('Enter your email','new@example.com');input('09XXXXXXXXX','09171234567');
- input('Create a password','password123');input('Confirm your password','password123');
  nodes(view()).find(n=>n.type==='BirthDatePicker').props.onChange('09/13/2004');
  button(view(),'Female').props.onPress();button(view(),'O+').props.onPress();
  assert.equal(button(view(),'Create Account').props.disabled,true);
@@ -106,7 +135,7 @@ function host(){
    openLegal(label);nodes(modal()).find(n=>n.props?.accessibilityLabel==='Back to registration').props.onPress();
    assert.equal(boxes()[index].props.accessibilityState.checked,true);
    openLegal(label);modal().props.onRequestClose();assert.equal(boxes()[index].props.accessibilityState.checked,true);
-   assert.equal(nodes(view()).find(n=>n.props?.placeholder==='Create a password').props.value,'password123');
+   assert.equal(nodes(view()).find(n=>n.props?.placeholder==='Enter your email').props.value,'new@example.com');
  }
  boxes()[2].props.onPress();assert.equal(button(view(),'Create Account').props.disabled,false);
  boxes()[0].props.onPress();assert.equal(button(view(),'Create Account').props.disabled,true);boxes()[0].props.onPress();
@@ -124,9 +153,8 @@ function host(){
  codeInput().props.onChangeText('123456');const confirm=button(view(),'Verify & Create Account').props.onPress;confirm();confirm();assert.equal(verifyCalls,1);assert.equal(accepted,false);
  verify.reject(new api.ApiError('Wrong code',422));await flush();assert.match(texts(view()),/Wrong code/);
  button(view(),'Change email').props.onPress();assert.match(texts(view()),/Create Your Account/);assert.ok(boxes().every(b=>b.props.accessibilityState.checked));
- assert.equal(nodes(view()).find(n=>n.props?.placeholder==='Create a password').props.value,'');
+ assert.ok(!nodes(view()).some(n=>n.props?.secureTextEntry));
  assert.equal(nodes(view()).find(n=>n.props?.placeholder==='Enter your email').props.value,'new@example.com');
- input('Create a password','password123');input('Confirm your password','password123');
  initial=deferred();button(view(),'Create Account').props.onPress();initial.resolve({pending_token:'pending-test',resend_after:60,expires_in:900});await flush();
  verify=deferred();codeInput().props.onChangeText('123456');button(view(),'Verify & Create Account').props.onPress();
  verify.resolve();await flush();assert.equal(accepted,true);

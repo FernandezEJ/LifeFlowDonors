@@ -11,7 +11,7 @@ const nodes=v=>!v||typeof v!=='object'?[]:Array.isArray(v)?v.flatMap(nodes):[v,.
 const texts=v=>nodes(v).filter(n=>n.type==='Text').map(n=>Array.isArray(n.props.children)?n.props.children.join(''):n.props.children).join('\n');
 const button=(tree,label)=>nodes(tree).find(n=>n.type==='Pressable'&&texts(n).includes(label));
 const native={View:'View',Text:'Text',Pressable:'Pressable',Image:'Image',ScrollView:'ScrollView',TextInput:'TextInput',StyleSheet:{create:x=>x},Alert:{alert:()=>{throw Error('Unexpected validation alert');}}};
-const shared={'react/jsx-runtime':{jsx,jsxs:jsx,Fragment:'Fragment'},'react-native':native,'@expo/vector-icons/MaterialIcons':{__esModule:true,default:'Icon'},'react-native-safe-area-context':{SafeAreaView:'SafeAreaView'}};
+const shared={'@/components/tab-skeleton':{TabSkeleton:'TabSkeleton'},'react/jsx-runtime':{jsx,jsxs:jsx,Fragment:'Fragment'},'react-native':native,'@expo/vector-icons/MaterialIcons':{__esModule:true,default:'Icon'},'react-native-safe-area-context':{SafeAreaView:'SafeAreaView'}};
 // Deterministic hook host preserves slots, effect dependencies and cleanup.
 function host(){
  const slots=[];let cursor=0;const queued=[];
@@ -25,7 +25,7 @@ function host(){
 }
 (async()=>{
  const assessment={id:1,result:'eligible',reasons:[],answers:{weight:60,sleepHours:8,currentSymptoms:'NO',medication:'NO',donatedWithinThreeMonths:'NO',feelsWell:'YES'},assessed_at:'2026-09-12T00:00:00Z'};
- const active={assessment,cooldown_active:true,next_allowed_at:'2026-09-13T00:00:00Z',remaining_seconds:120,server_time:'2026-09-12T23:58:00Z'};
+ const active={assessment,cooldown_active:true,next_allowed_at:'2026-09-13T00:00:00Z',remaining_seconds:120,server_time:'2026-09-12T23:58:00Z',is_on_donation_cooldown:false};
  const inactive={...active,cooldown_active:false,remaining_seconds:0};
  const api=load('src/services/api.ts',{}, {process:{env:{}},AbortController,setTimeout,clearTimeout,fetch:async()=>({ok:false,status:409,json:async()=>active})});
  const eligibility=load('src/services/eligibility.ts',{'./api':api});
@@ -54,6 +54,16 @@ function host(){
  const old=pending;pending=deferred();const newer=render().reload();pending.resolve(active);await newer;old.resolve(inactive);await flush();
  assert.equal(render().canSubmit,false);assert.equal(render().state.cooldown_active,true);
  pending=deferred();const leaving=render().reload();h.unmount();pending.resolve(inactive);await leaving;assert.equal(appListener,null);assert.equal(timers.size,0);
+ // Donation expiry also rechecks the server, without changing assessment authorization.
+ const restHost=host();clock=0;pending=deferred();calls=0;
+ const restHook=load('src/hooks/use-eligibility-cooldown.ts',{react:restHost.react,'expo-router':{useFocusEffect:restHost.focus},'react-native':{AppState:appState},'@/contexts/auth-context':{useAuth:()=>auth},'@/services/api':api},
+ {performance:{now:()=>clock},setInterval:fn=>{timers.add(fn);return fn;},clearInterval:fn=>timers.delete(fn)});
+ const restRender=()=>restHost.render(restHook.useEligibilityCooldown);
+ restRender();pending.resolve({...inactive,is_on_donation_cooldown:true,donation_cooldown_remaining_seconds:60});await flush();
+ assert.equal(restRender().canSubmit,true);pending=deferred();clock=60000;for(const tick of [...timers])tick();
+ assert.equal(calls,2);assert.equal(restRender().state.is_on_donation_cooldown,true);
+ pending.resolve({...inactive,is_on_donation_cooldown:false,donation_cooldown_remaining_seconds:0});await flush();
+ assert.equal(restRender().state.is_on_donation_cooldown,false);restHost.unmount();assert.equal(timers.size,0);
  // Exercise the ten-question wizard and preserve the existing cooldown checks.
  const e=host();let submissions=0,reloads=0,backs=0;
  const ui={state:active,remaining:120,loading:false,error:'',canSubmit:false,reload:async()=>{reloads++;},accept:s=>{ui.state=s;ui.canSubmit=false;}};
@@ -65,78 +75,55 @@ function host(){
  '@/services/api':api,'@/services/eligibility':eligibility,
  '@/hooks/use-eligibility-cooldown':{useEligibilityCooldown:()=>ui,formatEligibilityWait:hook.formatEligibilityWait}};
  const screen=load('src/app/evaluation.tsx',imports),view=()=>e.render(screen.default);
- assert.match(texts(view()),/already completed an evaluation recently/);assert.match(texts(view()),/Ready to proceed/);assert.match(texts(view()),/Evaluate again in 2m/);
- assert.equal(nodes(view()).filter(n=>n.type==='TextInput').length,0);assert.equal(button(view(),'Submit Assessment'),undefined);
- nodes(view()).find(n=>n.props?.accessibilityLabel==='Go back').props.onPress();assert.equal(backs,1);
- button(view(),'View Status').props.onPress();assert.equal(routes.pop(),'/(tabs)/status');
- button(view(),'Back to Flowie').props.onPress();assert.equal(routes.pop(),'/flowie');
- assert.match(texts(view()),/Preparation Check/);assert.match(texts(view()),/Check with the donation facility/);
- // All three designs render saved reasons without re-evaluating legacy answers.
- for(const [result,title] of [['eligible','Ready to proceed'],['temporarily_ineligible','Not ready to donate right now'],['needs_further_screening','Previous assessment: facility review advised'],['not_eligible','Not ready to donate right now']]){
-   ui.state={...active,assessment:{...assessment,result,reasons:['Reason one','Reason two']}};
-   assert.match(texts(view()),new RegExp(title));assert.match(texts(view()),/Reason one/);assert.match(texts(view()),/Reason two/);
-   assert.match(texts(view()),/This is a pre-screening only. Final eligibility is confirmed by the donation facility./);
- }
- ui.state={...inactive,assessment:null};ui.canSubmit=true;
- assert.match(texts(view()),/Donation Readiness Self-Assessment/);assert.match(texts(view()),/one assessment every 24 hours/);
- button(view(),'Start Assessment').props.onPress();
- const next=()=>button(view(),'Next'),back=()=>button(view(),'Back');
- const input=()=>nodes(view()).find(n=>n.type==='TextInput');
- assert.equal(screen.QUESTIONS.length,10);
- assert.deepEqual(Array.from(screen.QUESTIONS,q=>q.key), ['weight','sleepHours','currentSymptoms','donatedWithinThreeMonths','feelsWell','currentlyPregnant','takingAntibioticsForActiveInfection','stillRecoveringFromProcedure','activeOrRecoveringInfection','weakDizzyOrUnusuallyTired']);
- assert.ok(!screen.QUESTIONS.some(q=>/tattoo|piercing|any medication/.test(q.text)));assert.equal(next().props.disabled,true);
- for(const value of ['',' ','0','-1','Infinity','abc','1e3'])assert.equal(screen.validAnswer(screen.QUESTIONS[0],value),false);
- assert.equal(screen.validAnswer(screen.QUESTIONS[0],'50'),true);
- assert.equal(screen.validAnswer(screen.QUESTIONS[1],'25'),false);assert.equal(screen.validAnswer(screen.QUESTIONS[1],'5'),true);
- input().props.onChangeText('60');next().props.onPress();input().props.onChangeText('8');
- back().props.onPress();assert.equal(input().props.value,'60');next().props.onPress();assert.equal(input().props.value,'8');next().props.onPress();
- for(let index=2;index<10;index++){
-   assert.match(texts(view()),new RegExp('Question '+(index+1)+' of 10'));
-   const progress=nodes(view()).find(n=>n.props?.accessibilityRole==='progressbar');
-   assert.equal(progress.props.accessibilityValue.now,index+1);
-   const choices=nodes(view()).filter(n=>n.props?.accessibilityRole==='radio');
-   assert.equal(choices.length,index===5?3:2);
-   const selected=index===4?'Yes':index===5?'Not applicable':'No';
-   choices.find(n=>n.props.accessibilityLabel===selected).props.onPress();
-   next().props.onPress();
- }
- assert.equal(submissions,0);assert.match(texts(view()),/Review Answers/);
- for(const q of screen.QUESTIONS)assert.ok(texts(view()).includes(q.text));
- button(view(),'Edit Answers').props.onPress();assert.equal(input().props.value,'60');
- for(let index=0;index<10;index++){assert.equal(next().props.disabled,false);next().props.onPress();}
+ assert.match(texts(view()),/Self-Assessment Not Yet Available/);assert.match(texts(view()),/Available again:/);assert.doesNotMatch(texts(view()),/Your Pre-Screening Result/);
+ button(view(),'Close').props.onPress();assert.equal(backs,1);
+ ui.state={...inactive,assessment:null};ui.canSubmit=true;button(view(),'Start Assessment').props.onPress();
+ const keys=['weightAtLeast50Kg','sleptAtLeastFiveHours','eatenProperMeal','avoidedAlcoholFor24Hours','threeMonthsSinceLastDonation','recentFeverInfectionOrIllness','unusualBleedingWeaknessOrDizziness','recentSurgeryOrMajorProcedure','medicationAffectingDonation','conditionOrTreatmentRequiringWait'];
+ assert.equal(screen.QUESTIONS.length,10);assert.deepEqual(Array.from(screen.QUESTIONS,q=>q.key),keys);
+ assert.ok(!screen.QUESTIONS.some(q=>/tattoo|piercing|feel well enough|age|pregnant/i.test(q.text)));
+ for(const q of screen.QUESTIONS){assert.equal(screen.validAnswer(q,'YES'),true);assert.equal(screen.validAnswer(q,'NO'),true);for(const bad of ['','50','5','NOT_APPLICABLE','yes'])assert.equal(screen.validAnswer(q,bad),false);}
+ const fill=(tree)=>{for(let i=0;i<10;i++){
+   assert.match(texts(tree()),new RegExp('Question '+(i+1)+' of 10'));assert.equal(nodes(tree()).filter(n=>n.type==='TextInput').length,0);
+   const choices=nodes(tree()).filter(n=>n.props?.accessibilityRole==='radio');assert.equal(choices.length,2);
+   choices.find(n=>n.props.accessibilityLabel===(i<5?'Yes':'No')).props.onPress();button(tree(),'Next').props.onPress();
+ }};
+ assert.equal(button(view(),'Next').props.disabled,true);fill(view);assert.equal(submissions,0);assert.match(texts(view()),/Review Answers/);
+ button(view(),'Edit Answers').props.onPress();assert.equal(nodes(view()).find(n=>n.props?.accessibilityRole==='radio'&&n.props.accessibilityLabel==='Yes').props.accessibilityState.checked,true);fill(view);
  const saving=deferred();let payload;submit=answers=>{submissions++;payload=answers;return saving.promise;};
- const press=button(view(),'Submit Assessment').props.onPress;press();press();assert.equal(submissions,1);
- assert.equal(button(view(),'Submitting Assessment...').props.disabled,true);
- assert.equal(Object.keys(payload).length,10);assert.equal(payload.weight,60);assert.equal(payload.sleepHours,8);assert.equal(payload.currentlyPregnant,'NOT_APPLICABLE');
- assert.equal(payload.preparation,undefined);assert.equal(payload.medication,undefined);assert.equal(payload.recentTattooOrPiercing,undefined);assert.equal(payload.facilityNote,undefined);
- const newAssessment={...assessment,id:2,answers:payload};
- ui.reload=async()=>{reloads++;ui.accept({...active,assessment:newAssessment});};
- saving.resolve(newAssessment);await flush();assert.equal(reloads,1);
- assert.match(texts(view()),/Your Pre-Screening Result/);assert.match(texts(view()),/Evaluate again in 2m/);
- // Build another reviewed attempt to exercise conflict and uncertain response paths.
+ const press=button(view(),'Submit Assessment').props.onPress;press();press();assert.equal(submissions,1);assert.equal(button(view(),'Submitting Assessment...').props.disabled,true);
+ assert.deepEqual(Object.keys(payload),keys);for(let i=0;i<10;i++)assert.equal(payload[keys[i]],i<5?'YES':'NO');
+ const newAssessment={...assessment,id:2,answers:payload};ui.reload=async()=>{reloads++;ui.accept({...active,assessment:newAssessment});};saving.resolve(newAssessment);await flush();assert.equal(reloads,1);
+ assert.match(texts(view()),/Assessment Complete/);assert.match(texts(view()),/Ready to proceed/);assert.doesNotMatch(texts(view()),/already completed|Available again:|Evaluate again|Not Yet Available/);
+ assert.ok(texts(view()).indexOf('Important Reminder')>texts(view()).indexOf('Your Pre-Screening Result'));assert.match(texts(view()),/Recent tattoos or body piercings/);assert.match(texts(view()),/Final eligibility will still be confirmed by the donation facility/);
+ button(view(),'View Status').props.onPress();assert.equal(routes.pop(),'/(tabs)/status');button(view(),'Back to Flowie').props.onPress();assert.equal(routes.pop(),'/flowie');
+ for(const result of ['not_eligible','temporarily_ineligible','needs_further_screening']){newAssessment.result=result;assert.match(texts(view()),/Not Eligible for Now/);assert.match(texts(view()),/Important Reminder/);}newAssessment.result='eligible';
+ const returnHost=host(),returnScreen=load('src/app/evaluation.tsx',{...imports,react:returnHost.react});assert.match(texts(returnHost.render(returnScreen.default)),/Self-Assessment Not Yet Available/);returnHost.unmount();
  async function retryScenario(conflict){
-   const local=host();ui.state={...inactive,assessment:null};ui.canSubmit=true;
-   const module=load('src/app/evaluation.tsx',{...imports,react:local.react});
-   const tree=()=>local.render(module.default);
-   button(tree(),'Start Assessment').props.onPress();
-   for(let i=0;i<10;i++){
-     const numeric=nodes(tree()).find(n=>n.type==='TextInput');
-     if(numeric)numeric.props.onChangeText(i===0?'60':'8');
-     else nodes(tree()).filter(n=>n.props?.accessibilityRole==='radio').find(n=>n.props.accessibilityLabel===(i===4?'Yes':'No')).props.onPress();
-     button(tree(),'Next').props.onPress();
-   }
-   submit=async()=>{throw conflict?new eligibility.EligibilityCooldownError(active):new api.ApiError('Response lost');};
-   ui.reload=async()=>{reloads++;ui.accept(active);};
-   button(tree(),'Submit Assessment').props.onPress();await flush();
-   assert.match(texts(tree()),/Your Pre-Screening Result/);assert.match(texts(tree()),/Evaluate again in 2m/);
-   assert.equal(button(tree(),'Submit Assessment'),undefined);
+   const local=host();ui.state={...inactive,assessment:null};ui.canSubmit=true;const module=load('src/app/evaluation.tsx',{...imports,react:local.react});const tree=()=>local.render(module.default);
+   button(tree(),'Start Assessment').props.onPress();fill(tree);submit=async()=>{throw conflict?new eligibility.EligibilityCooldownError(active):new api.ApiError('Response lost');};ui.reload=async()=>{reloads++;ui.accept(active);};
+   button(tree(),'Submit Assessment').props.onPress();await flush();assert.match(texts(tree()),conflict?/Self-Assessment Not Yet Available/:/Your Pre-Screening Result/);assert.equal(button(tree(),'Submit Assessment'),undefined);local.unmount();
  }
  await retryScenario(true);await retryScenario(false);
  // Status retains the result, locks its action, and keeps the Flowie destination.
- const status=load('src/app/(tabs)/status.tsx',imports);
- for(const [result,label] of [['eligible','Ready to proceed'],['not_eligible','Not ready to donate right now'],['temporarily_ineligible','Not ready to donate right now'],['needs_further_screening','Previous assessment: facility review advised']]){
+ const statusHost=host();
+ const status=load('src/app/(tabs)/status.tsx',{...imports,react:statusHost.react,'expo-router':{useRouter:()=>router,useFocusEffect:statusHost.focus}});
+ const statusView=()=>statusHost.render(status.default);
+ const mascot=tree=>nodes(tree).find(n=>n.type==='Image').props.source;
+ assert.equal(eligibility.formatDonationRestDate('2026-12-31T16:00:00Z'),'January 1, 2027');
+ for(const assessmentValue of [assessment,{...assessment,result:'not_eligible'},null]){
+  ui.state={...active,assessment:assessmentValue,is_on_donation_cooldown:true,next_eligible_donation_at:'2026-12-31T16:00:00Z'};
+  const restText=texts(statusView());assert.match(restText,/Donation Rest Period/);assert.match(restText,/You recently completed a blood donation/);
+  assert.match(restText,/January 1, 2027/);assert.match(restText,/helps ensure enough recovery time/);assert.doesNotMatch(restText,/Ready to proceed|You are eligible/);
+  assert.equal(mascot(statusView()),'../../../assets/images/RestMascot.png','Active post-donation rest overrides eligible, not-eligible and absent assessments');
+  ui.error='Offline';assert.match(texts(statusView()),/Donation Rest Period/);assert.equal(mascot(statusView()),'../../../assets/images/RestMascot.png');ui.error='';
+ }
+ ui.state={...active,is_on_donation_cooldown:false,next_eligible_donation_at:'2026-01-01T00:00:00+08:00'};
+ assert.match(texts(statusView()),/Ready to proceed/);assert.doesNotMatch(texts(statusView()),/Donation Rest Period/);
+ assert.equal(mascot(statusView()),'../../../assets/images/HappyMascot.png','Ended donation rest restores the ordinary assessment mascot');
+ for(const [result,label] of [['eligible','Ready to proceed'],['not_eligible','Not Eligible for Now'],['temporarily_ineligible','Not Eligible for Now'],['needs_further_screening','Not Eligible for Now']]){
    ui.state={...active,assessment:{...assessment,result}};
-   assert.ok(texts(status.default()).includes(label));
+   assert.ok(texts(statusView()).includes(label));
+   assert.equal(mascot(statusView()),'../../../assets/images/'+(result==='eligible'?'HappyMascot.png':'SadMascot.png'));
  }
  ui.state=active;
  // Status retains its cards while showing timestamps and all saved answers.
@@ -145,9 +132,10 @@ function host(){
    assert.ok(row,'Missing summary label: '+label);
    return row.props.children[1].props.children;
  };
- const mascot=tree=>nodes(tree).find(n=>n.type==='Image').props.source;
+ ui.state={...active,assessment:newAssessment};
+ for(let i=0;i<screen.QUESTIONS.length;i++)assert.equal(summaryValue(statusView(),(i+1)+'. '+screen.QUESTIONS[i].text),i<5?'Yes':'No');
  ui.state={...inactive,assessment:null,next_allowed_at:null};ui.canSubmit=true;ui.error='';
- let empty=status.default();
+ let empty=statusView();
  assert.match(texts(empty),/Pre-screening unavailable/);
  assert.match(texts(empty),/Donor Summary/);
  assert.equal(mascot(empty),'../../../assets/images/HappyMascot.png');
@@ -160,8 +148,8 @@ function host(){
    takingAntibioticsForActiveInfection:'NO',stillRecoveringFromProcedure:'YES',activeOrRecoveringInfection:'NO',weakDizzyOrUnusuallyTired:'YES'
  }};
  ui.state={...active,assessment:detailed};ui.canSubmit=false;
- const detail=status.default();
- assert.match(texts(detail),/Not ready to donate right now/);assert.match(texts(detail),/First server reason/);assert.match(texts(detail),/Second server reason/);
+ const detail=statusView();
+ assert.match(texts(detail),/Not Eligible for Now/);assert.match(texts(detail),/First server reason/);assert.match(texts(detail),/Second server reason/);
  // Preserve the sad mascot already supplied and wired before this cleanup.
  const countdowns=tree=>nodes(tree).filter(n=>n.type==='Text'&&typeof n.props.children==='string'&&n.props.children.startsWith('Available again in '));
  assert.equal(countdowns(empty).length,0);
@@ -170,11 +158,11 @@ function host(){
  const actionArea=nodes(detail).find(n=>n.type==='View'&&Array.isArray(n.props.children)&&n.props.children[0]===button(detail,'Update Status with Flowie'));
  assert.ok(actionArea);assert.equal(actionArea.props.children[1],countdowns(detail)[0]);
  assert.ok(!/Evaluation completed recently|Evaluate again in|Next self-assessment available:/.test(texts(detail)));
- ui.remaining=83880;assert.equal(countdowns(status.default())[0].props.children,'Available again in 23h 18m');ui.remaining=120;
+ ui.remaining=83880;assert.equal(countdowns(statusView())[0].props.children,'Available again in 23h 18m');ui.remaining=120;
  // Seconds in the server timestamp must not appear in displayed summary dates.
  ui.state={...active,assessment:{...detailed,assessed_at:'2026-09-12T00:00:37Z'},next_allowed_at:'2026-09-13T00:00:37Z'};
- assert.equal(summaryValue(status.default(),'Assessed'),summaryValue(detail,'Assessed'));
- assert.equal(summaryValue(status.default(),'Next self-assessment available'),summaryValue(detail,'Next self-assessment available'));
+ assert.equal(summaryValue(statusView(),'Assessed'),summaryValue(detail,'Assessed'));
+ assert.equal(summaryValue(statusView(),'Next self-assessment available'),summaryValue(detail,'Next self-assessment available'));
  ui.state={...active,assessment:detailed};
  assert.equal(mascot(detail),'../../../assets/images/SadMascot.png');
  assert.equal(summaryValue(detail,'Assessed'),new Date(assessment.assessed_at).toLocaleString(undefined,{year:'numeric',month:'long',day:'numeric',hour:'numeric',minute:'2-digit'}));
@@ -186,25 +174,25 @@ function host(){
  ['9. Active infection / recovering from one','No'],['10. Weak, dizzy, unusually tired, or physically unwell','Yes']])assert.equal(summaryValue(detail,label),value);
  assert.ok(!/Next Eligibility|Eligible again at|Medical clearance date/.test(texts(detail)));
  assert.match(texts(detail),/This is a pre-screening only/);
- ui.remaining=0;assert.equal(button(status.default(),'Update Status with Flowie').props.disabled,true);
+ ui.remaining=0;assert.equal(button(statusView(),'Update Status with Flowie').props.disabled,true);
  ui.remaining=120;ui.state={...active,assessment:{...detailed,result:'eligible',reasons:[],answers:{...detailed.answers,sleepHours:7}}};
- assert.equal(summaryValue(status.default(),'2. Sleep last night'),'7 hours');
- assert.equal(mascot(status.default()),'../../../assets/images/HappyMascot.png');
- assert.ok(!nodes(status.default()).some(n=>n.type==='Text'&&n.props.children==='Reason'));
+ assert.equal(summaryValue(statusView(),'2. Sleep last night'),'7 hours');
+ assert.equal(mascot(statusView()),'../../../assets/images/HappyMascot.png');
+ assert.ok(!nodes(statusView()).some(n=>n.type==='Text'&&n.props.children==='Reason'));
  ui.state=active;
- assert.equal(summaryValue(status.default(),'7. Taking antibiotics for an active infection'),'Not recorded');
- assert.equal(summaryValue(status.default(),'6. Currently pregnant'),'Not recorded');
+ assert.equal(summaryValue(statusView(),'7. Taking antibiotics for an active infection'),'Not recorded');
+ assert.equal(summaryValue(statusView(),'6. Currently pregnant'),'Not recorded');
  ui.state={...active,assessment:{...detailed,assessed_at:'invalid',answers:{...detailed.answers,weight:null,sleepHours:undefined}}};
- assert.equal(summaryValue(status.default(),'Assessed'),'Not recorded');
- assert.equal(summaryValue(status.default(),'1. Weight'),'Not recorded');
+ assert.equal(summaryValue(statusView(),'Assessed'),'Not recorded');
+ assert.equal(summaryValue(statusView(),'1. Weight'),'Not recorded');
  ui.error='Offline';ui.canSubmit=false;
- assert.equal(mascot(status.default()),'../../../assets/images/HappyMascot.png');
- assert.equal(button(status.default(),'Update Status with Flowie').props.disabled,true);
+ assert.equal(mascot(statusView()),'../../../assets/images/HappyMascot.png');
+ assert.equal(button(statusView(),'Update Status with Flowie').props.disabled,true);
  ui.error='';ui.state=active;
- let tree=status.default();assert.match(texts(tree),/Ready to proceed/);assert.match(texts(tree),/Available again in 2m/);
+ let tree=statusView();assert.match(texts(tree),/Ready to proceed/);assert.match(texts(tree),/Available again in 2m/);
  const update=button(tree,'Update Status with Flowie');assert.equal(update.props.disabled,true);update.props.onPress();assert.equal(routes.length,0);
- ui.state=inactive;ui.canSubmit=true;tree=status.default();assert.equal(countdowns(tree).length,0);assert.equal(button(tree,'Update Status with Flowie').props.disabled,false);button(tree,'Update Status with Flowie').props.onPress();assert.equal(routes.pop(),'/flowie');
- ui.canSubmit=false;ui.error='Offline';tree=status.default();const before=reloads;await button(tree,'Retry availability check').props.onPress();assert.equal(reloads,before+1);
+ ui.state=inactive;ui.canSubmit=true;tree=statusView();assert.equal(countdowns(tree).length,0);assert.equal(button(tree,'Update Status with Flowie').props.disabled,false);button(tree,'Update Status with Flowie').props.onPress();assert.equal(routes.pop(),'/flowie');
+ ui.canSubmit=false;ui.error='Offline';tree=statusView();const before=reloads;await button(tree,'Retry availability check').props.onPress();assert.equal(reloads,before+1);
  const flowie=load('src/services/flowie-preview.ts');assert.equal(flowie.flowieAction('open_evaluation').route,'/evaluation');
  console.log('Eligibility checks passed: ten-question wizard, review/edit, exact payload, all results, legacy history display, cooldown, concurrency guards, recovery, Status and Flowie.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

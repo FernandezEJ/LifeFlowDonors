@@ -3,7 +3,7 @@
 // The fallback is the current LAN development URL for Expo Go.
 // Set EXPO_PUBLIC_API_URL to a public HTTPS API for production.
 // ========================================
-export const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL || 'http://172.29.115.187:8000/api').replace(/\/$/, '');
+export const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL || 'http://192.168.6.122:8000/api').replace(/\/$/, '');
 
 export class ApiError extends Error {
   transportMessage?: string;
@@ -58,7 +58,7 @@ export function errorMessage(error: unknown): string {
 // and keeps server internals out of visible error messages.
 // ========================================
 export async function apiRequest<T>(path: string, options: {
-  method?: 'GET' | 'POST' | 'PUT'; token?: string; body?: unknown; timeoutMs?: number;
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; token?: string; body?: unknown; timeoutMs?: number;
 } = {}): Promise<T> {
   // ========================================
   // MULTIPART PROOF SUPPORT

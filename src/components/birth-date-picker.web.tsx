@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { Modal, Pressable, Text, View } from 'react-native';
 import type { BirthDatePickerProps } from './birth-date-picker';
+import { latestBirthDate, toApiDate } from '@/services/auth';
 export default function BirthDatePicker({ value, onChange, disabled }: BirthDatePickerProps) {
   const [open, setOpen] = useState(false), [draft, setDraft] = useState('');
-  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
-  const max = [yesterday.getFullYear(), String(yesterday.getMonth() + 1).padStart(2, '0'), String(yesterday.getDate()).padStart(2, '0')].join('-');
-  const valid = /^\d{4}-\d{2}-\d{2}$/.test(draft) && draft <= max && draft >= '0001-01-01';
+  const maximum = latestBirthDate();
+  const max = [maximum.getFullYear(), String(maximum.getMonth() + 1).padStart(2, '0'), String(maximum.getDate()).padStart(2, '0')].join('-');
+  let valid = false;
+  try { const [y,m,d] = draft.split('-'); valid = draft <= max && toApiDate([m,d,y].join('/')) === draft; } catch { /* Native date input may be incomplete. */ }
   const show = () => { if (disabled) return; const [m,d,y] = value.split('/'); setDraft(value ? [y,m,d].join('-') : max); setOpen(true); };
   return <>
     <Pressable accessibilityRole="button" accessibilityLabel="Choose birth date" disabled={disabled} onPress={show}

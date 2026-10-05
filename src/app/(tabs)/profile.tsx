@@ -1,14 +1,17 @@
+import { TabSkeleton } from '@/components/tab-skeleton';
+import { ConfirmationModal } from '@/components/confirmation-modal';
+import { useTabLeave } from '@/contexts/tab-leave-context';
 import { profileMascotImage } from '@/constants/profile-settings';
 import BirthDatePicker from '@/components/birth-date-picker';
 import { NotificationBell } from '@/components/notification-bell';
 import { type DonationSummary } from '@/services/donations';
 import { useAuth } from '@/contexts/auth-context';
 import { errorMessage } from '@/services/api';
-import { formErrors, toProfileForm, type ProfileForm } from '@/services/auth';
+import { formErrors, formatMiddleInitial, toProfileForm, type ProfileForm } from '@/services/auth';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'react';
-import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const COLORS = {
@@ -51,7 +54,7 @@ const ACHIEVEMENTS: readonly Achievement[] = [
 // Shows donor details and account email; email stays read-only in profile edits.
 // ========================================
 const PERSONAL_FIELDS: { label: string; field: keyof ProfileForm }[] = [
-  { label: 'First Name', field: 'firstName' }, { label: 'Middle Name', field: 'middleName' },
+  { label: 'First Name', field: 'firstName' }, { label: 'Middle Initial (Optional)', field: 'middleName' },
   { label: 'Last Name', field: 'lastName' }, { label: 'Email', field: 'email' },
   { label: 'Mobile Number', field: 'mobileNumber' }, { label: 'Birth Date', field: 'birthDate' },
   { label: 'Gender', field: 'gender' }, { label: 'Blood Type', field: 'bloodType' },
@@ -59,6 +62,12 @@ const PERSONAL_FIELDS: { label: string; field: keyof ProfileForm }[] = [
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const scrollRef = useRef<ScrollView>(null);
+  useFocusEffect(useCallback(() => {
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, []));
+  const { register, requestLeave } = useTabLeave();
+  const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
   // ========================================
   // REFRESH VERIFIED TOTAL ON FOCUS
   // Errors remain visible and never turn into a fabricated zero or achievement.
@@ -67,7 +76,7 @@ export default function ProfileScreen() {
   const [summary, setSummary] = useState<DonationSummary | null>(null);
   const [summaryError, setSummaryError] = useState('');
   useFocusEffect(useCallback(() => {
-    let active = true; setSummary(null); setSummaryError('');
+    let active = true; setSummaryError('');
     donationSummary().then(data => { if (active) setSummary(data); })
       .catch(e => { if (active) setSummaryError(errorMessage(e)); });
     return () => { active = false; };
@@ -85,15 +94,36 @@ export default function ProfileScreen() {
   const [saved, setSaved] = useState(false);
   const fetching = useRef(false);
   const saving = useRef(false);
-  const fullName = user?.name || '';
+  const fullName = user && profile ? [profile.first_name, formatMiddleInitial(profile.middle_name), profile.last_name].filter(Boolean).join(' ') : user?.name || '';
   const personal = user && profile ? toProfileForm(user, profile) : null;
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     let active = true;
     loadProfile().catch(error => { if (active) setRequestError(errorMessage(error)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [loadProfile]);
+  }, [loadProfile]));
+
+  const draftRef = useRef(draft);
+  const personalRef = useRef(personal);
+  useEffect(() => { draftRef.current = draft; personalRef.current = personal; }, [draft, personal]);
+  useFocusEffect(useCallback(() => {
+    const guard = (leave: () => void) => {
+      if (saving.current) return;
+      const edited = draftRef.current;
+      const saved = personalRef.current;
+      if (edited && saved && Object.keys(edited).some(key => edited[key as keyof ProfileForm] !== saved[key as keyof ProfileForm])) {
+        setPendingLeave(() => leave);
+      } else { setDraft(null); setErrors({}); leave(); }
+    };
+    const unregister = register(guard);
+    const back = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!draftRef.current) return false;
+      guard(() => { if (router.canGoBack()) router.back(); else BackHandler.exitApp(); });
+      return true;
+    });
+    return () => { back.remove(); unregister(); setDraft(null); setErrors({}); setPendingLeave(null); };
+  }, [register, router]));
 
   const retryProfile = async () => {
     if (fetching.current || loading) return;
@@ -131,29 +161,21 @@ export default function ProfileScreen() {
     } catch (error) { setRequestError(errorMessage(error)); }
   };
 
-
-  const confirmLogout = () => {
-    Alert.alert('Log out?', 'Are you sure you want to log out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Logout',
-        style: 'destructive',
-        onPress: () => void handleLogout(),
-      },
-    ]);
-  };
+  const [logoutConfirmation,setLogoutConfirmation]=useState(false);
+  const confirmLogout = () => setLogoutConfirmation(true);
 
   return (
     <SafeAreaView edges={['top']} style={styles.safeArea}>
       <View style={styles.fixedHeader}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Profile</Text>
-          {/* Shared backend unread count refreshes on focus. */}<NotificationBell />
+          {/* Shared backend unread count refreshes on focus. */}<NotificationBell beforeOpen={requestLeave} />
         </View>
       </View>
 
-      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
+          {loading && !profile ? <TabSkeleton variant="profile" /> : <>
           <View style={styles.profileHero}>
             <View style={styles.avatarArea}>
               <View accessibilityLabel={`${fullName} profile picture`} style={styles.avatar}>
@@ -164,7 +186,7 @@ export default function ProfileScreen() {
                 accessibilityRole="button"
                 hitSlop={7}
                 onPress={() =>
-                  router.push({ pathname: '/profile-settings/[setting]', params: { setting: 'avatar' } })
+                  requestLeave(() => router.push({ pathname: '/profile-settings/[setting]', params: { setting: 'avatar' } }))
                 }
                 style={({ pressed }) => [styles.cameraButton, pressed && styles.cameraButtonPressed]}>
                 <MaterialIcons name="face" color={COLORS.white} size={17} />
@@ -314,18 +336,19 @@ export default function ProfileScreen() {
                       }} /> : <TextInput
                       accessibilityLabel={item.label}
                       editable={!busy}
-                      autoCapitalize="sentences"
+                      autoCapitalize={item.field === 'middleName' ? 'characters' : 'sentences'}
+                      maxLength={item.field === 'middleName' ? 1 : undefined}
                       keyboardType={item.field === 'mobileNumber' ? 'phone-pad' : 'default'}
                       placeholder={item.field === 'gender' ? 'Male or Female' : item.label}
                       style={[styles.informationValue, styles.editInput]}
                       value={draft[item.field]}
                       onChangeText={value => {
-                        setDraft(current => current ? { ...current, [item.field]: value } : current);
+                        setDraft(current => current ? { ...current, [item.field]: item.field === 'middleName' ? value.toUpperCase() : value } : current);
                         setErrors(current => ({ ...current, [item.field]: undefined }));
                       }}
                     />}
                     {errors[item.field] ? <Text style={styles.feedbackError}>{errors[item.field]}</Text> : null}
-                  </View> : <Text selectable style={styles.informationValue}>{personal?.[item.field] || '--'}</Text>}
+                  </View> : <Text selectable style={styles.informationValue}>{(item.field === 'middleName' ? formatMiddleInitial(personal?.middleName) : personal?.[item.field]) || '--'}</Text>}
                 </View>
               ))}
             </View>
@@ -344,7 +367,7 @@ export default function ProfileScreen() {
               <Pressable
                 accessibilityRole="button"
                 onPress={() =>
-                  router.push('/profile-settings')
+                  requestLeave(() => router.push('/profile-settings'))
                 }
                 style={({ pressed }) => [styles.accountRow, pressed && styles.accountRowPressed]}>
                 <View style={styles.accountIcon}>
@@ -357,7 +380,7 @@ export default function ProfileScreen() {
               <Pressable
                 accessibilityRole="button"
                 onPress={() =>
-                  router.push('/help-about')
+                  requestLeave(() => router.push('/help-about'))
                 }
                 style={({ pressed }) => [styles.accountRow, pressed && styles.accountRowPressed]}>
                 <View style={styles.accountIcon}>
@@ -381,8 +404,11 @@ export default function ProfileScreen() {
           </View>
 
 
+          </>}
         </View>
       </ScrollView>
+      <ConfirmationModal visible={!!pendingLeave} icon="delete-outline" variant="destructive" title="Discard changes?" message="You have unsaved changes. Do you want to discard them?" secondaryLabel="Stay" primaryLabel="Discard" onSecondary={() => setPendingLeave(null)} onPrimary={() => { const leave = pendingLeave; setDraft(null); draftRef.current = null; setErrors({}); setRequestError(''); setPendingLeave(null); leave?.(); }} />
+      <ConfirmationModal visible={logoutConfirmation} icon="logout" variant="destructive" title="Log out?" message="Are you sure you want to log out?" secondaryLabel="Cancel" primaryLabel="Logout" dismissible={false} loading={busy} onSecondary={()=>setLogoutConfirmation(false)} onPrimary={()=>{setLogoutConfirmation(false);return handleLogout();}} />
     </SafeAreaView>
   );
 }
@@ -394,7 +420,7 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   editInput: { borderWidth: 1, borderColor: COLORS.border, borderRadius: 8, padding: 8, minHeight: 44 },
   feedbackError: { color: COLORS.brand, fontSize: 13 },
-  safeArea: { flex: 1, backgroundColor: COLORS.background },
+  safeArea: { flex: 1, backgroundColor: 'transparent' },
   fixedHeader: {
     zIndex: 10,
     borderBottomWidth: 1,
