@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { NotificationBell } from '@/components/notification-bell';
 import { useAuth } from '@/contexts/auth-context';
 import { errorMessage } from '@/services/api';
-import type { Page, Voucher, VoucherStatus } from '@/services/rewards';
+import { voucherActionLabel, voucherDate, voucherState, voucherStatusLabel, type Page, type Voucher, type VoucherStatus } from '@/services/rewards';
 const COLORS = {
   background: '#FFF9F2',
   brand: '#D93A3A',
@@ -24,31 +24,41 @@ const COLORS = {
 
 // ========================================
 // OWNED VOUCHER HISTORY
-// All retains redeemed history. Existing four filters query the server before paging.
-// Focus and foreground reads reconcile windows elapsed while the app was closed.
+// Filter by raw server status before paging, then distinguish confirmed claims
+// from legacy history. Codes are fetched only on the detail screen.
 // ========================================
-const FILTERS = ['All', 'Available', 'Active', 'Expired'] as const;
+const FILTERS = ['All', 'Available', 'Pending Claim', 'Claimed'] as const;
+const STATUS_FILTERS: Record<typeof FILTERS[number], VoucherStatus | undefined> = { All: undefined, Available: 'available', 'Pending Claim': 'active', Claimed: 'redeemed' };
 export default function MyVouchersScreen() {
   const router = useRouter();
-  const { vouchers } = useAuth();
+  const { vouchers, user } = useAuth();
+  const accountId = user?.id;
   const [selected, setSelected] = useState<typeof FILTERS[number]>('All');
-  const [page, setPage] = useState<Page<Voucher> | null>(null);
+  const [page, setPage] = useState<(Page<Voucher> & { accountId: number }) | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const generation = useRef(0);
   const load = useCallback(async (number = 1) => {
     const current = ++generation.current; setLoading(true); setError('');
+    if (!accountId) { setPage(null); setLoading(false); return; }
+    if (number === 1) setPage(null);
     try {
-      const result = await vouchers(number, selected === 'All' ? undefined : selected.toLowerCase() as VoucherStatus);
-      if (current === generation.current) setPage(previous => number === 1 ? result : { ...result, data: [...(previous?.data ?? []), ...result.data] });
+      const result = await vouchers(number, STATUS_FILTERS[selected]);
+      const data = result.data.map(item => ({ ...item, claim_code: null }));
+      if (current === generation.current) setPage(previous => ({ ...result, accountId, data: number === 1 ? data : [...(previous?.accountId === accountId ? previous.data : []), ...data] }));
     } catch (cause) { if (current === generation.current) setError(errorMessage(cause)); }
     finally { if (current === generation.current) setLoading(false); }
-  }, [vouchers, selected]);
+  }, [vouchers, selected, accountId]);
   useFocusEffect(useCallback(() => {
     void load();
-    const subscription = AppState.addEventListener('change', state => { if (state === 'active') void load(); });
-    return () => { generation.current++; subscription.remove(); };
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') void load();
+      else { generation.current++; setPage(null); setLoading(true); }
+    });
+    return () => { generation.current++; setPage(null); subscription.remove(); };
   }, [load]));
+  const currentPage = accountId && page?.accountId === accountId && !error ? page : null;
+  const records = currentPage?.data.filter(item => selected === 'All' || voucherStatusLabel(item) === selected) ?? [];
 
   // ========================================
   // EXISTING CARDS AND FILTER CHIPS
@@ -58,27 +68,27 @@ export default function MyVouchersScreen() {
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
       <View style={styles.fixedHeader}><View style={styles.header}>
         <Pressable accessibilityLabel="Go back" onPress={() => router.back()} style={styles.headerButton}><MaterialIcons name="arrow-back" color={COLORS.text} size={23} /></Pressable>
-        <Text style={styles.headerTitle}>My Vouchers</Text><NotificationBell />
+        <Text style={styles.headerTitle}>My Rewards</Text><NotificationBell />
       </View></View>
-      <FlatList data={page?.data ?? []} keyExtractor={item => String(item.id)} contentContainerStyle={styles.listContent}
+      <FlatList data={records} keyExtractor={item => String(item.id)} contentContainerStyle={styles.listContent}
         refreshing={loading} onRefresh={() => void load()} ItemSeparatorComponent={() => <View style={styles.separator} />}
         ListHeaderComponent={<View style={styles.listHeader}>
-          <Text style={styles.introTitle}>Your reward vouchers</Text><Text style={styles.introText}>Activate only when you are at the counter.</Text>
+          <Text style={styles.introTitle}>Your reward vouchers</Text><Text style={styles.introText}>Activate a claim code when you are ready to collect your reward.</Text>
           <View style={styles.filterBar}>{FILTERS.map(filter => <Pressable key={filter} accessibilityRole="button" accessibilityState={{ selected: selected === filter }}
             onPress={() => { if (selected !== filter) { setPage(null); setSelected(filter); } }} style={[styles.filterChip, selected === filter && styles.filterChipSelected]}>
             <Text style={[styles.filterText, selected === filter && styles.filterTextSelected]}>{filter}</Text></Pressable>)}</View>
           {error ? <View><Text accessibilityRole="alert">{error}</Text><Pressable onPress={() => void load()}><Text>Retry</Text></Pressable></View> : null}
         </View>}
         ListEmptyComponent={<View style={styles.emptyState}><Text style={styles.emptyText}>{loading ? 'Loading vouchers...' : error ? 'Vouchers unavailable.' : 'No vouchers found.'}</Text></View>}
-        ListFooterComponent={page && page.current_page < page.last_page ? <Pressable disabled={loading} onPress={() => void load(page.current_page + 1)}><Text>Load more</Text></Pressable> : null}
+        ListFooterComponent={currentPage && currentPage.current_page < currentPage.last_page ? <Pressable accessibilityRole="button" disabled={loading} onPress={() => void load(currentPage.current_page + 1)}><Text>Load more</Text></Pressable> : null}
         renderItem={({ item }) => <View style={styles.voucherCard}>
           <View style={styles.cardTopRow}><View style={styles.voucherIcon}><MaterialIcons name="confirmation-number" color={COLORS.brand} size={25} /></View>
             <View style={styles.cardHeading}><Text style={styles.voucherTitle}>{item.reward.name}</Text><Text style={styles.voucherCost}>{item.points_spent} Blood Points</Text></View>
-            <View style={[styles.statusBadge, { backgroundColor: item.status === 'active' ? COLORS.activeBackground : COLORS.softRed }]}><Text style={styles.statusText}>{item.status.toUpperCase()}</Text></View></View>
-          {item.activated_at ? <Text style={styles.stateMessage}>Activated: {new Date(item.activated_at).toLocaleString()}</Text> : null}
-          {item.redeemed_at ? <Text style={styles.stateMessage}>Redeemed: {new Date(item.redeemed_at).toLocaleString()}</Text> : null}
-          {item.status === 'available' ? <Text style={styles.stateMessage}>Ready to activate when you are at the counter.</Text> : null}
-          <Pressable style={styles.viewButton} onPress={() => router.push({ pathname: '/voucher', params: { id: String(item.id) } })}><Text style={styles.viewButtonText}>{item.status === 'active' ? 'View QR' : 'View Voucher'}</Text></Pressable>
+            <View style={[styles.statusBadge, { backgroundColor: voucherState(item) === 'claimed' ? COLORS.activeBackground : voucherState(item) === 'legacy' || voucherState(item) === 'unavailable' ? COLORS.expiredBackground : COLORS.softRed }]}><Text style={styles.statusText}>{voucherStatusLabel(item)}</Text></View></View>
+          {item.activated_at ? <Text style={styles.stateMessage}>Activated: {voucherDate(item.activated_at)}</Text> : null}
+          {voucherState(item) === 'claimed' ? <Text style={styles.stateMessage}>Claimed: {voucherDate(item.claimed_at)}</Text> : null}
+          {voucherState(item) === 'available' ? <Text style={styles.stateMessage}>Ready to activate your claim code.</Text> : null}
+          <Pressable accessibilityRole="button" accessibilityLabel={`${voucherActionLabel(item)} for ${item.reward.name}`} disabled={loading} style={styles.viewButton} onPress={() => router.push({ pathname: '/voucher', params: { id: String(item.id) } })}><Text style={styles.viewButtonText}>{voucherActionLabel(item)}</Text></Pressable>
         </View>} />
     </SafeAreaView></>;
 }

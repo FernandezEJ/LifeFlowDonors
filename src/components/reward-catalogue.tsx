@@ -97,14 +97,14 @@ export function RewardCatalogue({ showBalance = false, onBalance }: { showBalanc
   if (loading && !summary) return <TabSkeleton />;
   return <View>
     <ConfirmationModal visible={!!confirmation} icon="card-giftcard" title="Confirm Redemption"
-      message={confirmation ? `${confirmation.reward.name}${confirmation.reward.voucher_value ? ' — ₱' + confirmation.reward.voucher_value : ''}\nRedeem this reward for ${confirmation.reward.points_cost} points?\nYour voucher will be saved in My Vouchers. Activate it only when you are at the cashier/counter; activation starts the 5-minute QR window.` : ''}
+      message={confirmation ? `${confirmation.reward.name}${confirmation.reward.voucher_value ? ' — ₱' + confirmation.reward.voucher_value : ''}\nRedeem this reward for ${confirmation.reward.points_cost} points?\nYour voucher will be saved in My Rewards. Activate its claim code when you are ready. Staff confirm your claim when you receive the item.` : ''}
       primaryLabel="Redeem" secondaryLabel="Cancel" variant="warning" loading={busy}
       onSecondary={() => { if (!submitted.current) { lock.current = false; setConfirmation(null); } }}
       onPrimary={async () => { if (confirmation && lock.current) await spend(confirmation.attempt); }} />
     {showBalance ? <View style={styles.balanceSection}><Text style={styles.balanceHeading}>Your Blood Points</Text>
       <View style={styles.pointsCircle}><Text style={styles.pointsNumber}>{summary?.current_balance ?? '--'}</Text><Text style={styles.pointsLabel}>Points</Text></View></View> : null}
     <View style={styles.rewardsHeader}><Text style={styles.rewardsHeading}>Available Rewards</Text>
-      <Pressable onPress={() => router.navigate('/my-vouchers')} style={styles.myVouchersButton}><Text style={styles.myVouchersText}>My Vouchers</Text></Pressable></View>
+      <Pressable onPress={() => router.navigate('/my-vouchers')} style={styles.myVouchersButton}><Text style={styles.myVouchersText}>My Rewards</Text></Pressable></View>
     {error ? <View><Text accessibilityRole="alert">{error}</Text><Pressable accessibilityRole="button" disabled={busy || loading || !!confirmation} onPress={() => void refresh()} style={styles.refreshButton}><Text style={styles.myVouchersText}>Retry</Text></Pressable></View> : null}
     {pending ? <Pressable disabled={busy} style={styles.myVouchersButton} onPress={() => { if (!lock.current) { lock.current = true; void spend(pending); } }}>
       <Text style={styles.myVouchersText}>{busy ? 'Submitting...' : 'Retry pending redemption'}</Text></Pressable> : null}

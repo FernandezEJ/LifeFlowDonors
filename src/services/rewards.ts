@@ -8,7 +8,8 @@ export type PointSummary = { current_balance: number; total_earned: number; tota
 export type PointTransaction = { id: number; type: 'donation_reward' | 'reward_redemption'; amount: number; description: string; created_at: string };
 export type Reward = { id: number; name: string; description: string | null; points_cost: number; stock_quantity: number; voucher_value: string | null; image_url: string | null };
 export type VoucherStatus = 'available' | 'active' | 'redeemed' | 'expired';
-export type Voucher = { id: number; reward_id: number; reward: Reward; points_spent: number; status: VoucherStatus; qr_token: string | null; activated_at: string | null; expires_at: string | null; redeemed_at: string | null; created_at: string };
+export type ClaimStatus = 'available' | 'pending_claim' | 'claimed' | 'legacy';
+export type Voucher = { id: number; reward_id: number; reward: Reward; points_spent: number; status: VoucherStatus; claim_status: ClaimStatus; claim_code: string | null; claimed_at: string | null; is_legacy: boolean; legacy_status: VoucherStatus | null; activated_at: string | null; expires_at: string | null; redeemed_at: string | null; created_at: string };
 export type Page<T> = { data: T[]; current_page: number; last_page: number };
 export type VoucherResponse = { voucher: Voucher; server_time: string };
 export type Catalogue = { data: Reward[]; request_key: string };
@@ -24,13 +25,32 @@ export const rewardsApi = {
 };
 
 // ========================================
-// VISUAL DEADLINE
-// Server time offsets a wrong device clock; the backend alone changes status.
+// CLAIM PRESENTATION
+// Raw redeemed history is not proof of a physical claim. Missing or inconsistent
+// claim fields stay read-only; only Laravel supplies credentials and transitions.
 // ========================================
-export function remainingSeconds(expiresAt: string | null, serverOffset: number, now = Date.now()): number {
-  return expiresAt ? Math.max(0, Math.ceil((Date.parse(expiresAt) - now - serverOffset) / 1000)) : 0;
+export function voucherState(voucher: Voucher): ClaimStatus | 'unavailable' {
+  if (voucher.claim_status === 'legacy' || voucher.is_legacy === true) return 'legacy';
+  if (voucher.is_legacy !== false) return 'unavailable';
+  if (voucher.claim_status === 'claimed' && voucher.claimed_at && Number.isFinite(Date.parse(voucher.claimed_at))) return 'claimed';
+  if (voucher.claimed_at != null) return 'unavailable';
+  if (voucher.claim_status === 'available' && voucher.status === 'available') return 'available';
+  if (voucher.claim_status === 'pending_claim' && voucher.status === 'active') return 'pending_claim';
+  return 'unavailable';
 }
-export function formatRemaining(seconds: number): string {
-  return Math.floor(seconds / 60).toString().padStart(2, '0') + ':' + (seconds % 60).toString().padStart(2, '0');
+export function voucherStatusLabel(voucher: Voucher): string {
+  return { available: 'Available', pending_claim: 'Pending Claim', claimed: 'Claimed', legacy: 'Legacy', unavailable: 'Unavailable' }[voucherState(voucher)];
 }
-export const ACTIVATION_WARNING = 'Attention: Only tap Activate when you are directly in front of the cashier/counter. Once activated, your single-use QR code will be available for 5 minutes.';
+export function voucherActionLabel(voucher: Voucher): string {
+  const state = voucherState(voucher);
+  return state === 'available' ? 'Activate Claim Code' : state === 'pending_claim' ? 'View Claim Code' : 'View Details';
+}
+export function usableClaimCode(voucher: Voucher): string | null {
+  return voucherState(voucher) === 'pending_claim' && typeof voucher.claim_code === 'string' && /^LFW-[A-Z0-9]{6}$/.test(voucher.claim_code) ? voucher.claim_code : null;
+}
+export function voucherDate(value: string | null): string {
+  if (!value || !Number.isFinite(Date.parse(value))) return 'Unavailable';
+  const date = new Date(value);
+  return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) + ' at ' + date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+export const ACTIVATION_MESSAGE = 'Activate your one-time claim code? No additional points will be spent. Your code has no expiration and staff will confirm your claim when you receive the item.';

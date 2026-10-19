@@ -5,7 +5,9 @@ import { apiRequest } from './api';
 // Only backend verification creates trusted outcomes; possible points are informational.
 // ========================================
 export type DonationStatus = 'pending' | 'for_verification' | 'needs_revision' | 'completed' | 'rejected' | 'cancelled';
-export type DonationOpportunity = { id:number|null; source_type?:'admin_announcement'|'red_cross_dagupan'; image_url?:string|null; donation_date?:string|null; title:string; description:string; location:string; event_date:string|null; start_time:string|null; end_time:string|null; points_reward:number; published_at:string|null; expires_at:string|null; status:string };
+export type AnnouncementInline = { text: string; bold?: boolean; italic?: boolean };
+export type AnnouncementDocument = { version: 1; blocks: ({ type: 'paragraph'; content: AnnouncementInline[] } | { type: 'bullet_list' | 'ordered_list'; items: AnnouncementInline[][] })[] };
+export type DonationOpportunity = { id:number|null; source_type?:'admin_announcement'|'red_cross_dagupan'; image_url?:string|null; donation_date?:string|null; title:string; description:string; description_document?:AnnouncementDocument|null; location:string; event_date:string|null; start_time:string|null; end_time:string|null; points_reward:number; published_at:string|null; expires_at:string|null; status:string };
 export type DonationParticipation = { id:number; source_type?:'admin_announcement'|'red_cross_dagupan'; status:DonationStatus; joined_at:string; cancelled_at:string|null; proof_size:number|null; proof_original_name:string|null; proof_uploaded_at:string|null; verified_at:string|null; rejection_reason:string|null; revision_reason:string|null; opportunity:DonationOpportunity };
 export type DonationPage = { data:DonationParticipation[]; current_page:number; last_page:number; total:number };
 export type DonationSummary = { total_donations:number; achievement:{key:string;label:string} };

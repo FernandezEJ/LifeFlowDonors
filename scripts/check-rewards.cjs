@@ -28,12 +28,17 @@ class ApiError extends Error { constructor(message, status = 0) { super(message)
 let sent;
 const service = load('src/services/rewards.ts', { './api': { apiRequest: async (path, options) => { sent = { path, ...options }; return {}; } } });
 const presentation = load('src/services/announcement-presentation.ts', { './api': { API_BASE_URL: 'http://device.test:8000/api' } }, { URL });
+const record = (fields = {}) => ({ id: 1, reward_id: 3, reward: { name: 'Saved reward', description: 'Size: Medium' }, points_spent: 300,
+  status: 'available', claim_status: 'available', claim_code: null, claimed_at: null, is_legacy: false, legacy_status: null,
+  activated_at: null, expires_at: null, redeemed_at: null, created_at: '2026-09-11T12:00:00Z', ...fields });
+const pendingClaim = () => record({ status: 'active', claim_status: 'pending_claim', claim_code: 'LFW-7B9X2Q', activated_at: '2026-09-11T12:00:00Z' });
+const claimed = () => record({ status: 'redeemed', claim_status: 'claimed', claimed_at: '2026-09-11T12:05:00Z', activated_at: '2026-09-11T12:00:00Z' });
 
 // ========================================
 // SMALL REACT LIFECYCLE HARNESS
 // Preserves hook identity/dependencies so focus, effects and stale responses run.
 // ========================================
-function harness(path, auth, extra = {}, props = {}, componentName = 'default') {
+function harness(path, auth, extra = {}, props = {}, componentName = 'default', params = { id: '1' }) {
   const slots = []; let cursor = 0; const pending = []; const alerts = [], routes = [], intervals = new Set();
   let clock = Date.parse('2026-09-11T12:00:00Z'), foreground;
   class Clock extends Date { static now() { return clock; } }
@@ -58,29 +63,28 @@ function harness(path, auth, extra = {}, props = {}, componentName = 'default') 
   const router = { navigate: route => routes.push(route), push: route => routes.push(route), canGoBack: () => true, back: () => routes.push('back'), replace: route => routes.push(route), dismissTo: route => routes.push(route) };
   const imports = {
     react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
-    'expo-router': { Stack: { Screen: 'Screen' }, useFocusEffect: fn => effect(fn, [fn]), useRouter: () => router, useLocalSearchParams: () => ({ id: '1' }) },
+    'expo-router': { Stack: { Screen: 'Screen' }, useFocusEffect: fn => effect(fn, [fn]), useRouter: () => router, useLocalSearchParams: () => params },
     '@expo/vector-icons/MaterialIcons': { __esModule: true, default: 'Icon' },
     'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
     'react-native': { Alert: { alert: (...args) => alerts.push(args) }, AppState: { addEventListener: (_, fn) => { foreground = fn; return { remove() { foreground = null; } }; } },
-      Pressable: 'Pressable', Text: 'Text', View: 'View', ScrollView: 'ScrollView', FlatList: 'FlatList', Image: 'Image', StyleSheet: { create: value => value } },
+      Pressable: 'Pressable', Text: 'Text', View: 'View', RefreshControl: 'RefreshControl', ScrollView: 'ScrollView', FlatList: 'FlatList', Image: 'Image', StyleSheet: { create: value => value } },
     '@/contexts/auth-context': { useAuth: () => auth },
     '@/components/notification-bell': { NotificationBell: 'Bell' },
     '@/components/confirmation-modal': { ConfirmationModal: 'ConfirmationModal' },
     '@/services/api': { ApiError, errorMessage: error => error.message },
     '@/services/rewards': service,
     '@/services/announcement-presentation': presentation,
-    'react-qr-code': { __esModule: true, default: 'QR' },
     ...extra,
   };
   const component = load(path, imports, { Date: Clock, setInterval: fn => { intervals.add(fn); return fn; }, clearInterval: fn => intervals.delete(fn) })[componentName];
   const render = () => { cursor = 0; return component(props); };
   const settle = async () => { for (let i = 0; i < 5; i++) { render(); pending.splice(0).forEach(fn => fn()); await flush(); } return render(); };
   return { render, settle, alerts, routes, tick: milliseconds => { clock += milliseconds; intervals.forEach(fn => fn()); },
-    foreground: state => foreground?.(state), close: () => slots.forEach(s => { if (s && typeof s === 'object') s.cleanup?.(); }) };
+    intervalCount: () => intervals.size, foreground: state => foreground?.(state), close: () => slots.forEach(s => { if (s && typeof s === 'object') s.cleanup?.(); }) };
 }
 
 // ========================================
-// SERVICE CONTRACT AND AUTHORITATIVE CLOCK
+// SERVICE CONTRACT AND CLAIM STATE
 // Only a retry key can accompany spending; activation accepts no client deadline.
 // ========================================
 async function serviceChecks() {
@@ -89,15 +93,25 @@ async function serviceChecks() {
   assert.deepEqual(JSON.parse(JSON.stringify(sent.body)), { request_key: 'test-request' });
   await service.rewardsApi.activate('test-session', 8);
   assert.equal(sent.path, '/vouchers/8/activate'); assert.deepEqual(JSON.parse(JSON.stringify(sent.body)), {});
+  assert.equal(sent.method, 'POST'); assert.equal(sent.token, 'test-session');
+  await service.rewardsApi.voucher('test-session', 8);
+  assert.equal(sent.path, '/vouchers/8'); assert.equal(sent.token, 'test-session');
   await service.rewardsApi.vouchers('test-session', 2, 'redeemed');
   assert.equal(sent.path, '/vouchers?page=2&status=redeemed');
   await service.rewardsApi.transactions('test-session', 2, 'reward_redemption');
   assert.equal(sent.path, '/points/transactions?page=2&type=reward_redemption');
-  const now = Date.parse('2026-09-11T00:00:00Z');
-  assert.equal(service.remainingSeconds('2026-09-11T00:05:00Z', 0, now), 300);
-  assert.equal(service.remainingSeconds('2026-09-11T00:05:00Z', -3600000, now + 3600000), 300);
-  assert.equal(service.remainingSeconds('2026-09-11T00:05:00Z', 0, now + 300000), 0);
-  assert.equal(service.formatRemaining(61), '01:01');
+  for (const [voucher, label, action] of [[record(), 'Available', 'Activate Claim Code'], [pendingClaim(), 'Pending Claim', 'View Claim Code'],
+    [claimed(), 'Claimed', 'View Details'], [record({ status: 'redeemed', claim_status: 'legacy', is_legacy: true, legacy_status: 'redeemed' }), 'Legacy', 'View Details'],
+    [record({ status: 'redeemed', claim_status: undefined, is_legacy: undefined }), 'Unavailable', 'View Details']]) {
+    assert.equal(service.voucherStatusLabel(voucher), label); assert.equal(service.voucherActionLabel(voucher), action);
+  }
+  assert.equal(service.usableClaimCode(pendingClaim()), 'LFW-7B9X2Q');
+  for (const voucher of [record({ claim_code: 'LFW-7B9X2Q' }), { ...claimed(), claim_code: 'LFW-7B9X2Q' },
+    { ...pendingClaim(), is_legacy: true }, { ...pendingClaim(), claimed_at: claimed().claimed_at }, { ...pendingClaim(), claim_code: 'malformed' }]) {
+    assert.equal(service.usableClaimCode(voucher), null);
+  }
+  assert.match(service.voucherDate(claimed().claimed_at), /September \d+, 2026 at \d+:\d{2} [AP]M/);
+  assert.equal(service.voucherDate('invalid'), 'Unavailable'); assert.equal(service.voucherDate(null), 'Unavailable');
 }
 
 // ========================================
@@ -117,7 +131,7 @@ async function catalogueChecks() {
     { showBalance: true, onBalance: value => balances.push(value) }, 'RewardCatalogue');
   let screen = make(); let tree = await screen.settle();
   assert.match(text(tree), /No rewards are available right now/);
-  assert.ok(button(tree, 'My Vouchers'));
+  assert.ok(button(tree, 'My Rewards'));
   screen.close(); inventory = [reward]; screen = make(); tree = await screen.settle();
   const redeem = button(tree, 'Redeem'); redeem.props.onPress(); redeem.props.onPress();
   const modal = () => nodes(screen.render()).find(n => n.type === 'ConfirmationModal').props;
@@ -125,7 +139,7 @@ async function catalogueChecks() {
   assert.equal(modal().visible, true);
   assert.match(modal().message, /Test reward.*100.00/);
   assert.match(modal().message, /300 points/);
-  assert.match(modal().message, /cashier\/counter/);
+  assert.match(modal().message, /claim code/); assert.doesNotMatch(modal().message, /QR|5-minute|cashier\/counter/);
   modal().onSecondary(); assert.equal(calls.length, 0); assert.equal(modal().visible, false);
   button(screen.render(), 'Redeem').props.onPress();
   fail = true;
@@ -168,7 +182,7 @@ async function pointsNavigationChecks() {
   let tree = await screen.settle(); assert.match(text(tree), /650/); assert.equal(summaryCalls, 1); assert.equal(catalogueCalls, 0);
   assert.doesNotMatch(text(tree), /Available Rewards/);
   button(tree, 'Redeem').props.onPress(); assert.equal(screen.routes.pop(), '/redeem');
-  button(tree, 'My Vouchers').props.onPress(); assert.equal(screen.routes.pop(), '/my-vouchers');
+  button(tree, 'My Rewards').props.onPress(); assert.equal(screen.routes.pop(), '/my-vouchers');
   auth.pointsSummary = () => new Promise(resolve => { finish = resolve; });
   tree = await screen.settle(); assert.match(text(tree), /650/); assert.ok(!nodes(tree).some(n => n.type === 'TabSkeleton'));
   finish({ current_balance: 350 }); tree = await screen.settle(); assert.match(text(tree), /350/);
@@ -222,65 +236,133 @@ async function polishChecks() {
 
 // ========================================
 // VOUCHER FILTERS AND HISTORY NAVIGATION
-// All includes redeemed; selecting the current filter must not erase existing cards.
+// Raw redeemed includes legacy history; only confirmed claims appear in Claimed.
 // ========================================
 async function historyChecks() {
-  const records = [{ id: 1, status: 'redeemed', reward: { name: 'Test' }, points_spent: 300, redeemed_at: '2026-09-11T12:00:00Z' }];
+  const legacy = record({ id: 4, status: 'redeemed', claim_status: 'legacy', is_legacy: true, legacy_status: 'redeemed', redeemed_at: '2026-09-11T12:00:00Z' });
+  const records = [record(), { ...pendingClaim(), id: 2 }, { ...claimed(), id: 3 }, legacy];
   const requests = [];
-  const auth = { vouchers: async (page, status) => { requests.push(status); return { data: status ? [] : records, current_page: page, last_page: 1 }; } };
+  let offline = false;
+  const auth = { user: { id: 1 }, vouchers: async (page, status) => { requests.push(status); if (offline) throw new ApiError('Offline');
+    return { data: records.filter(item => !status || item.status === status), current_page: page, last_page: 1 }; } };
   const screen = harness('src/app/my-vouchers.tsx', auth);
   await screen.settle();
   const list = () => nodes(screen.render()).find(n => n.type === 'FlatList').props;
-  assert.equal(list().data[0].status, 'redeemed');
+  assert.equal(list().data.length, 4); assert.ok(list().data.every(item => item.claim_code === null));
   button(list().ListHeaderComponent, 'All').props.onPress(); await screen.settle();
-  assert.equal(list().data.length, 1);
-  button(list().renderItem({ item: records[0] }), 'View Voucher').props.onPress();
-  assert.equal(screen.routes[0].pathname, '/voucher'); assert.equal(screen.routes[0].params.id, '1');
-  for (const label of ['Available', 'Active', 'Expired']) {
-    button(list().ListHeaderComponent, label).props.onPress(); await screen.settle();
-    assert.equal(requests.at(-1), label.toLowerCase()); assert.equal(list().data.length, 0);
+  assert.equal(list().data.length, 4);
+  for (const [item, label] of [[records[0], 'Activate Claim Code'], [records[1], 'View Claim Code'], [records[2], 'View Details'], [legacy, 'View Details']]) {
+    assert.ok(button(list().renderItem({ item }), label));
   }
+  assert.doesNotMatch(text(list().renderItem({ item: legacy })), /Claimed|View Claim Code/);
+  button(list().renderItem({ item: records[0] }), 'Activate Claim Code').props.onPress();
+  assert.equal(screen.routes[0].pathname, '/voucher'); assert.equal(screen.routes[0].params.id, '1');
+  for (const [label, status, id] of [['Available', 'available', 1], ['Pending Claim', 'active', 2], ['Claimed', 'redeemed', 3]]) {
+    button(list().ListHeaderComponent, label).props.onPress(); await screen.settle();
+    assert.equal(requests.at(-1), status); assert.equal(list().data.length, 1); assert.equal(list().data[0].id, id);
+  }
+  screen.foreground('background'); assert.equal(list().data.length, 0);
+  const before = requests.length; screen.foreground('active'); await screen.settle(); assert.equal(requests.length, before + 1);
+  offline = true; list().onRefresh(); await screen.settle(); assert.equal(list().data.length, 0); assert.match(text(list().ListHeaderComponent), /Offline/);
+  offline = false; button(list().ListHeaderComponent, 'Retry').props.onPress(); await screen.settle(); assert.equal(list().data.length, 1);
+  // Empty visible pages (legacy records) must still allow paging to real claims.
+  auth.vouchers = async page => ({ data: page === 1 ? [legacy] : [claimed()], current_page: page, last_page: 2 });
+  await screen.settle(); assert.equal(list().data.length, 0);
+  button(list().ListFooterComponent, 'Load more').props.onPress(); await screen.settle(); assert.equal(list().data.length, 1);
+  // Hide the previous account immediately, before a new account's request settles.
+  let finish;
+  auth.user = { id: 2 }; auth.vouchers = () => new Promise(resolve => { finish = resolve; });
+  assert.equal(list().data.length, 0); await screen.settle();
+  auth.user = { id: 3 }; auth.vouchers = async () => ({ data: [], current_page: 1, last_page: 1 });
+  await screen.settle(); finish({ data: records, current_page: 1, last_page: 1 }); await screen.settle(); assert.equal(list().data.length, 0);
   screen.close();
 }
 
 // ========================================
-// WARNING, QR, DUPLICATE ACTIVATION AND SERVER RECONCILIATION
-// The code hides on deadline/offline/foreground checking and only server reads redeem it.
+// ONE-TIME CLAIM CODE, DUPLICATE ACTIVATION AND SERVER RECONCILIATION
+// No timers, spending, local code generation, or donor confirmation endpoints.
 // ========================================
 async function voucherChecks() {
-  const start = '2026-09-11T12:00:00Z', end = '2026-09-11T12:05:00Z';
-  let status = 'available', serverTime = start, activations = 0, reads = 0, offline = false;
-  const response = () => ({ server_time: serverTime, voucher: { id: 1, reward: { name: 'Test reward' }, points_spent: 300,
-    status, qr_token: status === 'active' ? 'opaque-server-token' : null, expires_at: status === 'available' ? null : end,
-    activated_at: status === 'available' ? null : start, redeemed_at: status === 'redeemed' ? end : null } });
+  let current = record(), activations = 0, reads = 0, offline = false, finishActivation, failActivation = false;
+  const response = () => ({ server_time: '2026-09-11T12:00:00Z', voucher: { ...current } });
   const auth = {
+    user: { id: 1 },
     voucher: async () => { reads++; if (offline) throw new ApiError('Offline'); return response(); },
-    activateVoucher: async () => { activations++; status = 'active'; return response(); },
+    activateVoucher: async () => { activations++; current = pendingClaim();
+      if (failActivation) throw new ApiError('Lost activation response');
+      await new Promise(resolve => { finishActivation = resolve; }); return response(); },
   };
   const screen = harness('src/app/voucher.tsx', auth); let tree = await screen.settle();
-  assert.equal(nodes(tree).filter(n => n.type === 'QR').length, 0);
-  button(tree, 'Activate').props.onPress(); button(tree, 'Activate').props.onPress();
+  assert.match(text(tree), /Size: Medium/);
+  button(tree, 'Activate Claim Code').props.onPress(); button(tree, 'Activate Claim Code').props.onPress();
   const confirmation=()=>nodes(screen.render()).find(n=>n.type==='ConfirmationModal').props;
-  assert.equal(screen.alerts.length,0);assert.equal(confirmation().visible,true);assert.equal(confirmation().title,'Attention');
-  assert.match(confirmation().message,/directly in front of the cashier/);assert.equal(confirmation().dismissible,false);
-  assert.equal(confirmation().secondaryLabel,'Cancel');assert.equal(confirmation().primaryLabel,'Activate');
+  assert.equal(screen.alerts.length,0);assert.equal(confirmation().visible,true);assert.equal(confirmation().title,'Activate Claim Code');
+  assert.match(confirmation().message,/No additional points/);assert.equal(confirmation().dismissible,false);
+  assert.equal(confirmation().secondaryLabel,'Cancel');assert.equal(confirmation().primaryLabel,'Activate Claim Code');
   confirmation().onSecondary();assert.equal(confirmation().visible,false);assert.equal(activations,0);
-  button(screen.render(), 'Activate').props.onPress();
+  button(screen.render(), 'Activate Claim Code').props.onPress();
   const confirm = confirmation().onPrimary; confirm(); confirm();
-  tree = await screen.settle(); assert.equal(activations, 1);
-  assert.equal(nodes(tree).find(n => n.type === 'QR').props.value, 'opaque-server-token');
-  assert.match(text(tree), /05:00 remaining/);
-  screen.tick(120000); tree = await screen.settle(); assert.match(text(tree), /03:00 remaining/);
-  screen.foreground('background'); tree = await screen.settle(); assert.equal(nodes(tree).filter(n => n.type === 'QR').length, 0);
-  serverTime = '2026-09-11T12:02:00Z'; screen.foreground('active'); tree = await screen.settle();
-  assert.match(text(tree), /03:00 remaining/);
-  offline = true; screen.tick(180000); tree = await screen.settle();
-  assert.equal(nodes(tree).filter(n => n.type === 'QR').length, 0); assert.match(text(tree), /Offline/);
-  offline = false; status = 'redeemed'; serverTime = end;
-  button(tree, 'Retry').props.onPress(); tree = await screen.settle();
-  assert.match(text(tree), /Voucher redeemed/); assert.ok(reads >= 4);
-  assert.equal(nodes(tree).filter(n => n.type === 'QR').length, 0);
+  tree = await screen.settle(); assert.equal(activations, 1); assert.doesNotMatch(text(tree), /LFW-/);
+  const beforeActivationRead = reads; finishActivation(); tree = await screen.settle(); assert.equal(reads, beforeActivationRead + 1);
+  assert.match(text(tree), /LFW-7B9X2Q/); assert.match(text(tree), /Pending Claim/); assert.equal(screen.intervalCount(), 0);
+  assert.equal(button(tree, 'Activate Claim Code'), undefined);
+  const beforeTime = reads; screen.tick(365 * 24 * 3600000); tree = await screen.settle();
+  assert.match(text(tree), /LFW-7B9X2Q/); assert.equal(reads, beforeTime); assert.doesNotMatch(text(tree), /QR|remaining|window|scanner/);
+  screen.foreground('background'); assert.doesNotMatch(text(screen.render()), /LFW-/);
+  screen.foreground('active'); tree = await screen.settle(); assert.match(text(tree), /LFW-7B9X2Q/);
+  offline = true; screen.foreground('active'); tree = await screen.settle();
+  assert.doesNotMatch(text(tree), /LFW-/); assert.match(text(tree), /Offline/);
+  offline = false; button(tree, 'Retry').props.onPress(); tree = await screen.settle(); assert.match(text(tree), /LFW-7B9X2Q/); assert.equal(activations, 1);
+  // A cold screen fetches the same credential, without another activation.
+  const reopened = harness('src/app/voucher.tsx', auth); assert.match(text(await reopened.settle()), /LFW-7B9X2Q/); reopened.close();
+  // A stale/malicious code field on Claimed must never be rendered.
+  current = { ...claimed(), claim_code: 'LFW-7B9X2Q' };
+  nodes(screen.render()).find(n => n.type === 'ScrollView').props.refreshControl.props.onRefresh(); tree = await screen.settle();
+  assert.match(text(tree), /Reward claimed/); assert.match(text(tree), /Claimed: September/); assert.doesNotMatch(text(tree), /LFW-/);
+  assert.equal(button(tree, 'Activate Claim Code'), undefined);
+  for (const raw of ['active', 'redeemed', 'expired']) {
+    current = record({ status: raw, claim_status: 'legacy', is_legacy: true, legacy_status: raw, claim_code: 'LFW-7B9X2Q' });
+    screen.foreground('active'); tree = await screen.settle(); assert.match(text(tree), /Legacy voucher/);
+    assert.doesNotMatch(text(tree), /Reward claimed|LFW-/); assert.equal(button(tree, 'Activate Claim Code'), undefined);
+  }
+  current = pendingClaim(); screen.foreground('active'); await screen.settle();
+  let finishRead;
+  auth.voucher = () => new Promise(resolve => { finishRead = resolve; });
+  await screen.settle(); assert.doesNotMatch(text(screen.render()), /LFW-/);
+  screen.foreground('background'); finishRead(response()); tree = await screen.settle(); assert.doesNotMatch(text(tree), /LFW-/);
+  auth.voucher = async () => response(); screen.foreground('active'); tree = await screen.settle(); assert.match(text(tree), /LFW-/);
+  auth.user = { id: 2 }; assert.doesNotMatch(text(screen.render()), /LFW-/);
+  auth.voucher = async () => { throw new ApiError('Not found', 404); }; tree = await screen.settle(); assert.doesNotMatch(text(tree), /LFW-/); assert.match(text(tree), /Not found/);
+  auth.user = null; assert.doesNotMatch(text(screen.render()), /LFW-/); await screen.settle();
   screen.close();
+
+  // An activation whose response is lost recovers with GET, never automatic POST retries.
+  auth.user = { id: 1 }; current = record(); failActivation = true; auth.voucher = async () => response();
+  const lost = harness('src/app/voucher.tsx', auth); tree = await lost.settle(); button(tree, 'Activate Claim Code').props.onPress();
+  nodes(lost.render()).find(n => n.type === 'ConfirmationModal').props.onPrimary(); tree = await lost.settle();
+  assert.match(text(tree), /Lost activation response/); assert.doesNotMatch(text(tree), /LFW-/);
+  const lostCalls = activations; button(tree, 'Retry').props.onPress(); tree = await lost.settle(); assert.match(text(tree), /LFW-7B9X2Q/); assert.equal(activations, lostCalls); lost.close();
+  // Activation can race an already-activated or already-claimed server state.
+  for (const serverRecord of [pendingClaim(), claimed()]) {
+    current = record(); auth.activateVoucher = async () => { current = serverRecord; return response(); };
+    const race = harness('src/app/voucher.tsx', auth); tree = await race.settle(); button(tree, 'Activate Claim Code').props.onPress();
+    nodes(race.render()).find(n => n.type === 'ConfirmationModal').props.onPrimary(); tree = await race.settle();
+    assert.match(text(tree), serverRecord.claim_status === 'claimed' ? /Reward claimed/ : /LFW-7B9X2Q/);
+    if (serverRecord.claim_status === 'claimed') assert.doesNotMatch(text(tree), /LFW-/);
+    race.close();
+  }
+  // Invalid routes never fetch some other owned reward.
+  const readsBeforeInvalid = reads;
+  for (const id of ['invalid', '0', '-1', '1.5', '9007199254740992', undefined]) {
+    const invalid = harness('src/app/voucher.tsx', auth, {}, {}, 'default', { id });
+    assert.match(text(await invalid.settle()), /Voucher not found/); assert.equal(reads, readsBeforeInvalid); invalid.close();
+  }
+  current = pendingClaim(); auth.voucher = async () => { throw new ApiError('Your session has expired. Please log in again.', 401); };
+  const expiredSession = harness('src/app/voucher.tsx', auth); tree = await expiredSession.settle();
+  assert.match(text(tree), /session has expired/); assert.doesNotMatch(text(tree), /LFW-/); expiredSession.close();
+  auth.voucher = () => new Promise(resolve => { finishRead = resolve; });
+  const unmounted = harness('src/app/voucher.tsx', auth); await unmounted.settle(); unmounted.close();
+  finishRead(response()); await flush(); assert.doesNotMatch(text(unmounted.render()), /LFW-/);
 }
 
 (async () => {

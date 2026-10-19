@@ -14,6 +14,20 @@ const native={View:'View',Text:'Text',Pressable:'Pressable',Image:'Image',Scroll
 const presentation=load('src/services/announcement-presentation.ts',{'./api':{API_BASE_URL:'http://device.test:8000/api'}},{URL});
 const eligibility=load('src/services/eligibility.ts',{'./api':{ApiError:class extends Error{}}});
 const shared={'@/services/announcement-presentation':presentation,'@/components/tab-skeleton':{TabSkeleton:'TabSkeleton'},'react/jsx-runtime':{jsx,jsxs:jsx,Fragment:'Fragment'},'react-native':native,'@expo/vector-icons/MaterialIcons':{__esModule:true,default:'Icon'},'react-native-safe-area-context':{SafeAreaView:'SafeAreaView'}};
+const body=load('src/components/announcement-body.tsx',{'react/jsx-runtime':{jsx,jsxs:jsx},'react-native':native});
+shared['@/components/announcement-body']=body;
+const richDoc={version:1,blocks:[{type:'paragraph',content:[{text:'Hello',bold:true,italic:true}]},
+ {type:'bullet_list',items:[[{text:'Bring ID'}]]},{type:'ordered_list',items:[[{text:'Register'}],[{text:'Donate'}]]}]};
+assert.equal(body.isAnnouncementDocument(richDoc),true);
+const richTree=body.AnnouncementBody({description:'Plain preview',document:richDoc});
+assert.ok(texts(richTree).includes('Bring ID')&&texts(richTree).includes('1.')&&texts(richTree).includes('2.')&&texts(richTree).includes('•'));
+const marked=nodes(richTree).find(n=>n.type==='Text'&&n.props.children==='Hello');
+assert.equal(marked.props.style[0].fontWeight,'700');assert.equal(marked.props.style[1].fontStyle,'italic');
+for(const document of [null,{version:2,blocks:[]},{version:1,blocks:[{type:'iframe',content:[]}]},
+ {version:1,blocks:[{type:'paragraph',content:[{text:'Unsafe',href:'javascript:alert(1)'}]}]}]){
+ const legacy='<b>literal old text</b>\nSecond line **unchanged**';
+ assert.equal(body.AnnouncementBody({description:legacy,document}).props.children,legacy);
+}
 // Deterministic hook host preserves slots, effect dependencies and cleanup.
 function host(){
  const slots=[];let cursor=0;const queued=[];

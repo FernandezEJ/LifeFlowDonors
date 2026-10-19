@@ -115,7 +115,7 @@ export default function PointsScreen() {
               <Text style={styles.redeemButtonText}>Redeem</Text>
             </Pressable>
             <Pressable accessibilityRole="button" onPress={() => router.push('/my-vouchers')} style={({ pressed }) => [styles.vouchersButton, pressed && styles.pressed]}>
-              <Text style={styles.vouchersText}>My Vouchers</Text>
+              <Text style={styles.vouchersText}>My Rewards</Text>
             </Pressable>
             </View>
           </View>
