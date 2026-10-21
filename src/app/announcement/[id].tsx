@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { announcementImageUrl, formatDonationDate } from '@/services/announcement-presentation';
 import { AnnouncementBody } from '@/components/announcement-body';
 import { ConfirmationModal } from '@/components/confirmation-modal';
@@ -5,21 +6,28 @@ import { formatDonationRestDate } from '@/services/eligibility';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import {Stack,useFocusEffect,useLocalSearchParams,useRouter} from 'expo-router';
 import {useCallback,useRef,useState,type ComponentProps} from 'react';
-import {Image,Pressable,ScrollView,StyleSheet,Text,View} from 'react-native';
+import {Image,Pressable,ScrollView,StyleSheet,Text,View,useWindowDimensions} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useAuth} from '@/contexts/auth-context';
 import {ApiError,errorMessage} from '@/services/api';
 import {type DonationOpportunity} from '@/services/donations';
 const COLORS = {
-  background: '#FFF9F2',
-  brand: '#D93A3A',
-  brandPressed: '#BE2F2F',
-  text: '#372E2E',
-  muted: '#766A68',
-  border: '#F0E2DC',
-  white: '#FFFFFF',
-  softRed: '#FDE8E8',
+  background: PALETTE.cream,
+  brand: PALETTE.primary,
+  brandPressed: PALETTE.primaryPressed,
+  text: PALETTE.text,
+  muted: PALETTE.neutral,
+  border: PALETTE.border,
+  white: PALETTE.surface,
+  softRed: PALETTE.selected,
 };
+
+function eventTime(value?: string | null) {
+ const time = value?.match(/^([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/);
+ if (!time) return '';
+ const hour = Number(time[1]);
+ return `${hour % 12 || 12}:${time[2]} ${hour >= 12 ? 'PM' : 'AM'}`;
+}
 
 
 
@@ -29,11 +37,22 @@ const COLORS = {
 // ========================================
 export default function AnnouncementScreen(){
  const router=useRouter();const {id}=useLocalSearchParams<{id:string}>();const {opportunity,joinOpportunity,donationHistory,eligibilityState}=useAuth();
+ const {width,fontScale=1}=useWindowDimensions();
  const generation=useRef(0);
  const [rest,setRest]=useState<{date?:string|null}|null>(null);
  const [dialog,setDialog]=useState<Omit<ComponentProps<typeof ConfirmationModal>,'visible'>|null>(null);
  const [item,setItem]=useState<DonationOpportunity|null>(null);const [error,setError]=useState('');const [busy,setBusy]=useState(false);const lock=useRef(false);
- const load=useCallback(async()=>{const version=++generation.current;setItem(null);setError('');try{const r=await opportunity(id);if(version===generation.current)setItem(r.opportunity);}catch(e){if(version===generation.current)setError(errorMessage(e));}},[id,opportunity]);
+ const [failedImage,setFailedImage]=useState<string|null>(null);
+ const load=useCallback(async()=>{
+   const version=++generation.current;setItem(null);setError('');setFailedImage(null);
+   if(typeof id!=='string' || (id!=='red-cross-dagupan' && !/^[1-9]\d*$/.test(id))){setError('This announcement is unavailable.');return;}
+   try{
+     const r=await opportunity(id);
+     if(version===generation.current){
+       if(r?.opportunity)setItem(r.opportunity);else setError('This announcement is unavailable.');
+     }
+   }catch(e){if(version===generation.current)setError(e instanceof ApiError && e.status===404?'This announcement is unavailable or has expired.':errorMessage(e));}
+ },[id,opportunity]);
  useFocusEffect(useCallback(()=>{void load();return()=>{generation.current++;};},[load]));
  const release=()=>{lock.current=false;setBusy(false);};
  const blocked=(reason:string, participationId?:number, remaining?:number, nextDate?:string|null)=>{
@@ -92,189 +111,147 @@ export default function AnnouncementScreen(){
    }catch(e){if(version===generation.current)failure(e);release();}
  };
  const confirmation=dialog ?? {title:'Donation Rest Period',icon:'hourglass-empty' as const,message:'You recently completed a donation and are still within the 3-month rest period. You can donate again starting '+formatDonationRestDate(rest?.date)+'.',secondaryLabel:'Close',primaryLabel:'View Status',onSecondary:()=>setRest(null),onPrimary:()=>{setRest(null);router.push('/(tabs)/status');}};
- return <><Stack.Screen options={{headerShown:false}}/><SafeAreaView edges={['top','bottom']} style={styles.safeArea}><View style={styles.header}><Pressable accessibilityLabel="Go back" onPress={()=>router.canGoBack()?router.back():router.replace('/(tabs)')} style={styles.backButton}><MaterialIcons name="arrow-back" size={23}/></Pressable><Text style={styles.headerTitle}>{id==='red-cross-dagupan'?'Donation Option':'Announcement'}</Text></View><ScrollView contentContainerStyle={styles.scrollContent}><View style={styles.content}>
- {error?<><Text accessibilityRole="alert" style={styles.description}>{error}</Text>{!item?<Pressable onPress={()=>void load()}><Text style={styles.description}>Retry donation details</Text></Pressable>:null}</>:null}
- {item?<>{announcementImageUrl(item.image_url) ? <Image source={{uri:announcementImageUrl(item.image_url)!}} accessibilityLabel={item.title} resizeMode="contain" style={{width:'100%',height:220,borderRadius:16}}/> : null}<Text style={styles.title}>{item.title}</Text><View style={styles.detailsCard}><Text style={styles.detailValue}>{formatDonationDate(item.event_date ?? item.donation_date, 'Confirm donation arrangements with the chapter.')} {item.start_time || ''}</Text><Text style={styles.detailValue}>{item.location}</Text><AnnouncementBody description={item.description} document={item.description_document} /></View><Text style={styles.description}>Verified donations earn 300 points for your first donation, increasing by 50 to a maximum of 500 per donation.</Text><Text style={styles.description}>Final donation eligibility is determined by the facility. Use the existing self-assessment to prepare, and bring the required identification or documents.</Text><View style={{flexDirection:'row',gap:12}}><Pressable onPress={()=>router.push('/evaluation')} style={styles.uploadButton}><Text style={styles.uploadButtonText}>Evaluate</Text></Pressable><Pressable disabled={busy} onPress={()=>void confirm()} style={styles.uploadButton}><Text style={styles.uploadButtonText}>{busy?'Joining…':'Go Donate'}</Text></Pressable></View></>:!error?<Text>Loading announcement…</Text>:null}
- </View></ScrollView></SafeAreaView><ConfirmationModal {...confirmation} visible={!!dialog || !!rest} onSecondary={()=>{setDialog(null);confirmation.onSecondary();}} onPrimary={()=>{setDialog(null);return confirmation.onPrimary();}} /></>;
+ const imageUrl=announcementImageUrl(item?.image_url);
+ const start=eventTime(item?.start_time),end=eventTime(item?.end_time);
+ const timeRange=start && end ? start+' – '+end : start || (end ? 'Until '+end : '');
+ const isChapter=id==='red-cross-dagupan';
+ const stackedActions=width<350 || fontScale>1.3;
+ return <>
+   <Stack.Screen options={{headerShown:false}}/>
+   <SafeAreaView edges={['top','right','bottom','left']} style={styles.safeArea}>
+     <View style={styles.header}>
+       <Pressable accessibilityRole="button" accessibilityLabel="Go back"
+         onPress={()=>router.canGoBack()?router.back():router.replace('/(tabs)')}
+         style={({pressed})=>[styles.backButton,pressed && styles.pressed]}>
+         <MaterialIcons name="arrow-back" size={23} color={COLORS.text} accessible={false}/>
+       </Pressable>
+       <Text accessibilityRole="header" style={styles.headerTitle}>{isChapter?'Donation Option':'Announcement Details'}</Text>
+       <View style={styles.headerSpacer}/>
+     </View>
+     <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+       <View style={styles.content}>
+         {error && <View style={styles.errorCard}>
+           <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={[styles.description,{color:PALETTE.danger}]}>{error}</Text>
+           {!item && <Pressable accessibilityRole="button" accessibilityLabel="Retry announcement details" onPress={()=>void load()}
+             style={({pressed})=>[styles.retryButton,pressed && styles.pressed]}>
+             <Text style={styles.retryText}>Retry donation details</Text>
+           </Pressable>}
+         </View>}
+         {item ? <>
+           <View style={styles.banner}>
+             {imageUrl && failedImage!==imageUrl ?
+               <Image source={{uri:imageUrl}} accessibilityLabel={item.title ? item.title+' event banner' : 'Announcement event banner'}
+                 resizeMode="cover" style={styles.bannerImage} onError={()=>setFailedImage(imageUrl)}/> :
+               <View style={styles.bannerFallback}>
+                 <MaterialIcons name="image-not-supported" size={36} color={COLORS.muted} accessible={false}/>
+                 <Text style={styles.fallbackText}>No event image available</Text>
+               </View>}
+           </View>
+           <Text accessibilityRole="header" style={styles.title}>{item.title?.trim() || 'Announcement'}</Text>
+           <View style={styles.eventDetails}>
+             <View style={styles.detailRow}>
+               <MaterialIcons name="event" size={21} color={COLORS.muted} accessible={false}/>
+               <View style={styles.detailContent}>
+                 <Text style={styles.detailLabel}>Event Date</Text>
+                 <Text style={styles.detailValue}>{formatDonationDate(item.event_date ?? item.donation_date,
+                   isChapter ? 'Confirm donation arrangements with the chapter.' : 'Date to be announced')}</Text>
+                 {timeRange ? <Text style={styles.detailTime}>{timeRange}</Text> : null}
+               </View>
+             </View>
+             <View style={[styles.detailRow,styles.locationRow]}>
+               <MaterialIcons name="location-on" size={21} color={COLORS.muted} accessible={false}/>
+               <View style={styles.detailContent}>
+                 <Text style={styles.detailLabel}>Event Location</Text>
+                 <Text style={styles.detailValue}>{item.location?.trim() || 'Location to be announced'}</Text>
+               </View>
+             </View>
+           </View>
+           <View style={styles.section}>
+             <Text accessibilityRole="header" style={styles.sectionTitle}>About This Event</Text>
+             <AnnouncementBody description={item.description || 'No event description is available.'} document={item.description_document}/>
+           </View>
+           <View style={styles.information}>
+             <View style={styles.informationHeading}>
+               <MaterialIcons name="workspace-premium" size={20} color={COLORS.muted} accessible={false}/>
+               <Text accessibilityRole="header" style={styles.informationTitle}>LifeFlow Donation Rewards</Text>
+             </View>
+             <Text style={styles.description}>Points are awarded only after an Admin verifies your donation. Verified donations earn 300 points for your first donation, increasing by 50 to a maximum of 500 per donation.</Text>
+           </View>
+           <View style={styles.information}>
+             <View style={styles.informationHeading}>
+               <MaterialIcons name="info-outline" size={20} color={COLORS.muted} accessible={false}/>
+               <Text accessibilityRole="header" style={styles.informationTitle}>Before You Donate</Text>
+             </View>
+             <Text style={styles.description}>Final donation eligibility is determined by the facility. Use the existing self-assessment to prepare, and bring the required identification or documents.</Text>
+           </View>
+         </> : !error && <View accessibilityRole="progressbar" accessibilityLabel="Loading announcement" accessibilityState={{busy:true}} style={styles.loading}>
+           <Text style={styles.description}>Loading announcement…</Text>
+         </View>}
+       </View>
+     </ScrollView>
+     {item && <View style={styles.footer}>
+       <View style={[styles.actions,stackedActions && styles.actionsStacked]}>
+         <Pressable accessibilityRole="button" accessibilityLabel="Evaluate" onPress={()=>router.push('/evaluation')}
+           style={({pressed})=>[styles.actionButton,stackedActions && styles.stackedButton,styles.secondaryButton,pressed && styles.secondaryPressed]}>
+           <Text style={styles.secondaryText}>Evaluate</Text>
+         </Pressable>
+         <Pressable accessibilityRole="button" accessibilityLabel={busy?'Joining donation activity':'Go Donate'}
+           accessibilityState={{disabled:busy,busy}} disabled={busy} onPress={()=>void confirm()}
+           style={({pressed})=>[styles.actionButton,stackedActions && styles.stackedButton,styles.primaryButton,busy && styles.disabled,pressed && styles.primaryPressed]}>
+           <Text style={styles.primaryText}>{busy?'Joining…':'Go Donate'}</Text>
+         </Pressable>
+       </View>
+     </View>}
+   </SafeAreaView>
+   <ConfirmationModal {...confirmation} visible={!!dialog || !!rest} onSecondary={()=>{setDialog(null);confirmation.onSecondary();}} onPrimary={()=>{setDialog(null);return confirmation.onPrimary();}} />
+ </>;
 }
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },
-  header: {
-    minHeight: 60,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    backgroundColor: COLORS.background,
-  },
-  backButton: {
-    width: 42,
-    height: 42,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
-  },
+  header: { minHeight: 60, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border, backgroundColor: COLORS.background },
+  backButton: { width: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
+  headerSpacer: { width: 44 },
+  headerTitle: { flex: 1, minWidth: 0, textAlign: 'center', color: COLORS.text, fontSize: 17, lineHeight: 23, fontWeight: '800' },
   pressed: { opacity: 0.7 },
-  headerTitle: { color: COLORS.text, fontSize: 17, fontWeight: '800' },
-  bellButton: {
-    width: 42,
-    height: 42,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 14,
-    backgroundColor: COLORS.white,
-  },
-  notificationDot: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 7,
-    height: 7,
-    borderWidth: 1.5,
-    borderColor: COLORS.white,
-    borderRadius: 4,
-    backgroundColor: COLORS.brand,
-  },
-  scrollContent: { paddingHorizontal: 20, paddingTop: 22, paddingBottom: 32 },
+  scroll: { flex: 1 },
+  scrollContent: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 24 },
   content: { width: '100%', maxWidth: 620, alignSelf: 'center', gap: 20 },
-  titleBlock: { alignItems: 'flex-start' },
-  statusBadge: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12 },
-  statusText: { fontSize: 10, fontWeight: '800', textTransform: 'uppercase' },
-  title: {
-    marginTop: 13,
-    color: COLORS.text,
-    fontSize: 27,
-    fontWeight: '800',
-    lineHeight: 34,
-    letterSpacing: -0.5,
-  },
-  organizer: { marginTop: 5, color: COLORS.muted, fontSize: 14, fontWeight: '600' },
-  detailsCard: {
-    gap: 16,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 20,
-    backgroundColor: COLORS.white,
-  },
-  detailRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  detailIcon: {
-    width: 38,
-    height: 38,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 12,
-    backgroundColor: COLORS.softRed,
-  },
-  detailContent: { flex: 1 },
-  detailLabel: { color: COLORS.muted, fontSize: 11, fontWeight: '600' },
-  detailValue: { marginTop: 2, color: COLORS.text, fontSize: 14, fontWeight: '700' },
-  section: {
-    padding: 18,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 20,
-    backgroundColor: COLORS.white,
-  },
-  sectionTitle: { flex: 1, color: COLORS.text, fontSize: 18, fontWeight: '800' },
-  description: { marginTop: 8, color: COLORS.muted, fontSize: 14, lineHeight: 21 },
-  rewardCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 13,
-    padding: 17,
-    borderWidth: 1,
-    borderColor: '#F0CBC6',
-    borderRadius: 20,
-    backgroundColor: COLORS.softRed,
-  },
-  rewardIcon: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 14,
-    backgroundColor: COLORS.white,
-  },
-  rewardContent: { flex: 1 },
-  rewardLabel: { color: COLORS.muted, fontSize: 12, fontWeight: '600' },
-  rewardValue: { marginTop: 3, color: COLORS.brand, fontSize: 17, fontWeight: '800' },
-  cancelledReward: { color: COLORS.muted },
-  rewardNote: { marginTop: 6, color: COLORS.muted, fontSize: 12, lineHeight: 17 },
-  proofCard: {
-    padding: 18,
-    borderWidth: 1.5,
-    borderColor: '#E8BBB5',
-    borderRadius: 21,
-    backgroundColor: COLORS.white,
-  },
-  proofHeading: { flexDirection: 'row', alignItems: 'center', gap: 11 },
-  proofIcon: {
-    width: 42,
-    height: 42,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 13,
-    backgroundColor: COLORS.softRed,
-  },
-  uploadButton: {
-    flex: 1,
-    minHeight: 50,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginTop: 16,
-    borderRadius: 16,
-    backgroundColor: COLORS.brand,
-  },
-  uploadButtonPressed: { backgroundColor: COLORS.brandPressed, transform: [{ scale: 0.99 }] },
-  uploadButtonText: { color: COLORS.white, fontSize: 15, fontWeight: '700' },
-  verificationMessage: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 9,
-    marginTop: 14,
-    padding: 13,
-    borderRadius: 14,
-    backgroundColor: '#E6F0FF',
-  },
-  verificationText: { flex: 1, color: '#3469A5', fontSize: 13, lineHeight: 19 },
-  completedMessage: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-    marginTop: 14,
-    padding: 13,
-    borderRadius: 14,
-    backgroundColor: '#E2F5E9',
-  },
-  completedText: { flex: 1, color: '#287A47', fontSize: 13, lineHeight: 19 },
-  cancelledMessage: { marginTop: 13, color: COLORS.muted, fontSize: 13, lineHeight: 19 },
-  eligibilityNote: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    padding: 16,
-    borderRadius: 17,
-    backgroundColor: COLORS.softRed,
-  },
-  eligibilityText: { flex: 1, color: COLORS.text, fontSize: 13, lineHeight: 19 },
-  cancelButton: {
-    minHeight: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: COLORS.brand,
-    borderRadius: 16,
-    backgroundColor: COLORS.background,
-  },
-  cancelButtonPressed: { backgroundColor: COLORS.softRed },
-  cancelButtonText: { color: COLORS.brand, fontSize: 14, fontWeight: '700' },
+  banner: { width: '100%', aspectRatio: 16/9, overflow: 'hidden', borderRadius: 16, backgroundColor: COLORS.white },
+  bannerImage: { width: '100%', height: '100%' },
+  bannerFallback: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 10, padding: 16,
+    borderWidth: 1, borderColor: COLORS.border, borderRadius: 16, backgroundColor: COLORS.white },
+  fallbackText: { color: COLORS.muted, fontSize: 13, lineHeight: 19, textAlign: 'center', flexShrink: 1 },
+  title: { color: COLORS.text, fontSize: 25, fontWeight: '800', lineHeight: 32, letterSpacing: -0.5 },
+  eventDetails: { gap: 16 },
+  detailRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  detailContent: { flex: 1, minWidth: 0 },
+  locationRow: { borderTopWidth: 1, borderTopColor: COLORS.border, paddingTop: 16 },
+  detailLabel: { color: COLORS.muted, fontSize: 12, fontWeight: '600', lineHeight: 18 },
+  detailValue: { marginTop: 3, color: COLORS.text, fontSize: 15, fontWeight: '600', lineHeight: 22 },
+  detailTime: { marginTop: 3, color: COLORS.muted, fontSize: 14, lineHeight: 20 },
+  section: { gap: 2 },
+  sectionTitle: { color: COLORS.text, fontSize: 18, fontWeight: '700', lineHeight: 25 },
+  information: { paddingTop: 18, borderTopWidth: 1, borderTopColor: COLORS.border },
+  informationHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  informationTitle: { flex: 1, minWidth: 0, color: COLORS.text, fontSize: 15, fontWeight: '700', lineHeight: 22 },
+  description: { marginTop: 6, color: COLORS.muted, fontSize: 14, lineHeight: 21 },
+  footer: { flexShrink: 0, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12,
+    borderTopWidth: 1, borderTopColor: COLORS.border, backgroundColor: COLORS.background },
+  actions: { width: '100%', maxWidth: 620, alignSelf: 'center', flexDirection: 'row', gap: 10 },
+  actionsStacked: { flexDirection: 'column' },
+  stackedButton: { flexBasis: 'auto', flexGrow: 0 },
+  actionButton: { flexGrow: 1, flexBasis: 0, minWidth: 0, minHeight: 52, alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 13, paddingHorizontal: 16, borderRadius: 14 },
+  primaryButton: { backgroundColor: COLORS.brand },
+  primaryPressed: { backgroundColor: COLORS.brandPressed },
+  primaryText: { color: COLORS.white, fontSize: 15, lineHeight: 22, fontWeight: '700', textAlign: 'center' },
+  secondaryButton: { borderWidth: 1, borderColor: COLORS.brand, backgroundColor: COLORS.background },
+  secondaryPressed: { backgroundColor: COLORS.softRed },
+  secondaryText: { color: COLORS.brand, fontSize: 15, lineHeight: 22, fontWeight: '700', textAlign: 'center' },
+  disabled: { opacity: 0.55 },
+  loading: { paddingVertical: 24 },
+  errorCard: { padding: 16, borderWidth: 1, borderColor: COLORS.border, borderRadius: 16, backgroundColor: COLORS.white },
+  retryButton: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingVertical: 10 },
+  retryText: { color: COLORS.brand, fontSize: 14, lineHeight: 21, fontWeight: '600' },
 });
-
-// TODO: Donation reward rules will later be provided and validated by Laravel/backend configuration.

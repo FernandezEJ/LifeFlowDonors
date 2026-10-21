@@ -2,7 +2,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
 function load(path,imports={},globals={}){
  const module={exports:{}};const code=ts.transpileModule(fs.readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
- vm.runInNewContext(code,{module,exports:module.exports,require:n=>{if(n.endsWith('.png')){assert.ok(fs.existsSync(require('node:path').resolve(require('node:path').dirname(path),n)));return n;}if(!(n in imports))throw Error('Unexpected import '+n);return imports[n];},...globals});return module.exports;
+ vm.runInNewContext(code,{module,exports:module.exports,require:n=>{if (n === '@/constants/theme') return load('src/constants/theme.ts', {'react-native': {Platform: {select: options => options.default}}}); if(n.endsWith('.png')){assert.ok(fs.existsSync(require('node:path').resolve(require('node:path').dirname(path),n)));return n;}if(!(n in imports))throw Error('Unexpected import '+n);return imports[n];},...globals});return module.exports;
 }
 const flush=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
@@ -10,6 +10,28 @@ const jsx=(type,props)=>typeof type==='function'?type(props):({type,props});
 const nodes=v=>!v||typeof v!=='object'?[]:Array.isArray(v)?v.flatMap(nodes):[v,...nodes(v.props?.children)];
 const texts=v=>nodes(v).filter(n=>n.type==='Text').map(n=>Array.isArray(n.props.children)?n.props.children.join(''):n.props.children).join('\n');
 const button=(tree,label)=>nodes(tree).find(n=>n.type==='Pressable'&&texts(n).includes(label));
+// Native paint cannot be reproduced by this host: enforce an opaque visual layer
+// above the live input, including the gaps, rather than relying on transparent text.
+function assertOtpLayers(tree,slotPattern){
+ const flat=value=>Object.assign({},...[value].flat(Infinity).filter(Boolean));
+ const input=nodes(tree).find(n=>n.type==='TextInput'),inputStyle=flat(input.props.style);
+ const slots=nodes(tree).filter(n=>slotPattern.test(n.props?.testID||''));
+ const layer=nodes(tree).find(n=>n.type==='View'&&Array.isArray(n.props.children)&&n.props.children.length===6&&n.props.children.every(child=>slots.includes(child)));
+ const parent=nodes(tree).find(n=>Array.isArray(n.props?.children)&&n.props.children.includes(input)&&n.props.children.includes(layer));
+ assert.ok(parent,'The native input and digit layer share the same entry bounds');
+ assert.equal(flat(parent.props.style).position,'relative');
+ assert.ok(flat(layer.props.style).zIndex>inputStyle.zIndex,'Native text/selection paint must remain behind the digit layer');
+ assert.equal(flat(layer.props.style).backgroundColor,'#FFF9F2','The whole layer, including cell gaps, masks native paint');
+ assert.equal(layer.props.pointerEvents,'none','Taps/long-presses reach the real input');
+ assert.equal(layer.props.accessibilityElementsHidden,true);assert.equal(layer.props.importantForAccessibility,'no-hide-descendants');
+ assert.equal(inputStyle.position,'absolute');for(const edge of ['top','right','bottom','left'])assert.equal(inputStyle[edge],0);
+ assert.equal(inputStyle.color,'transparent');assert.notEqual(inputStyle.display,'none');assert.notEqual(inputStyle.opacity,0);
+ assert.notEqual(input.props.pointerEvents,'none');assert.notEqual(input.props.accessible,false);assert.equal(input.props.editable,true);
+ assert.ok(input.props.accessibilityLabel);assert.equal(input.props.autoComplete,'one-time-code');assert.equal(input.props.caretHidden,true);
+ for(const prop of ['selectionColor','cursorColor','selectionHandleColor','underlineColorAndroid'])assert.equal(input.props[prop],'transparent');
+ assert.equal(slots.length,6);assert.ok(slots.every(slot=>/^[0-9]?$/.test(texts(slot))),'Each cell draws at most one digit');
+ assert.equal(slots.map(texts).join(''),input.props.value,'Only digit cells present the code visually');
+}
 const native={View:'View',Text:'Text',Pressable:'Pressable',Image:'Image',ScrollView:'ScrollView',TextInput:'TextInput',StyleSheet:{create:x=>x},Alert:{alert:()=>{throw Error('Unexpected validation alert');}}};
 const shared={'react/jsx-runtime':{jsx,jsxs:jsx,Fragment:'Fragment'},'react-native':native,'@expo/vector-icons/MaterialIcons':{__esModule:true,default:'Icon'},'react-native-safe-area-context':{SafeAreaView:'SafeAreaView'}};
 // Deterministic hook host preserves slots, effect dependencies and cleanup.
@@ -25,6 +47,26 @@ function host(){
 }
 
 (async()=>{
+ // Actual shared theme, with only native font selection mocked; no new harness.
+ const {LifeFlowColors:p,DonationStatusColors:statusColors,Colors:theme}=load('src/constants/theme.ts',{'react-native':{Platform:{select:options=>options.default}}});
+ const approved={primary:'#9B1238',danger:'#B42318',success:'#15803D',pending:'#B45309',info:'#1D4ED8',neutral:'#64748B',
+   background:'#F8FAFC',surface:'#FFFFFF',text:'#0F172A',border:'#E2E8F0',selected:'#FFF1F3',
+   successSurface:'#ECFDF3',successText:'#166534',pendingSurface:'#FFF7E6',pendingText:'#92400E',dangerSurface:'#FEF3F2',
+   infoSurface:'#EFF6FF',neutralSurface:'#F1F5F9',neutralText:'#475569',revision:'#EA580C',revisionAction:'#C2410C',revisionPressed:'#9A3412'};
+ for(const [name,value] of Object.entries(approved))assert.equal(p[name],value,`Approved ${name}`);
+ const luminance=hex=>{const c=hex.slice(1).match(/../g).map(v=>parseInt(v,16)/255).map(v=>v<=0.04045?v/12.92:((v+0.055)/1.055)**2.4);return c[0]*0.2126+c[1]*0.7152+c[2]*0.0722;};
+ const contrast=(a,b)=>{const x=luminance(a),y=luminance(b);return (Math.max(x,y)+0.05)/(Math.min(x,y)+0.05);};
+ const pairs=[['text','background'],['neutral','background'],['neutral','surface'],['neutral','cream'],['primary','selected'],
+   ['neutralText','selected'],['neutralText','neutralSurface'],['successText','successSurface'],['pendingText','pendingSurface'],
+   ['danger','dangerSurface'],['info','infoSurface'],['revisionText','revisionSurface'],['neutralText','pointsSurface']];
+ for(const token of ['primary','primaryPressed','danger','dangerPressed','success','pending','revisionAction','revisionPressed','info'])pairs.push(['surface',token]);
+ for(const [foreground,background] of pairs)assert.ok(contrast(p[foreground],p[background])>=4.5,`${foreground} on ${background} meets AA text contrast`);
+ assert.ok(contrast(p.surface,p.revision)<4.5,'Bright orange is reserved for non-text accents; filled revision actions use darker orange');
+ assert.equal(statusColors.pending.surface,p.pendingSurface);assert.equal(statusColors.for_verification.text,p.pendingText);
+ assert.equal(statusColors.needs_revision.text,p.revisionText);assert.equal(statusColors.rejected.text,p.danger);assert.equal(statusColors.completed.text,p.successText);
+ assert.notEqual(statusColors.pending.text,statusColors.needs_revision.text);assert.notEqual(statusColors.needs_revision.text,statusColors.rejected.text);
+ assert.equal(theme.light.tint,p.primary);assert.notEqual(theme.light.background,theme.dark.background,'Existing dark appearance remains available');
+ console.log(`PASS: ${Object.keys(approved).length} approved mobile tokens, ${pairs.length} AA text pairs, accessible orange revision actions, distinct pending/revision/rejection/completion colors and preserved dark theme`);
  const api=load('src/services/api.ts',{}, {process:{env:{}},AbortController,setTimeout,clearTimeout});
  const requests=[],authService=load('src/services/auth.ts',{'./api':{...api,apiRequest:async(path,options)=>{requests.push({path,options});return {};}}});
  const fixture={acceptedTerms:true,acknowledgedPrivacy:true,acknowledgedPrescreening:true,firstName:'Test',middleName:'',lastName:'Donor',email:'new@example.com',mobileNumber:'09171234567',birthDate:'09/13/2004',gender:'Female',bloodType:'O+',password:'password123',confirmPassword:'password123'};
@@ -54,15 +96,79 @@ function host(){
  loginInput().props.onChangeText('09171234567');const continueLogin=button(lv(),'Continue').props.onPress;continueLogin();continueLogin();assert.equal(requested,1);assert.equal(button(lv(),'Sending...').props.disabled,true);
  requestGate.resolve({resend_after:60,expires_in:600});await flush();assert.match(texts(lv()),/Verify Your Login/);assert.equal(button(lv(),'Resend code in 60s').props.disabled,true);
  assert.equal(loginInput().props.keyboardType,'number-pad');assert.equal(loginInput().props.maxLength,6);assert.doesNotMatch(texts(lv()),/@/);
+ // Six visual slots share the existing native input and never auto-submit.
+ const loginSlots=()=>nodes(lv()).filter(n=>/^login-code-slot-\d$/.test(n.props?.testID||''));
+ const style=value=>Object.assign({},...[value].flat(Infinity).filter(Boolean));
+ const focusedSlots=()=>loginSlots().filter(n=>style(n.props.style).borderWidth===2);
+ const back=()=>nodes(lv()).find(n=>n.props?.accessibilityLabel==='Back to mobile number');
+ assert.match(texts(lv()),/Account Verification/);assert.match(texts(lv()),/Code expires in 10:00/);
+ assert.match(texts(lv()),/Your account verification is secure/);assert.ok(button(lv(),'Verify & Continue'));
+ assert.equal(loginSlots().length,6);assert.equal(nodes(lv()).filter(n=>n.type==='TextInput').length,1);
+ assert.equal(loginInput().props.autoComplete,'one-time-code');assert.equal(loginInput().props.editable,true);
+ assert.ok(loginInput().props.accessibilityHint.includes('paste'));
+ for(const platform of ['android','ios']){
+   native.Platform.OS=platform;
+   for(const value of ['', '0', '01', '012', '0123', '01234', '012345', '01234', '01x2345678']){
+     loginInput().props.onChangeText(value);assertOtpLayers(lv(),/^login-code-slot-\d$/);
+   }
+ }
+ native.Platform.OS='android';loginInput().props.onChangeText('');assert.equal(logged,0);
+ loginInput().props.onFocus();assert.equal(focusedSlots()[0].props.testID,'login-code-slot-0');
+ loginInput().props.onChangeText('1');assert.equal(texts(loginSlots()[0]),'1');assert.equal(focusedSlots()[0].props.testID,'login-code-slot-1');
+ loginInput().props.onChangeText('12');assert.equal(focusedSlots()[0].props.testID,'login-code-slot-2');
+ loginInput().props.onChangeText('1');assert.equal(loginInput().props.value,'1');assert.equal(focusedSlots()[0].props.testID,'login-code-slot-1','Backspace moves the focus indicator back');
+ loginInput().props.onChangeText('012345');assert.equal(loginSlots().map(texts).join(''),'012345');assert.equal(logged,0,'Paste/autofill does not submit');
+ loginInput().props.onSelectionChange({nativeEvent:{selection:{start:2,end:2}}});assert.equal(focusedSlots()[0].props.testID,'login-code-slot-2');
+ loginInput().props.onBlur();assert.equal(focusedSlots().length,0);
+ const scroll=nodes(lv()).find(n=>n.type==='ScrollView');assert.equal(scroll.props.keyboardShouldPersistTaps,'handled');
+ assert.equal(style(scroll.props.contentContainerStyle).flexGrow,1);assert.equal(style(scroll.props.contentContainerStyle).paddingHorizontal,20);
+ assert.equal(nodes(lv()).find(n=>n.type==='KeyboardAvoidingView').props.behavior,'height');
+ native.Platform.OS='ios';assert.equal(nodes(lv()).find(n=>n.type==='KeyboardAvoidingView').props.behavior,'padding');native.Platform.OS='android';
+ const slotStyle=style(loginSlots()[0].props.style),digit=nodes(loginSlots()[0]).find(n=>n.type==='Text');
+ assert.equal(slotStyle.flex,1);assert.equal(slotStyle.minWidth,0);assert.ok(slotStyle.minHeight>=44);
+ assert.equal(digit.props.allowFontScaling,undefined,'Font scaling remains enabled');assert.equal(digit.props.maxFontSizeMultiplier,2);
+ for(const width of [320,375])assert.ok((width-40-5*6)/6>digit.props.style.fontSize,'Six flexible cells have space for digits at narrow widths');
+ button(lv(),'Resend code in').props.onPress();assert.equal(requested,1,'Countdown also guards the handler');
  loginInput().props.onChangeText('12x');button(lv(),'Verify').props.onPress();assert.match(texts(lv()),/6-digit login code/);assert.equal(logged,0);
  for(const message of ['The login code is invalid.','The login code has expired.']){
-   loginFailure=new api.ApiError(message,422,{code:[message]});loginInput().props.onChangeText('012345');const submit=button(lv(),'Verify').props.onPress;submit();submit();await flush();assert.ok(texts(lv()).includes(message));
+   loginFailure=new api.ApiError(message,422,{code:[message]});loginInput().props.onChangeText('012345');const submit=button(lv(),'Verify').props.onPress;submit();submit();
+   assert.equal(button(lv(),'Verifying...').props.disabled,true);assert.equal(loginInput().props.editable,false);assert.equal(back().props.disabled,true);
+   back().props.onPress();assert.match(texts(lv()),/Account Verification/,'Back cannot interrupt an in-flight verification');
+   await flush();assert.ok(texts(lv()).includes(message));assert.equal(loginInput().props.value,'012345','Errors preserve the entered code');
  }
  assert.equal(logged,2);assert.equal(sessionAccepted,false);
- loginClock=60000;loginTimers.forEach(fn=>fn());requestGate=deferred();button(lv(),'Resend Code').props.onPress();requestGate.resolve({resend_after:60,expires_in:600});await flush();assert.equal(requested,2);assert.equal(loginInput().props.value,'');
- button(lv(),'Change Number').props.onPress();assert.match(texts(lv()),/Welcome to LifeFlow/);assert.equal(loginInput().props.value,'09171234567');
+ loginClock=59000;loginTimers.forEach(fn=>fn());assert.match(texts(lv()),/Code expires in 09:01/);assert.equal(button(lv(),'Resend code in 1s').props.disabled,true);
+ loginClock=60000;loginTimers.forEach(fn=>fn());requestGate=deferred();const resendLogin=button(lv(),'Resend code').props.onPress;resendLogin();resendLogin();assert.equal(requested,2);
+ assert.equal(button(lv(),'Sending...').props.disabled,true);requestGate.resolve({resend_after:17,expires_in:130});await flush();assert.equal(loginInput().props.value,'');
+ assert.match(texts(lv()),/Code expires in 02:10/);assert.equal(button(lv(),'Resend code in 17s').props.disabled,true);assert.match(texts(lv()),/New code requested/);
+ loginClock=190000;loginTimers.forEach(fn=>fn());assert.match(texts(lv()),/Code expired\. Request a new code\./);assert.equal(button(lv(),'Resend code').props.disabled,false);assert.equal(logged,2);
+ back().props.onPress();assert.match(texts(lv()),/Welcome to LifeFlow/);assert.equal(loginInput().props.value,'09171234567');assert.doesNotMatch(texts(lv()),/Code expires|Account Verification|New code requested/);assert.equal(loginRoutes.length,0,'Back returns to the number form without navigating to protected screens');
  requestGate=deferred();button(lv(),'Continue').props.onPress();requestGate.resolve({resend_after:60,expires_in:600});await flush();loginFailure=null;loginInput().props.onChangeText('012345');button(lv(),'Verify').props.onPress();await flush();assert.equal(sessionAccepted,true);
  lh.unmount();assert.equal(loginTimers.size,0);assert.equal(loginInput().props.value,'09171234567');
+ // Server/network failures preserve the input and never turn into successful verification.
+ function loginScenario(){
+   const h=host(),timers=new Set(),calls=[],routes=[];let clock=0;
+   const backend={request:async()=>({resend_after:12,expires_in:75}),verify:async()=>{}};
+   const auth={busy:false,requestLoginCode:async value=>{calls.push(['request',value]);return backend.request();},login:async(mobile,code)=>{calls.push(['verify',mobile,code]);return backend.verify();}};
+   const screen=load('src/app/(auth)/login.tsx',{...shared,react:h.react,'expo-router':{useRouter:()=>({push:route=>routes.push(route)}),useFocusEffect:h.focus},'@/contexts/auth-context':{useAuth:()=>auth},'@/services/api':api},
+     {performance:{now:()=>clock},setInterval:fn=>{timers.add(fn);return fn;},clearInterval:fn=>timers.delete(fn)});
+   const view=()=>h.render(screen.default),input=()=>nodes(view()).find(n=>n.type==='TextInput');
+   return {h,auth,backend,calls,routes,view,input,tick:value=>{clock=value;timers.forEach(fn=>fn());},start:async()=>{input().props.onChangeText('09171234567');button(view(),'Continue').props.onPress();await flush();}};
+ }
+ const retryLogin=loginScenario();await retryLogin.start();assert.match(texts(retryLogin.view()),/Code expires in 01:15/);
+ for(const failure of [new api.ApiError('Too many attempts. Please try again later.',429),new api.ApiError('Unable to connect. Please retry.'),new Error('private transport details')]){
+   retryLogin.backend.verify=async()=>{throw failure;};retryLogin.input().props.onChangeText('012345');button(retryLogin.view(),'Verify & Continue').props.onPress();await flush();
+   assert.equal(retryLogin.input().props.value,'012345');assert.equal(button(retryLogin.view(),'Verify & Continue').props.disabled,false);
+   assert.ok(nodes(retryLogin.view()).some(n=>n.props?.accessibilityRole==='alert'));assert.doesNotMatch(texts(retryLogin.view()),/private transport details/);
+ }
+ retryLogin.tick(12000);retryLogin.backend.request=async()=>{throw new api.ApiError('Please wait before requesting another code.',429);};
+ button(retryLogin.view(),'Resend code').props.onPress();await flush();assert.match(texts(retryLogin.view()),/Please wait before/);assert.equal(retryLogin.input().props.value,'012345');assert.match(texts(retryLogin.view()),/Code expires in 01:03/);
+ retryLogin.backend.request=async()=>({resend_after:9});button(retryLogin.view(),'Resend code').props.onPress();await flush();assert.match(texts(retryLogin.view()),/Use the most recent code/);assert.doesNotMatch(texts(retryLogin.view()),/Code expires in/,'No invented expiry without API data');
+ button(retryLogin.view(),'Change Number').props.onPress();assert.match(texts(retryLogin.view()),/Welcome to LifeFlow/);assert.equal(retryLogin.routes.length,0);retryLogin.h.unmount();
+ const staleLogin=loginScenario(),lateCode=deferred();staleLogin.backend.request=()=>lateCode.promise;
+ staleLogin.input().props.onChangeText('09171234567');button(staleLogin.view(),'Continue').props.onPress();staleLogin.h.unmount();lateCode.resolve({resend_after:12,expires_in:75});await flush();
+ assert.doesNotMatch(texts(staleLogin.view()),/Verify Your Login|Code expires in/,'Leaving ignores a late code request response');
+ console.log('PASS: Login Verification UI, six flexible slots/native numeric entry/paste/deletion/selection, no auto-submit, focus/errors/loading, server-based expiry/resend/unknown-duration fallback, duplicate guards, back/change-number, stale cleanup and platform keyboard/scroll configuration (mocked native boundaries)');
  // Native picker uses calendar days, preserves Cancel and rejects future selections.
  const dh=host();let pickerOptions,selected='09/13/2004';
  const picker=load('src/components/birth-date-picker.tsx',{...shared,'@/services/auth':authService,react:dh.react,'@react-native-community/datetimepicker':{__esModule:true,default:'DateTimePicker',DateTimePickerAndroid:{open:options=>{pickerOptions=options;}}}});
@@ -144,7 +250,7 @@ function host(){
  assert.ok(actionArea);assert.ok(nodes(actionArea).includes(button(actionTree,'Create Account')));
  const submit=button(view(),'Create Account').props.onPress;submit();submit();assert.equal(createCalls,1);assert.equal(accepted,false);assert.equal(payload.birthDate,'09/13/2004');assert.equal(payload.acceptedTerms,true);assert.equal(payload.acknowledgedPrivacy,true);assert.equal(payload.acknowledgedPrescreening,true);
  initial.resolve({pending_token:'pending-test',resend_after:60,expires_in:900});await flush();
- assert.match(texts(view()),/Verify your email/);assert.equal(accepted,false);assert.equal(nodes(view()).filter(n=>n.type==='TextInput').length,1);
+ assert.match(texts(view()),/Verify Your Email/);assert.equal(accepted,false);assert.equal(nodes(view()).filter(n=>n.type==='TextInput').length,1);
  const codeInput=()=>nodes(view()).find(n=>n.props?.accessibilityLabel==='6-digit code');
  codeInput().props.onChangeText('12345');button(view(),'Verify & Create Account').props.onPress();assert.equal(verifyCalls,0);
  assert.equal(button(view(),'Resend code in 60s').props.disabled,true);button(view(),'Resend code in').props.onPress();assert.equal(resendCalls,0);
@@ -152,12 +258,105 @@ function host(){
  const retry=button(view(),'Resend code').props.onPress;retry();retry();await flush();assert.equal(resendCalls,1);assert.equal(button(view(),'Resend code in 60s').props.disabled,true);
  codeInput().props.onChangeText('123456');const confirm=button(view(),'Verify & Create Account').props.onPress;confirm();confirm();assert.equal(verifyCalls,1);assert.equal(accepted,false);
  verify.reject(new api.ApiError('Wrong code',422));await flush();assert.match(texts(view()),/Wrong code/);
- button(view(),'Change email').props.onPress();assert.match(texts(view()),/Create Your Account/);assert.ok(boxes().every(b=>b.props.accessibilityState.checked));
+ button(view(),'Edit').props.onPress();assert.match(texts(view()),/Create Your Account/);assert.ok(boxes().every(b=>b.props.accessibilityState.checked));
  assert.ok(!nodes(view()).some(n=>n.props?.secureTextEntry));
  assert.equal(nodes(view()).find(n=>n.props?.placeholder==='Enter your email').props.value,'new@example.com');
  initial=deferred();button(view(),'Create Account').props.onPress();initial.resolve({pending_token:'pending-test',resend_after:60,expires_in:900});await flush();
  verify=deferred();codeInput().props.onChangeText('123456');button(view(),'Verify & Create Account').props.onPress();
  verify.resolve();await flush();assert.equal(accepted,true);
  h.unmount();assert.equal(timers.size,0);assert.ok(boxes().every(b=>!b.props.accessibilityState.checked));assert.equal(button(view(),'Create Account').props.disabled,true);
+ // Task 02: the real registration component switches between the approved form and OTP branch.
+ function registrationScenario(){
+   const h=host(),timers=new Set(),calls=[],routes=[];let clock=0;
+   const backend={request:async()=>({pending_token:'first-email-token',resend_after:23,expires_in:125}),
+     resend:async()=>({resend_after:11,expires_in:81}),verify:async()=>{}};
+   const auth={busy:false,register:async form=>{calls.push({kind:'request',form:{...form}});return backend.request();},
+     verifyRegistration:async(token,code)=>{calls.push({kind:'verify',token,code});return backend.verify();}};
+   const screen=load('src/app/(auth)/register.tsx',{...shared,react:h.react,
+     'expo-router':{useRouter:()=>({push:route=>routes.push(route),replace:route=>routes.push(route)}),useFocusEffect:h.focus},
+     '@/components/registration-legal':legal,'@/contexts/auth-context':{useAuth:()=>auth},'@/services/api':api,
+     '@/services/auth':{...authService,authApi:{resendRegistration:async token=>{calls.push({kind:'resend',token});return backend.resend();}}},
+     '@/components/birth-date-picker':{__esModule:true,default:'BirthDatePicker'}},
+     {performance:{now:()=>clock},setInterval:fn=>{timers.add(fn);return fn;},clearInterval:fn=>timers.delete(fn)});
+   const view=()=>h.render(screen.default),field=placeholder=>nodes(view()).find(n=>n.type==='TextInput'&&n.props.placeholder===placeholder);
+   const code=()=>nodes(view()).find(n=>n.props?.accessibilityLabel==='6-digit code');
+   const edit=()=>nodes(view()).find(n=>n.props?.accessibilityLabel==='Edit registration email');
+   const back=()=>nodes(view()).find(n=>n.props?.accessibilityLabel==='Back to registration');
+   const fill=()=>{
+     for(const [placeholder,value] of [['Enter your first name','Test'],['Middle initial (optional)','D'],['Enter your last name','Donor'],['Enter your email','new@example.com'],['09XXXXXXXXX','09171234567']])field(placeholder).props.onChangeText(value);
+     nodes(view()).find(n=>n.type==='BirthDatePicker').props.onChange('09/13/2004');button(view(),'Female').props.onPress();button(view(),'O+').props.onPress();
+     nodes(view()).filter(n=>n.props?.accessibilityRole==='checkbox').forEach(n=>n.props.onPress());
+   };
+   return {h,timers,calls,routes,auth,backend,view,field,code,edit,back,fill,tick:value=>{clock=value;timers.forEach(fn=>fn());},
+     start:async()=>{fill();button(view(),'Create Account').props.onPress();await flush();}};
+ }
+ const reg=registrationScenario();await reg.start();
+ const regSlots=()=>nodes(reg.view()).filter(n=>/^registration-code-slot-\d$/.test(n.props?.testID||''));
+ assert.equal(regSlots().length,6);assert.equal(nodes(reg.view()).filter(n=>n.type==='TextInput').length,1);
+ for(const copy of ['Create Account','Verify Your Email',"We've sent a 6-digit verification code to",'ne***@example.com','Enter verification code','Code expires in 02:05','Secure email verification'])assert.ok(texts(reg.view()).includes(copy),copy);
+ assert.doesNotMatch(texts(reg.view()),/new@example.com|Step\s*\d|of 3|14:32|15 minutes/);
+ assert.ok(nodes(reg.view()).find(n=>n.type==='Image'&&n.props.source.endsWith('LogoMascot.png')));
+ assert.ok(reg.edit().props.style({pressed:false}).some(s=>s?.minHeight>=44));
+ assert.equal(reg.code().props.autoComplete,'one-time-code');assert.equal(reg.code().props.keyboardType,'number-pad');assert.equal(reg.code().props.maxLength,6);
+ for(const platform of ['android','ios']){
+   native.Platform.OS=platform;
+   for(const value of ['', '0', '01', '012', '0123', '01234', '012345', '01234', '01x2345678']){
+     reg.code().props.onChangeText(value);assertOtpLayers(reg.view(),/^registration-code-slot-\d$/);
+   }
+ }
+ native.Platform.OS='ios';reg.code().props.onChangeText('');assert.equal(reg.calls.filter(c=>c.kind==='verify').length,0);
+ console.log('PASS: Both OTP screens mask native text/selection/cursor paint behind opaque touch-through digit layers; live full-size accessible inputs retain autofill/selection and six single-digit cells through typing, deletion and paste (mocked Android/iOS boundaries; device paint not simulated)');
+ reg.code().props.onFocus();assert.equal(style(regSlots()[0].props.style).borderWidth,2);
+ reg.code().props.onChangeText('1x2');assert.equal(reg.code().props.value,'12');assert.equal(style(regSlots()[2].props.style).borderWidth,2);
+ reg.code().props.onChangeText('1');assert.equal(style(regSlots()[1].props.style).borderWidth,2);
+ reg.code().props.onChangeText('012345');assert.equal(regSlots().map(texts).join(''),'012345');assert.equal(reg.calls.filter(c=>c.kind==='verify').length,0);
+ reg.code().props.onSelectionChange({nativeEvent:{selection:{start:3,end:3}}});assert.equal(style(regSlots()[3].props.style).borderWidth,2);
+ reg.code().props.onBlur();assert.ok(regSlots().every(n=>style(n.props.style).borderWidth===1));
+ const otpScroll=nodes(reg.view()).find(n=>n.type==='ScrollView');assert.equal(otpScroll.props.keyboardShouldPersistTaps,'handled');
+ assert.equal(otpScroll.props.contentContainerStyle.flexGrow,1);assert.equal(otpScroll.props.contentContainerStyle.paddingHorizontal,20);
+ for(const width of [320,375])assert.ok((width-40-30)/6>24,'Flexible slots fit narrow viewports');
+ assert.ok(regSlots().every(n=>style(n.props.style).minWidth===0&&style(n.props.style).minHeight>=44));
+ assert.equal(nodes(regSlots()[0]).find(n=>n.type==='Text').props.maxFontSizeMultiplier,2);
+ assert.equal(nodes(reg.view()).find(n=>n.type==='KeyboardAvoidingView').props.behavior,'padding');
+ native.Platform.OS='android';assert.equal(nodes(reg.view()).find(n=>n.type==='KeyboardAvoidingView').props.behavior,'height');
+ reg.tick(22000);assert.equal(button(reg.view(),'Resend code in 1s').props.disabled,true);button(reg.view(),'Resend code in').props.onPress();assert.equal(reg.calls.filter(c=>c.kind==='resend').length,0);
+ reg.tick(23000);assert.match(texts(reg.view()),/Code expires in 01:42/);
+ const resendGate=deferred();reg.backend.resend=()=>resendGate.promise;const resendNow=button(reg.view(),'Resend code').props.onPress;resendNow();resendNow();
+ assert.equal(reg.calls.filter(c=>c.kind==='resend').length,1);assert.equal(reg.calls.at(-1).token,'first-email-token');
+ assert.equal(reg.edit().props.disabled,true);reg.edit().props.onPress();assert.match(texts(reg.view()),/Verify Your Email/);
+ resendGate.reject(new api.ApiError('Please wait before resending.',429));await flush();assert.equal(reg.code().props.value,'012345');assert.match(texts(reg.view()),/Please wait before resending/);assert.match(texts(reg.view()),/Code expires in 01:42/);
+ reg.backend.resend=async()=>({resend_after:11,expires_in:81});button(reg.view(),'Resend code').props.onPress();await flush();
+ assert.equal(reg.code().props.value,'');assert.match(texts(reg.view()),/Code expires in 01:21/);assert.match(texts(reg.view()),/New code requested/);assert.equal(button(reg.view(),'Resend code in 11s').props.disabled,true);
+ reg.code().props.onChangeText('123');button(reg.view(),'Verify & Create Account').props.onPress();assert.equal(reg.calls.filter(c=>c.kind==='verify').length,0);
+ for(const failure of [new api.ApiError('Invalid code.',422),new api.ApiError('Code expired.',422),new api.ApiError('Too many attempts.',429),new Error('private network diagnostics')]){
+   const verifyGate=deferred();reg.backend.verify=()=>verifyGate.promise;reg.code().props.onChangeText('012345');const verifyNow=button(reg.view(),'Verify & Create Account').props.onPress;
+   const beforeCalls=reg.calls.filter(c=>c.kind==='verify').length;verifyNow();verifyNow();assert.equal(reg.calls.filter(c=>c.kind==='verify').length,beforeCalls+1);
+   assert.equal(reg.code().props.editable,false);assert.equal(reg.back().props.disabled,true);reg.back().props.onPress();assert.match(texts(reg.view()),/Verify Your Email/);
+   verifyGate.reject(failure);await flush();assert.equal(reg.code().props.value,'012345');assert.doesNotMatch(texts(reg.view()),/private network diagnostics/);assert.ok(nodes(reg.view()).some(n=>n.props?.accessibilityRole==='alert'));
+ }
+ // Same details resume the same pending token and elapsed timers, without another email request.
+ reg.tick(30000);reg.edit().props.onPress();assert.match(texts(reg.view()),/Create Your Account/);assert.equal(reg.field('Enter your email').props.autoFocus,true);
+ for(const [placeholder,value] of [['Enter your first name','Test'],['Middle initial (optional)','D'],['Enter your last name','Donor'],['Enter your email','new@example.com'],['09XXXXXXXXX','09171234567']])assert.equal(reg.field(placeholder).props.value,value);
+ assert.equal(nodes(reg.view()).find(n=>n.type==='BirthDatePicker').props.value,'09/13/2004');assert.ok(nodes(reg.view()).filter(n=>n.props?.accessibilityRole==='checkbox').every(n=>n.props.accessibilityState.checked));
+ button(reg.view(),'Create Account').props.onPress();await flush();assert.equal(reg.calls.filter(c=>c.kind==='request').length,1);assert.equal(reg.code().props.value,'');assert.match(texts(reg.view()),/Code expires in 01:14/);assert.equal(button(reg.view(),'Resend code in 4s').props.disabled,true);
+ reg.back().props.onPress();reg.field('Enter your email').props.onChangeText('updated@example.org');
+ reg.backend.request=async()=>{throw new api.ApiError('Unable to send. Please retry.');};button(reg.view(),'Create Account').props.onPress();await flush();
+ assert.match(texts(reg.view()),/Create Your Account/);assert.equal(reg.field('Enter your email').props.value,'updated@example.org');assert.match(texts(reg.view()),/Unable to send/);assert.doesNotMatch(texts(reg.view()),/ne\*\*\*@example.com/);
+ reg.backend.request=async()=>({pending_token:'updated-email-token',resend_after:8,expires_in:94});const newRequest=button(reg.view(),'Create Account').props.onPress;const requestsBefore=reg.calls.filter(c=>c.kind==='request').length;
+ newRequest();newRequest();await flush();assert.equal(reg.calls.filter(c=>c.kind==='request').length,requestsBefore+1);assert.equal(reg.calls.at(-1).form.email,'updated@example.org');
+ assert.match(texts(reg.view()),/up\*\*\*@example.org/);assert.doesNotMatch(texts(reg.view()),/new@example.com|ne\*\*\*@example.com|updated@example.org/);assert.equal(reg.code().props.value,'');assert.match(texts(reg.view()),/Code expires in 01:34/);assert.equal(button(reg.view(),'Resend code in 8s').props.disabled,true);
+ reg.backend.verify=async()=>{throw new api.ApiError('Try again.',422);};reg.code().props.onChangeText('123456');button(reg.view(),'Verify & Create Account').props.onPress();await flush();assert.equal(reg.calls.at(-1).token,'updated-email-token');
+ reg.tick(38000);reg.backend.resend=async()=>({resend_after:5,expires_in:60});button(reg.view(),'Resend code').props.onPress();await flush();assert.equal(reg.calls.at(-1).token,'updated-email-token');
+ reg.edit().props.onPress();reg.field('Enter your email').props.onChangeText('a@'+('long'.repeat(30))+'.test');reg.backend.request=async()=>({pending_token:'third-email-token',resend_after:4,expires_in:44});button(reg.view(),'Create Account').props.onPress();await flush();
+ assert.ok(texts(reg.view()).includes('a***@'+('long'.repeat(30))+'.test'));assert.ok(nodes(reg.view()).some(n=>n.type==='Text'&&n.props.style?.flexShrink===1));
+ reg.edit().props.onPress();reg.field('Enter your email').props.onChangeText('final@example.net');reg.backend.request=async()=>({pending_token:'final-email-token',resend_after:3});button(reg.view(),'Create Account').props.onPress();await flush();assert.match(texts(reg.view()),/fi\*\*\*@example.net/);assert.match(texts(reg.view()),/Use the most recent code/);assert.doesNotMatch(texts(reg.view()),/Code expires in/);
+ reg.backend.verify=async()=>{};reg.code().props.onChangeText('012345');button(reg.view(),'Verify & Create Account').props.onPress();await flush();assert.equal(reg.calls.at(-1).token,'final-email-token');assert.equal(reg.routes.length,0,'Session acceptance remains owned by the existing auth provider');
+ reg.h.unmount();assert.equal(reg.timers.size,0);assert.match(texts(reg.view()),/Create Your Account/);assert.ok(nodes(reg.view()).filter(n=>n.props?.accessibilityRole==='checkbox').every(n=>!n.props.accessibilityState.checked));
+ const lateReg=registrationScenario(),lateChallenge=deferred();lateReg.backend.request=()=>lateChallenge.promise;lateReg.fill();button(lateReg.view(),'Create Account').props.onPress();lateReg.h.unmount();lateChallenge.resolve({pending_token:'late-token',resend_after:1,expires_in:2});await flush();assert.doesNotMatch(texts(lateReg.view()),/Verify Your Email/);
+ const expiredReg=registrationScenario();await expiredReg.start();expiredReg.tick(125000);assert.match(texts(expiredReg.view()),/Code expired\. Request a new code\./);assert.equal(button(expiredReg.view(),'Resend code').props.disabled,false);expiredReg.h.unmount();
+ const changedDetails=registrationScenario();await changedDetails.start();changedDetails.edit().props.onPress();changedDetails.field('Enter your first name').props.onChangeText('Updated');
+ changedDetails.backend.request=async()=>({pending_token:'changed-details-token',resend_after:23,expires_in:125});button(changedDetails.view(),'Create Account').props.onPress();await flush();
+ assert.equal(changedDetails.calls.filter(c=>c.kind==='request').length,2,'Changed details must not complete registration from the old payload');assert.equal(changedDetails.calls.at(-1).form.firstName,'Updated');changedDetails.code().props.onChangeText('012345');button(changedDetails.view(),'Verify & Create Account').props.onPress();await flush();assert.equal(changedDetails.calls.at(-1).token,'changed-details-token');changedDetails.h.unmount();
+ console.log('PASS: Register OTP-only layout/real masked email/no steps, numeric slots/paste/deletion/focus, narrow-width and platform keyboard configuration, authoritative timers/resend/expiry, validation/errors/loading/duplicate guards; Edit preserves the original form, unchanged details reuse the challenge, changed/repeated/long emails and other changed fields use fresh tokens and timers, and leaving discards stale responses (mocked native boundaries)');
  console.log('PASS: registration contract, native/web date picker, Cancel/future dates, retained design/fields, inline consent, Cancel/I Agree, gating/reset, verification-only session, validation, resend, duplicate taps, errors and change-email cleanup');
 })().catch(error=>{console.error(error);process.exitCode=1;});

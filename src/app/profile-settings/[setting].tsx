@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { ProfileMascotSelector } from '@/components/profile-mascot-selector';
 import { ChangeEmailForm } from '@/components/account-settings-forms';
 import { useAuth } from '@/contexts/auth-context';
@@ -18,6 +19,6 @@ export default function ProfileSettingScreen() {
   </ProfileSettingsPage>;
 }
 const styles = StyleSheet.create({
-  card: { padding: 24, alignItems: 'center', gap: 20, borderWidth: 1, borderColor: '#F0E2DC', borderRadius: 18, backgroundColor: '#FFFFFF' },
-  message: { color: '#766A68', fontSize: 15, lineHeight: 23, textAlign: 'center' },
+  card: { padding: 24, alignItems: 'center', gap: 20, borderWidth: 1, borderColor: PALETTE.border, borderRadius: 18, backgroundColor: PALETTE.surface },
+  message: { color: PALETTE.neutral, fontSize: 15, lineHeight: 23, textAlign: 'center' },
 });

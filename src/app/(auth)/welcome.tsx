@@ -1,14 +1,15 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { useRouter } from 'expo-router';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const COLORS = {
-  background: '#FFF9F2',
-  brand: '#D93A3A',
-  brandPressed: '#BE2F2F',
-  text: '#372E2E',
-  muted: '#766A68',
-  white: '#FFFFFF',
+  background: PALETTE.cream,
+  brand: PALETTE.primary,
+  brandPressed: PALETTE.primaryPressed,
+  text: PALETTE.text,
+  muted: PALETTE.neutral,
+  white: PALETTE.surface,
 };
 
 export default function WelcomeScreen() {
@@ -151,7 +152,7 @@ mascot: {
     width: 210,
     height: 210,
     borderRadius: 105,
-    backgroundColor: '#FDECE6',
+    backgroundColor: PALETTE.decorativeTop,
   },
   decorativeCircleBottom: {
     position: 'absolute',
@@ -160,6 +161,6 @@ mascot: {
     width: 240,
     height: 240,
     borderRadius: 120,
-    backgroundColor: '#FCE9E2',
+    backgroundColor: PALETTE.decorativeBottom,
   },
 });

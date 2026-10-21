@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { StyleSheet, View } from 'react-native';
 
 export function TabSkeleton({ variant = 'cards' }: { variant?: 'cards' | 'profile' | 'summary' }) {
@@ -9,4 +10,4 @@ export function TabSkeleton({ variant = 'cards' }: { variant?: 'cards' | 'profil
     </View>
   </View>;
 }
-const styles = StyleSheet.create({ container: { padding: 16, width: '100%' }, block: { borderRadius: 12, backgroundColor: '#EEE5DF', marginBottom: 14 }, card: { borderRadius: 18, backgroundColor: '#FFFFFF', padding: 18, marginBottom: 14 } });
+const styles = StyleSheet.create({ container: { padding: 16, width: '100%' }, block: { borderRadius: 12, backgroundColor: PALETTE.border, marginBottom: 14 }, card: { borderRadius: 18, backgroundColor: PALETTE.surface, padding: 18, marginBottom: 14 } });

@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
 import { NotificationBell } from '@/components/notification-bell';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
@@ -10,18 +11,18 @@ import { type ImageSourcePropType, Image, Pressable, ScrollView, StyleSheet, Tex
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const COLORS = {
-  background: '#FFF9F2',
-  brand: '#D93A3A',
-  brandPressed: '#BE2F2F',
-  text: '#372E2E',
-  muted: '#766A68',
-  border: '#F0E2DC',
-  white: '#FFFFFF',
-  softGreen: '#E2F5E9',
-  green: '#287A47',
-  softRed: '#FDE8E8',
-  softAmber: '#FFF1D6',
-  amber: '#A76500',
+  background: PALETTE.cream,
+  brand: PALETTE.primary,
+  brandPressed: PALETTE.primaryPressed,
+  text: PALETTE.text,
+  muted: PALETTE.neutral,
+  border: PALETTE.border,
+  white: PALETTE.surface,
+  softGreen: PALETTE.successSurface,
+  green: PALETTE.successText,
+  softRed: PALETTE.selected,
+  softAmber: PALETTE.pendingSurface,
+  amber: PALETTE.pendingText,
 };
 
 type EligibilityStatus = 'ELIGIBLE' | 'NOT_ELIGIBLE' | 'EVALUATION_REQUIRED' | 'NEEDS_SCREENING';
@@ -48,8 +49,8 @@ const STATUS_PRESENTATION: Record<
     title: 'Not Eligible for Now',
     description: 'Based on your latest self-assessment, one or more factors suggest that you should wait before donating.',
     icon: 'cancel',
-    background: COLORS.softRed,
-    color: COLORS.brand,
+    background: PALETTE.dangerSurface,
+    color: PALETTE.danger,
   },
   NEEDS_SCREENING: {
     title: 'Not Eligible for Now',
@@ -327,7 +328,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 17,
-    shadowColor: '#4C403E',
+    shadowColor: PALETTE.text,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
@@ -352,7 +353,7 @@ const styles = StyleSheet.create({
   adviceCard: {
     padding: 17,
     borderWidth: 1,
-    borderColor: '#F0CBC6',
+    borderColor: PALETTE.border,
     borderRadius: 19,
     backgroundColor: COLORS.softRed,
   },
@@ -399,7 +400,7 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     backgroundColor: COLORS.softRed,
   },
-  disclaimerText: { flex: 1, color: COLORS.muted, fontSize: 12, lineHeight: 18 },
+  disclaimerText: { flex: 1, color: PALETTE.neutralText, fontSize: 12, lineHeight: 18 },
   updateSection: { gap: 8 },
   updateHelper: { color: COLORS.muted, fontSize: 13, lineHeight: 19, textAlign: 'center' },
   updateButton: {

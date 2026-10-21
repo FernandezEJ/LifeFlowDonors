@@ -6,7 +6,8 @@ import { apiRequest } from './api';
 // ========================================
 export type PointSummary = { current_balance: number; total_earned: number; total_spent: number };
 export type PointTransaction = { id: number; type: 'donation_reward' | 'reward_redemption'; amount: number; description: string; created_at: string };
-export type Reward = { id: number; name: string; description: string | null; points_cost: number; stock_quantity: number; voucher_value: string | null; image_url: string | null };
+export type RewardVariant = { id: number; size: string; enabled: boolean; stock_quantity: number };
+export type Reward = { category?: string; size?: string | null; variants?: RewardVariant[]; id: number; name: string; description: string | null; points_cost: number; stock_quantity: number; voucher_value: string | null; image_url: string | null };
 export type VoucherStatus = 'available' | 'active' | 'redeemed' | 'expired';
 export type ClaimStatus = 'available' | 'pending_claim' | 'claimed' | 'legacy';
 export type Voucher = { id: number; reward_id: number; reward: Reward; points_spent: number; status: VoucherStatus; claim_status: ClaimStatus; claim_code: string | null; claimed_at: string | null; is_legacy: boolean; legacy_status: VoucherStatus | null; activated_at: string | null; expires_at: string | null; redeemed_at: string | null; created_at: string };
@@ -18,7 +19,7 @@ export const rewardsApi = {
   summary: (token: string) => apiRequest<PointSummary>('/points/summary', { token }),
   transactions: (token: string, page = 1, type?: PointTransaction['type']) => apiRequest<Page<PointTransaction>>('/points/transactions?page=' + page + (type ? '&type=' + type : ''), { token }),
   rewards: (token: string) => apiRequest<Catalogue>('/rewards', { token }),
-  redeem: (token: string, id: number, requestKey: string) => apiRequest<RedemptionResponse>('/rewards/' + id + '/redeem', { token, method: 'POST', body: { request_key: requestKey } }),
+  redeem: (token: string, id: number, requestKey: string, variantId?: number) => apiRequest<RedemptionResponse>('/rewards/' + id + '/redeem', { token, method: 'POST', body: { request_key: requestKey, ...(variantId != null ? { variant_id: variantId } : {}) } }),
   vouchers: (token: string, page = 1, status?: VoucherStatus) => apiRequest<Page<Voucher> & { server_time: string }>('/vouchers?page=' + page + (status ? '&status=' + status : ''), { token }),
   voucher: (token: string, id: number) => apiRequest<VoucherResponse>('/vouchers/' + id, { token }),
   activate: (token: string, id: number) => apiRequest<VoucherResponse>('/vouchers/' + id + '/activate', { token, method: 'POST', body: {} }),
@@ -54,3 +55,11 @@ export function voucherDate(value: string | null): string {
   return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) + ' at ' + date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
 export const ACTIVATION_MESSAGE = 'Activate your one-time claim code? No additional points will be spent. Your code has no expiration and staff will confirm your claim when you receive the item.';
+
+export const REWARD_CATEGORIES = ['merchandise', 'apparel', 'vouchers'];
+export function rewardLabel(reward: Reward): string {
+  return reward.name + (reward.size ? ' — Size ' + reward.size : '');
+}
+export function hasVoucherValue(reward: Reward): boolean {
+  return !['merchandise', 'apparel'].includes(reward.category ?? '') && reward.voucher_value != null && Number(reward.voucher_value) > 0;
+}

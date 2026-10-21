@@ -7,7 +7,7 @@ function load(file, imports, globals = {}) {
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
-  vm.runInNewContext(code, { module, exports: module.exports, require: name => {
+  vm.runInNewContext(code, { module, exports: module.exports, require: name => {if (name === '@/constants/theme') return load('src/constants/theme.ts', {'react-native': {Platform: {select: options => options.default}}});
     if (!(name in imports)) throw new Error(`Unexpected import: ${name}`);
     return imports[name];
   }, ...globals });
@@ -92,11 +92,14 @@ async function screenChecks(reconciled=false, cancelled=false, needsRevision=fal
   let now = 0, timerId = 0;
   let uploads = 0; let submissions = 0; let finishSave; let finishFailure; let cancellations=0;
   let failSave = false;
-  const pending = { id: 34, status: finalStatus || (needsRevision?'needs_revision':'pending'), revision_reason:'Please upload a clearer image.', rejection_reason:'Invalid certificate.', proof_original_name:'IMG_20260928_114941.jpg', opportunity: { title: 'Drive', points_reward: 300 } };
+  const pending = { id: 34, status: finalStatus || (needsRevision?'needs_revision':'pending'), revision_reason:'Please upload a clearer image.', rejection_reason:'Invalid certificate.', proof_original_name:finalStatus||needsRevision?'IMG_20260928_114941.jpg':null, opportunity: { title: 'Drive', points_reward: 300 } };
   let selected = 0;
-  const jsx = (type, props) => ({ type, props });
+  const jsx = (type, props) => typeof type==='function'?type(props):({ type, props });
+  const native={ Alert: { alert() {} }, Image: 'Image', Modal: 'Modal', Pressable: 'Pressable', ScrollView: 'ScrollView', StyleSheet: { create: x => x }, Text: 'Text', View: 'View' };
+  const presentation=load('src/services/announcement-presentation.ts',{'./api':{API_BASE_URL:'http://api.test/api'}},{URL});
+  const body=load('src/components/announcement-body.tsx',{'react/jsx-runtime':{jsx,jsxs:jsx},'react-native':native});
   const screen = load('src/app/activity/[id].tsx', {
-    '@expo/vector-icons/MaterialIcons': { default: 'Icon' },
+    '@expo/vector-icons/MaterialIcons': { __esModule:true, default: 'Icon' },
     'expo-router': { Stack: { Screen: 'Screen' }, useRouter: () => ({ back() {} }), useLocalSearchParams: () => ({ id: '34' }), useFocusEffect: fn => { if (!focused) { focused = true; focus = fn; } } },
     react: {
       useCallback: fn => fn,
@@ -104,14 +107,16 @@ async function screenChecks(reconciled=false, cancelled=false, needsRevision=fal
       useRef: initial => { const i = cursor++; return slots[i] ||= { current: initial }; },
     },
     'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
-    'react-native': { Alert: { alert() {} }, Image: 'Image', Modal: 'Modal', Pressable: 'Pressable', ScrollView: 'ScrollView', StyleSheet: { create: x => x }, Text: 'Text', View: 'View' },
+    'react-native': native,
+    '@/components/announcement-body':body,
+    '@/services/announcement-presentation':presentation,
     'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
     '@/components/confirmation-modal': { ConfirmationModal: 'ConfirmationModal' },
     '@/contexts/auth-context': { useAuth: () => ({ user: { id: 12 }, donationDetail: async () => ({ participation: pending }), cancelParticipation: async () => {cancellations++;return {participation:{...pending,status:'cancelled'}};}, submitProof: async () => {
       submissions++; if (failSave) return new Promise((_resolve,reject)=>{finishFailure=()=>{if(reconciled)pending.status='for_verification';reject(new Error('Offline'));};});
       return new Promise(resolve => { finishSave = () => resolve({ participation: { ...pending, status: 'for_verification' } }); });
     } }) },
-    '@/services/api': { errorMessage: error => error.message },
+    '@/services/api': { ApiError,errorMessage: error => error.message },
     '@/services/donations': { DONATION_STATUS: { pending: 'Pending', for_verification: 'For Verification', needs_revision: 'Needs Revision', completed: 'Completed', rejected: 'Rejected', cancelled: 'Cancelled' } },
     '@/services/proof-storage': { pickProofFile: async () => { selected++; return cancelled ? null : {}; }, prepareProofUpload: () => { uploads++; return {}; }, reportProofFailure() {} },
     '../../../assets/images/LogoMascot.png': 'LogoMascot',
@@ -195,10 +200,11 @@ async function screenChecks(reconciled=false, cancelled=false, needsRevision=fal
     }else assert.ok(!nodes(render()).some(n=>n.props?.children==='Reason:'));
     assert.equal(button(render(),'Upload Proof'),undefined);
     assert.equal(button(render(),'Upload New Proof'),undefined);
+    assert.equal(button(render(),'Re-upload Proof'),undefined);
     assert.equal(submissions,0);
     return;
   }
-  const upload = button(render(), needsRevision?'Upload New Proof':'Upload Proof');
+  const upload = button(render(), needsRevision?'Re-upload Proof':'Upload Proof');
   if(needsRevision){assert.ok(nodes(render()).some(n=>n.props?.children==='Please upload a clearer image.'));assert.equal(button(render(),'Cancel Participation'),undefined);}
   failSave = true;
   upload.props.onPress(); upload.props.onPress(); await flush();
@@ -250,6 +256,112 @@ async function screenChecks(reconciled=false, cancelled=false, needsRevision=fal
   assert.equal(button(render(), 'Cancel Participation'), undefined);
   console.log(`PASS: ${needsRevision?'resubmission':'upload'} ${duration} ms success/failure, 800 ms minimum only, immediate request, duplicate lock, cached retry, static mascot`);
 }
+async function activityUiChecks(){
+ const jsx=(type,props)=>typeof type==='function'?type(props):({type,props});
+ const native={Image:'Image',Modal:'Modal',Pressable:'Pressable',ScrollView:'ScrollView',Text:'Text',View:'View',StyleSheet:{create:x=>x}};
+ const runtime={jsx,jsxs:jsx,Fragment:'Fragment'};
+ const body=load('src/components/announcement-body.tsx',{'react/jsx-runtime':runtime,'react-native':native});
+ const presentation=load('src/services/announcement-presentation.ts',{'./api':{API_BASE_URL:'http://api.test/api'}},{URL});
+ const rich={version:1,blocks:[{type:'paragraph',content:[{text:'Real formatted event',bold:true,italic:true}]},
+   {type:'bullet_list',items:[[{text:'Bring identification'}]]},{type:'ordered_list',items:[[{text:'First instruction'}],[{text:'Second instruction'}]]}]};
+ const fixture={id:34,status:'pending',proof_uploaded_at:null,proof_original_name:null,proof_size:null,verified_at:null,
+   revision_reason:null,rejection_reason:null,opportunity:{title:'A real event title',event_date:'2026-10-20',start_time:'09:30:00',end_time:'15:00:00',
+     location:'Actual venue',description:'Plain event details',description_document:rich,points_reward:9999}};
+ const nodes=tree=>!tree||typeof tree!=='object'?[]:Array.isArray(tree)?tree.flatMap(nodes):[tree,...nodes(tree.props?.children)];
+ const texts=tree=>nodes(tree).filter(n=>n.type==='Text').map(n=>Array.isArray(n.props.children)?n.props.children.join(''):n.props.children).join('\n');
+ const button=(tree,label)=>nodes(tree).find(n=>n.type==='Pressable'&&texts(n)===label);
+ const appearance=value=>Object.assign({},...[value].flat(Infinity).filter(Boolean));
+ async function screen({record=fixture,id='34',failure=null,response=null}={}){
+   const slots=[],queue=[],calls=[],routes=[];let cursor=0,focusFn,focusCleanup,current=record,requestFailure=failure,customResponse=response;
+   const react={
+     useState:initial=>{const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];},
+     useRef:initial=>{const i=cursor++;return slots[i]||={current:initial};},
+     useCallback:(fn,deps)=>{const i=cursor++,old=slots[i];if(!old||deps.some((value,index)=>value!==old.deps[index]))slots[i]={deps,fn};return slots[i].fn;},
+   };
+   const auth={user:{id:12},donationDetail:async key=>{calls.push(['load',key]);if(requestFailure)throw requestFailure;return customResponse||{participation:current};},
+     cancelParticipation:async key=>{calls.push(['cancel',key]);throw new ApiError('Cancellation failed. Please retry.',409);},
+     submitProof:async()=>{calls.push(['proof']);throw Error('Unexpected proof submission');}};
+   const module=load('src/app/activity/[id].tsx',{
+     '@expo/vector-icons/MaterialIcons':{__esModule:true,default:'Icon'},'react/jsx-runtime':runtime,react,'react-native':native,
+     'react-native-safe-area-context':{SafeAreaView:'SafeAreaView'},'@/components/confirmation-modal':{ConfirmationModal:'ConfirmationModal'},
+     '@/components/announcement-body':body,'@/services/announcement-presentation':presentation,
+     'expo-router':{Stack:{Screen:'Screen'},useRouter:()=>({back:()=>routes.push('back')}),useLocalSearchParams:()=>({id}),
+       useFocusEffect:fn=>{if(fn!==focusFn){focusFn=fn;queue.push(()=>{focusCleanup?.();focusCleanup=fn();});}}},
+     '@/contexts/auth-context':{useAuth:()=>auth},'@/services/api':{ApiError,errorMessage:e=>e.message},
+     '@/services/donations':{DONATION_STATUS:{pending:'Pending',for_verification:'For Verification',needs_revision:'Needs Revision',completed:'Completed',rejected:'Rejected',cancelled:'Cancelled'}},
+     '@/services/proof-storage':{pickProofFile:async()=>{throw new ApiError('Choose a JPEG, PNG, or PDF proof.');},prepareProofUpload:()=>{throw Error('No valid file selected');},reportProofFailure(){}},
+     '../../../assets/images/LogoMascot.png':'LogoMascot',
+   },{setTimeout,clearTimeout});
+   const view=()=>{cursor=0;const tree=module.default();while(queue.length)queue.shift()();return tree;};
+   const initial=view();const flush=()=>new Promise(resolve=>setImmediate(resolve));await flush();
+   return {view,initial,auth,calls,routes,flush,close:()=>focusCleanup?.(),update:value=>{current=value;customResponse=null;requestFailure=null;},
+     refocus:()=>{focusCleanup?.();focusCleanup=focusFn();}};
+ }
+ for(const status of ['pending','for_verification','needs_revision','completed','rejected','cancelled','unknown-status','__proto__']){
+   const record={...fixture,status,revision_reason:status==='needs_revision'?'Please upload a clearer certificate.':null,
+     rejection_reason:status==='rejected'?'This certificate cannot be accepted.':null,
+     proof_uploaded_at:status==='pending'?null:'2026-10-20T05:00:00Z',proof_original_name:status==='pending'?null:'PRIVATE_proof_name.jpg',
+     verified_at:status==='completed'?'2026-10-21T02:30:00Z':null};
+   const s=await screen({record}),tree=s.view(),copy=texts(tree),all=nodes(tree);
+   const known=!['unknown-status','__proto__'].includes(status);
+   assert.equal(all.find(n=>n.type==='SafeAreaView').props.style.backgroundColor,'#FFF9F2');
+   assert.deepEqual(Array.from(all.find(n=>n.type==='SafeAreaView').props.edges),['top','right','bottom','left']);
+   const banner=all.find(n=>n.props?.accessibilityLabel?.startsWith('Status: '));assert.ok(banner);assert.notEqual(appearance(banner.props.style).backgroundColor,'#000000');
+   const palette=load('src/constants/theme.ts',{'react-native':{Platform:{select:options=>options.default}}});
+   if(known){
+     assert.equal(appearance(banner.props.style).backgroundColor,palette.DonationStatusColors[status].surface);
+     assert.equal(all.find(n=>n.type==='Icon'&&n.props.name===({pending:'schedule',for_verification:'hourglass-empty',needs_revision:'error-outline',completed:'check-circle',rejected:'cancel',cancelled:'block'})[status]).props.color,palette.DonationStatusColors[status].text);
+   }
+   if(status==='needs_revision'){
+     const upload=button(tree,'Re-upload Proof');
+     assert.equal(appearance(upload.props.style({pressed:false})).backgroundColor,palette.LifeFlowColors.revisionAction);
+     assert.equal(appearance(upload.props.style({pressed:true})).backgroundColor,palette.LifeFlowColors.revisionPressed);
+   }
+   assert.equal(appearance(banner.props.style).borderRadius,20);assert.ok(nodes(banner).some(n=>n.type==='Icon'));
+   const has=label=>Boolean(button(tree,label));
+   assert.equal(has('Upload Proof'),status==='pending');assert.equal(has('Re-upload Proof'),status==='needs_revision');assert.equal(has('Cancel Participation'),status==='pending');
+   if(!known){assert.match(copy,/Status Unavailable/);assert.ok(has('Refresh activity'));}
+   if(status==='for_verification'){assert.match(copy,/awaiting Admin review/);assert.match(copy,/Proof submitted: October 20, 2026/);assert.doesNotMatch(copy,/Please upload your donation proof/);}
+   if(status==='completed'){assert.match(copy,/Donation Verified\./);assert.match(copy,/Verified on: October 21, 2026/);}
+   if(['needs_revision','rejected'].includes(status))assert.ok(copy.includes(record[status==='needs_revision'?'revision_reason':'rejection_reason']));
+   assert.doesNotMatch(copy,/PRIVATE_proof_name|9999|09:30:00|15:00:00/,'Private filename and estimated per-record awards are not displayed');
+   for(const label of ['A real event title','October 20, 2026','9:30 AM – 3:00 PM','Actual venue','About the Event','Reward Points','300','50','500','Bring identification','1.','2.'])assert.ok(copy.includes(label),`${status}: ${label}`);
+   const richText=all.find(n=>n.type==='Text'&&n.props.children==='Real formatted event');assert.equal(appearance(richText.props.style).fontWeight,'700');assert.equal(appearance(richText.props.style).fontStyle,'italic');
+   const labels=all.filter(n=>n.type==='Text'&&n.props.accessibilityRole==='header').map(n=>n.props.children);
+   assert.ok(labels.indexOf('Activity Details')<labels.indexOf('A real event title'));assert.ok(labels.indexOf('About the Event')<labels.indexOf('Reward Points'));
+   assert.ok(copy.indexOf('Reward Points')<copy.indexOf(status==='needs_revision'?'Update Donation Proof':status==='pending'?'Upload Donation Proof':known?status==='completed'?'Donation Verified.':status==='rejected'?'Rejected.':status==='cancelled'?'Cancelled.':'For Verification.':'Activity Status Unavailable.'));
+   assert.equal(all.filter(n=>n.type==='ScrollView').length,1);assert.ok(all.find(n=>n.type==='ScrollView').props.contentContainerStyle.paddingBottom>=32);
+   for(const width of [320,375]){
+     const bannerStyle=appearance(banner.props.style),contentStyle=all.find(n=>n.type==='View'&&appearance(n.props.style).borderLeftWidth===1).props.style;
+     assert.equal(appearance(contentStyle).minWidth,0);assert.ok(width-32-2*bannerStyle.padding-48-bannerStyle.gap-14>100,'Banner text has flexible room at phone widths');
+   }
+   assert.ok(!all.some(n=>n.type==='Text'&&(n.props.numberOfLines||n.props.allowFontScaling===false)),'Dynamic content keeps font scaling and is not truncated');
+   const back=all.find(n=>n.props?.accessibilityLabel==='Go back');assert.ok(appearance(back.props.style({pressed:false})).minHeight>=44);back.props.onPress();assert.equal(s.routes.pop(),'back');
+   if(status==='pending'){
+     button(tree,'Upload Proof').props.onPress();await s.flush();assert.match(texts(s.view()),/Choose a JPEG, PNG, or PDF proof/);assert.equal(s.calls.filter(c=>c[0]==='proof').length,0);assert.equal(nodes(s.view()).find(n=>n.type==='Modal'),undefined);
+     button(s.view(),'Cancel Participation').props.onPress();const confirm=nodes(s.view()).find(n=>n.type==='ConfirmationModal').props.onPrimary;confirm();confirm();await s.flush();assert.equal(s.calls.filter(c=>c[0]==='cancel').length,1);assert.match(texts(s.view()),/Cancellation failed/);assert.ok(button(s.view(),'Cancel Participation'));
+   }
+   s.close();
+ }
+ let s=await screen({record:{...fixture,proof_uploaded_at:'2026-10-20T05:00:00Z',proof_original_name:'existing.jpg'}});
+ assert.match(texts(s.view()),/Donation proof is already on file/);assert.ok(button(s.view(),'Upload New Proof'));assert.ok(button(s.view(),'Cancel Participation'));
+ assert.doesNotMatch(texts(s.view()),/Please upload your donation proof/);s.close();
+ for(const opportunity of [null,{}, {title:'',location:null,event_date:'2026-02-30',description:''}]){
+   s=await screen({record:{...fixture,opportunity}});for(const label of ['Donation activity','Location to be announced','Date to be announced','Event details are no longer available.'])assert.ok(texts(s.view()).includes(label));s.close();
+ }
+ s=await screen({record:{...fixture,source_type:'red_cross_dagupan',opportunity:null}});assert.match(texts(s.view()),/Confirm arrangements with the chapter/);s.close();
+ s=await screen({record:{...fixture,opportunity:{...fixture.opportunity,title:'Long activity title '.repeat(30),description:'Full description. '.repeat(200),description_document:{version:2}}}});
+ assert.ok(nodes(s.view()).some(n=>n.type==='Text'&&n.props.children==='Full description. '.repeat(200)));s.close();
+ for(const response of [{},{participation:null}]){s=await screen({response});assert.match(texts(s.view()),/This activity is unavailable/);assert.equal(button(s.view(),'Upload Proof'),undefined);s.close();}
+ for(const id of [null,'bad-id','0']){s=await screen({id});assert.match(texts(s.view()),/This activity is unavailable/);assert.equal(s.calls.length,0);s.close();}
+ for(const failure of [new ApiError('Not found',404),new ApiError('Offline. Please retry.')]){
+   s=await screen({failure});assert.ok(nodes(s.view()).some(n=>n.props?.accessibilityRole==='alert'));assert.equal(button(s.view(),'Upload Proof'),undefined);
+   s.update(fixture);button(s.view(),'Refresh activity').props.onPress();s.view();await s.flush();assert.ok(button(s.view(),'Upload Proof'));s.close();
+ }
+ s=await screen();s.update({...fixture,status:'for_verification',proof_uploaded_at:'2026-10-20T05:00:00Z'});s.refocus();await s.flush();assert.match(texts(s.view()),/For Verification/);assert.equal(button(s.view(),'Upload Proof'),undefined);s.close();
+ const late={};late.promise=new Promise(resolve=>{late.resolve=resolve;});s=await screen({response:late.promise});assert.ok(nodes(s.initial).some(n=>n.props?.accessibilityLabel==='Loading activity'));s.close();late.resolve({participation:{...fixture,status:'completed'}});await s.flush();assert.doesNotMatch(texts(s.view()),/Donation Verified/);
+ console.log('PASS: Task 04 light card hierarchy; all six statuses plus unknown/prototype-safe read-only fallbacks; pending with/without proof; real rich-text/date/location/reasons; no fabricated awards/private filenames; cancellation/invalid file/errors/empty/missing event/retry/refocus/stale load; narrow-screen/large-text configuration (mocked native boundaries)');
+}
 main().then(async()=>{
   for(const duration of [0,200,799,800,1500,5000]){
     await screenChecks(false,false,false,null,duration);
@@ -259,6 +371,7 @@ main().then(async()=>{
   for(const status of ['for_verification','completed','rejected','cancelled'])await screenChecks(false,false,false,status);
   for(const phase of ['network','timer'])await screenChecks(false,false,false,null,200,phase);
   await screenChecks(false,false,false,null,200,null,true);
+  await activityUiChecks();
   console.log('PASS: reconciliation, picker cancellation, read-only statuses and display-timer cleanup on leaving');
 })
   .catch(error => { console.error(error); process.exitCode = 1; });

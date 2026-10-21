@@ -13,7 +13,7 @@ function load(path, imports, globals = {}) {
   const code = ts.transpileModule(fs.readFileSync(path, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
-  vm.runInNewContext(code, { module, exports: module.exports, require: name => {
+  vm.runInNewContext(code, { module, exports: module.exports, require: name => {if (name === '@/constants/theme') return load('src/constants/theme.ts', {'react-native': {Platform: {select: options => options.default}}});
     if (name === '@/components/tab-skeleton') return { TabSkeleton: 'TabSkeleton' };
     if (!(name in imports)) throw Error('Unexpected import: ' + name);
     return imports[name];
@@ -170,6 +170,61 @@ async function catalogueChecks() {
   screen.close();
 }
 
+async function apparelChecks() {
+  await service.rewardsApi.redeem('test-session', 3, 'retry-size', 31);
+  assert.deepEqual(JSON.parse(JSON.stringify(sent.body)), { request_key: 'retry-size', variant_id: 31 });
+  const apparel = { id: 3, name: 'LifeFlow shirt', category: 'apparel', stock_quantity: 23, points_cost: 100, voucher_value: null,
+    variants: [{ id: 31, size: 'S', enabled: true, stock_quantity: 5 }, { id: 32, size: 'M', enabled: true, stock_quantity: 10 },
+      { id: 33, size: 'L', enabled: true, stock_quantity: 8 }, { id: 34, size: 'XL', enabled: true, stock_quantity: 0 },
+      { id: 35, size: '2XL', enabled: false, stock_quantity: 0 }] };
+  let pending = null, fail = true;
+  const calls = [];
+  const auth = { user: { id: 1 }, rewards: async () => ({ data: [apparel, { ...apparel, id: 4, name: 'Pin', category: 'merchandise', variants: [] }], request_key: 'size-key' }),
+    pointsSummary: async () => ({ current_balance: 500 }),
+    redeemReward: async (...args) => { calls.push(args); if (fail) throw new ApiError('Lost response'); return { summary: { current_balance: 400 }, reward: { ...apparel, stock_quantity: 22 } }; } };
+  const storage = { read: async () => pending, save: async (_, value) => { pending = value; }, clear: async () => { pending = null; } };
+  const make = () => harness('src/components/reward-catalogue.tsx', auth, { '@/services/redemption-storage': { redemptionStorage: storage } }, {}, 'RewardCatalogue');
+  let screen = make(), tree = await screen.settle();
+  const size = label => nodes(screen.render()).find(node => node.props?.accessibilityLabel?.startsWith('Size ' + label + ','));
+  assert.equal(size('2XL'), undefined);
+  assert.equal(size('XL').props.disabled, true);
+  assert.equal(button(tree, 'Redeem').props.disabled, true);
+  size('S').props.onPress();
+  tree = screen.render();
+  assert.equal(button(tree, 'Redeem').props.disabled, false);
+  button(tree, 'Redeem').props.onPress();
+  const modal = () => nodes(screen.render()).find(n => n.type === 'ConfirmationModal').props;
+  assert.match(modal().message, /Size S/);
+  assert.doesNotMatch(modal().message, /voucher value|denomination/i);
+  const confirm = modal().onPrimary; confirm(); confirm(); await screen.settle();
+  assert.equal(calls.length, 1); assert.equal(pending.variantId, 31);
+  screen.close(); screen = make(); tree = await screen.settle();
+  fail = false; button(tree, 'Retry pending redemption').props.onPress(); await screen.settle();
+  assert.equal(calls.length, 2); assert.deepEqual(calls[0], calls[1]);
+  assert.equal(pending, null);
+  screen.close(); screen = make(); tree = await screen.settle();
+  nodes(tree).find(node => node.props?.accessibilityRole === 'radio' && text(node) === 'Merchandise').props.onPress();
+  tree = screen.render(); assert.doesNotMatch(text(tree), /LifeFlow shirt/); assert.match(text(tree), /Pin/);
+  screen.close();
+  const saved = record({ reward: { ...apparel, name: 'Saved shirt', size: 'S' } });
+  const history = harness('src/app/my-vouchers.tsx', { user: { id: 1 }, vouchers: async () => ({ data: [saved], current_page: 1, last_page: 1 }) });
+  const historyTree = await history.settle();
+  const list = nodes(historyTree).find(node => node.type === 'FlatList').props;
+  const card = list.renderItem({ item: saved });
+  assert.match(text(card), /Saved shirt.*Size S/);
+  assert.doesNotMatch(text(card), /Voucher Value/);
+  history.close();
+  const detail = harness('src/app/voucher.tsx', { user: { id: 1 }, voucher: async () => ({ voucher: saved }), activateVoucher: async () => {} });
+  assert.match(text(await detail.settle()), /Saved shirt.*Size S/);
+  detail.close();
+  assert.equal(service.rewardLabel({ name: 'Saved shirt', size: 'S' }), 'Saved shirt — Size S');
+  assert.equal(service.rewardLabel({ name: 'Legacy voucher' }), 'Legacy voucher');
+  assert.equal(service.hasVoucherValue({ category: 'merchandise', voucher_value: '100' }), false);
+  assert.equal(service.hasVoucherValue({ category: 'apparel', voucher_value: '100' }), false);
+  assert.equal(service.hasVoucherValue({ category: 'vouchers', voucher_value: null }), false);
+  assert.equal(service.hasVoucherValue({ category: 'vouchers', voucher_value: '100' }), true);
+}
+
 async function pointsNavigationChecks() {
   let summaryCalls = 0, catalogueCalls = 0, finish;
   const auth = {
@@ -253,6 +308,10 @@ async function historyChecks() {
   assert.equal(list().data.length, 4);
   for (const [item, label] of [[records[0], 'Activate Claim Code'], [records[1], 'View Claim Code'], [records[2], 'View Details'], [legacy, 'View Details']]) {
     assert.ok(button(list().renderItem({ item }), label));
+    const rendered=list().renderItem({item});
+    const badge=nodes(rendered).find(n=>n.type==='Text'&&n.props.children===service.voucherStatusLabel(item));
+    const foreground=Object.assign({},...[badge.props.style].flat(Infinity).filter(Boolean)).color;
+    assert.equal(foreground,item.claim_status==='claimed'?'#166534':item.claim_status==='pending_claim'?'#92400E':'#475569','Owned reward badges use real server claim semantics');
   }
   assert.doesNotMatch(text(list().renderItem({ item: legacy })), /Claimed|View Claim Code/);
   button(list().renderItem({ item: records[0] }), 'Activate Claim Code').props.onPress();
@@ -355,7 +414,7 @@ async function voucherChecks() {
   const readsBeforeInvalid = reads;
   for (const id of ['invalid', '0', '-1', '1.5', '9007199254740992', undefined]) {
     const invalid = harness('src/app/voucher.tsx', auth, {}, {}, 'default', { id });
-    assert.match(text(await invalid.settle()), /Voucher not found/); assert.equal(reads, readsBeforeInvalid); invalid.close();
+    assert.match(text(await invalid.settle()), /Reward not found/); assert.equal(reads, readsBeforeInvalid); invalid.close();
   }
   current = pendingClaim(); auth.voucher = async () => { throw new ApiError('Your session has expired. Please log in again.', 401); };
   const expiredSession = harness('src/app/voucher.tsx', auth); tree = await expiredSession.settle();
@@ -365,8 +424,77 @@ async function voucherChecks() {
   finishRead(response()); await flush(); assert.doesNotMatch(text(unmounted.render()), /LFW-/);
 }
 
+async function categoryFilterChecks() {
+  const rows = [
+    { id: 1, name: 'Merchandise pin', category: 'merchandise' },
+    { id: 2, name: 'Apparel shirt', category: 'apparel', variants: [{ id: 21, size: 'M', enabled: true, stock_quantity: 2 }] },
+    { id: 3, name: 'LifeFlow voucher', category: 'vouchers', voucher_value: '100' },
+    { id: 4, name: 'Legacy grocery reward', category: 'grocery' },
+    { id: 5, name: 'Legacy medicine reward', category: 'medicine' },
+    { id: 6, name: 'Legacy uncategorized reward', category: null },
+  ].map(row => ({ stock_quantity: 2, points_cost: 100, image_url: null, ...row }));
+  const original = JSON.stringify(rows); let catalogueCalls = 0, summaryCalls = 0, finishPurchase;
+  const auth = { user: { id: 1 }, rewards: async () => { catalogueCalls++; return { data: rows, request_key: 'category-request' }; },
+    pointsSummary: async () => { summaryCalls++; return { current_balance: 500 }; },
+    redeemReward: () => new Promise(resolve => { finishPurchase = resolve; }) };
+  const storage = { read: async () => null, save: async () => {}, clear: async () => {} };
+  const host = harness('src/components/reward-catalogue.tsx', auth, { '@/services/redemption-storage': { redemptionStorage: storage } }, { showBalance: true }, 'RewardCatalogue');
+  let tree = await host.settle();
+  const group = () => nodes(host.render()).find(n => n.props?.accessibilityLabel === 'Reward category');
+  const choices = () => nodes(group()).filter(n => n.props?.accessibilityRole === 'radio');
+  const select = label => choices().find(n => text(n) === label).props.onPress();
+  const selected = () => choices().filter(n => n.props.accessibilityState.selected).map(text);
+  const appearance = value => Object.assign({}, ...[value].flat(Infinity).filter(Boolean));
+  const assertChoices = () => assert.deepEqual(choices().map(text), ['All Categories', 'Merchandise', 'Apparel', 'Vouchers']);
+  assertChoices(); assert.deepEqual(selected(), ['All Categories']);
+  assert.equal(group().type, 'ScrollView'); assert.equal(group().props.horizontal, true); assert.equal(group().props.showsHorizontalScrollIndicator, false);
+  assert.equal(appearance(group().props.contentContainerStyle).flexWrap, undefined, 'Filter stays in one horizontal scrolling row');
+  for (const row of rows) assert.ok(text(tree).includes(row.name));
+  const donations = load('src/services/donations.ts', { './api': { apiRequest: async () => ({}) } });
+  const activity = harness('src/app/(tabs)/activity.tsx', { donationHistory: async () => ({ data: [], current_page: 1, last_page: 1, total: 0 }) }, { '@/services/donations': donations });
+  const activityTree = await activity.settle();
+  const activityFilter = nodes(nodes(activityTree).find(n => n.type === 'FlatList').props.ListHeaderComponent).find(n => n.type === 'ScrollView');
+  const activityChips = nodes(activityFilter).filter(n => n.type === 'Pressable');
+  for (const index of [0, 1]) {
+    assert.deepEqual(appearance(choices()[index].props.style), appearance(activityChips[index].props.style), 'Chip styles directly match Activity');
+    const label = nodes(choices()[index]).find(n => n.type === 'Text'), activityLabel = nodes(activityChips[index]).find(n => n.type === 'Text');
+    assert.deepEqual(appearance(label.props.style), appearance(activityLabel.props.style), 'Selected/unselected typography matches Activity');
+  }
+  for (const key of ['gap', 'paddingRight']) assert.equal(group().props.contentContainerStyle[key], activityFilter.props.contentContainerStyle[key]);
+  activity.close();
+  for (const [label, id] of [['Merchandise', 1], ['Apparel', 2], ['Vouchers', 3]]) {
+    select(label); tree = host.render(); assert.deepEqual(selected(), [label]); assertChoices();
+    for (const row of rows) assert.equal(text(tree).includes(row.name), row.id === id, 'Category filters only available catalogue rows');
+  }
+  assert.equal(catalogueCalls, 1); assert.equal(summaryCalls, 1, 'Category changes make no new API requests');
+  select('All Categories'); tree = host.render(); for (const row of rows) assert.ok(text(tree).includes(row.name));
+  assert.equal(JSON.stringify(rows), original, 'Legacy categories/data are never normalized or mutated');
+  for (const width of [320, 375]) {
+    assert.ok(width - 40 > 0); assert.equal(group().props.horizontal, true);
+    for (const choice of choices()) {
+      const style = appearance(choice.props.style); assert.equal(style.borderRadius, 20);
+      assert.ok(style.minHeight + choice.props.hitSlop.top + choice.props.hitSlop.bottom >= 44);
+      const label = nodes(choice).find(n => n.type === 'Text'); assert.equal(label.props.allowFontScaling, undefined); assert.equal(label.props.numberOfLines, undefined);
+    }
+  }
+  select('Apparel'); auth.rewards = async () => { catalogueCalls++; return { data: [rows[0], rows[3]], request_key: 'empty-category' }; };
+  tree = await host.settle(); assert.deepEqual(selected(), ['Apparel']); assertChoices(); assert.match(text(tree), /No rewards are available/);
+  auth.rewards = async () => { catalogueCalls++; throw new ApiError('Catalogue unavailable'); };
+  tree = await host.settle(); assert.deepEqual(selected(), ['Apparel']); assertChoices(); assert.match(text(tree), /Catalogue unavailable/);
+  auth.rewards = async () => { catalogueCalls++; return { data: rows, request_key: 'retry-category' }; };
+  button(tree, 'Retry').props.onPress(); tree = await host.settle(); assert.deepEqual(selected(), ['Apparel']); assert.match(text(tree), /Apparel shirt/);
+  select('Merchandise'); tree = host.render(); button(tree, 'Redeem').props.onPress();
+  const confirmation = nodes(host.render()).find(n => n.type === 'ConfirmationModal').props; confirmation.onPrimary(); confirmation.onPrimary(); await flush();
+  assert.ok(choices().every(n => n.props.disabled && n.props.accessibilityState.disabled), 'Filter stays disabled during purchase');
+  finishPurchase({ summary: { current_balance: 400 }, reward: { ...rows[0], stock_quantity: 1 } }); tree = await host.settle();
+  assert.equal(host.routes.pop(), '/my-vouchers'); assert.match(text(tree), /400/); assert.deepEqual(selected(), ['Merchandise']); assertChoices();
+  host.close();
+  console.log('Redeem filter checks passed: exact four choices/Activity horizontal chip styles, selected/accessibility states, legacy rewards under All, local switching without requests, narrow-width/font configuration, preserved selection on refresh/error/retry, and purchase/My Rewards flow (mocked native boundaries).');
+}
+
 (async () => {
-  await serviceChecks(); await catalogueChecks(); await pointsNavigationChecks(); await polishChecks(); await historyChecks(); await voucherChecks();
+  await serviceChecks(); await catalogueChecks(); await apparelChecks(); await pointsNavigationChecks(); await polishChecks(); await historyChecks(); await voucherChecks();
+  await categoryFilterChecks();
   assert.equal(fs.existsSync('src/services/mock-voucher-store.ts'), false);
   console.log('Points/rewards/voucher client checks passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
@@ -19,7 +20,7 @@ export function PasswordField({ label, value, onChange, disabled }: { label: str
         secureTextEntry={!visible} autoCapitalize="none" autoCorrect={false} maxLength={128} style={[styles.input, { flex: 1 }]} />
       <Pressable accessibilityRole="button" accessibilityLabel={`${visible ? 'Hide' : 'Show'} ${label.toLowerCase()}`}
         onPress={() => setVisible(current => !current)} style={styles.visibility}>
-        <MaterialIcons name={visible ? 'visibility-off' : 'visibility'} size={22} color="#766A68" />
+        <MaterialIcons name={visible ? 'visibility-off' : 'visibility'} size={22} color={PALETTE.neutral} />
       </Pressable>
     </View>
   </View>;
@@ -32,7 +33,7 @@ function Action({ title, onPress, disabled = false }: { title: string; onPress: 
 }
 function Success({ message }: { message: string }) {
   const router = useRouter();
-  return <View style={styles.form}><Text accessibilityRole="alert" style={styles.label}>{message}</Text>
+  return <View style={styles.form}><Text accessibilityRole="alert" style={[styles.label,{color:PALETTE.successText}]}>{message}</Text>
     <Action title="Back to Profile Settings" onPress={() => router.replace('/profile-settings')} /></View>;
 }
 
@@ -165,12 +166,12 @@ export function ChangePasswordForm() {
   </View>;
 }
 const styles = StyleSheet.create({
-  form: { gap: 18 }, field: { gap: 8 }, label: { color: '#372E2E', fontSize: 15, fontWeight: '700' },
-  copy: { color: '#766A68', fontSize: 13, lineHeight: 20 },
-  input: { minHeight: 52, borderWidth: 1, borderColor: '#E8DDD6', backgroundColor: '#FFFFFF', borderRadius: 12, padding: 12, color: '#372E2E', fontSize: 16 },
+  form: { gap: 18 }, field: { gap: 8 }, label: { color: PALETTE.text, fontSize: 15, fontWeight: '700' },
+  copy: { color: PALETTE.neutral, fontSize: 13, lineHeight: 20 },
+  input: { minHeight: 52, borderWidth: 1, borderColor: PALETTE.border, backgroundColor: PALETTE.surface, borderRadius: 12, padding: 12, color: PALETTE.text, fontSize: 16 },
   passwordRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   visibility: { minWidth: 44, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
-  button: { minHeight: 50, alignItems: 'center', justifyContent: 'center', borderRadius: 14, padding: 12, backgroundColor: '#D93A3A' },
-  buttonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700', textAlign: 'center' },
-  error: { color: '#B42318', fontSize: 13, lineHeight: 20 },
+  button: { minHeight: 50, alignItems: 'center', justifyContent: 'center', borderRadius: 14, padding: 12, backgroundColor: PALETTE.primary },
+  buttonText: { color: PALETTE.surface, fontSize: 14, fontWeight: '700', textAlign: 'center' },
+  error: { color: PALETTE.danger, fontSize: 13, lineHeight: 20 },
 });

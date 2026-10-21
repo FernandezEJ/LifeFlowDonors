@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
 import { ConfirmationModal } from '@/components/confirmation-modal';
 import { useTabLeave } from '@/contexts/tab-leave-context';
@@ -7,7 +8,7 @@ import { NotificationBell } from '@/components/notification-bell';
 import { type DonationSummary } from '@/services/donations';
 import { useAuth } from '@/contexts/auth-context';
 import { errorMessage } from '@/services/api';
-import { formErrors, formatMiddleInitial, toProfileForm, type ProfileForm } from '@/services/auth';
+import { formErrors, formatDonorName, formatMiddleInitial, toProfileForm, type ProfileForm } from '@/services/auth';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'react';
@@ -15,16 +16,16 @@ import { ActivityIndicator, Alert, BackHandler, Image, Pressable, ScrollView, St
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const COLORS = {
-  background: '#FFF9F2',
-  brand: '#D93A3A',
-  brandPressed: '#BE2F2F',
-  text: '#372E2E',
-  muted: '#766A68',
-  border: '#F0E2DC',
-  white: '#FFFFFF',
-  softRed: '#FDE8E8',
-  locked: '#B6ACA8',
-  lockedBackground: '#EEE9E6',
+  background: PALETTE.cream,
+  brand: PALETTE.primary,
+  brandPressed: PALETTE.primaryPressed,
+  text: PALETTE.text,
+  muted: PALETTE.neutral,
+  border: PALETTE.border,
+  white: PALETTE.surface,
+  softRed: PALETTE.selected,
+  locked: PALETTE.text,
+  lockedBackground: PALETTE.neutralSurface,
 };
 
 type MaterialIconName = ComponentProps<typeof MaterialIcons>['name'];
@@ -94,7 +95,7 @@ export default function ProfileScreen() {
   const [saved, setSaved] = useState(false);
   const fetching = useRef(false);
   const saving = useRef(false);
-  const fullName = user && profile ? [profile.first_name, formatMiddleInitial(profile.middle_name), profile.last_name].filter(Boolean).join(' ') : user?.name || '';
+  const fullName = formatDonorName(user && profile ? [profile.first_name, formatMiddleInitial(profile.middle_name), profile.last_name].filter(Boolean).join(' ') : user?.name);
   const personal = user && profile ? toProfileForm(user, profile) : null;
 
   useFocusEffect(useCallback(() => {
@@ -271,7 +272,7 @@ export default function ProfileScreen() {
                       ]}>
                       {achievement.title}
                     </Text>
-                    <Text style={styles.achievementRequirement}>
+                    <Text style={[styles.achievementRequirement,!unlocked && {color:PALETTE.text}]}>
                       {achievement.requiredDonations}{' '}
                       {achievement.requiredDonations === 1 ? 'Donation' : 'Donations'}
                     </Text>
@@ -284,7 +285,7 @@ export default function ProfileScreen() {
                       <Text
                         style={[
                           styles.achievementStatusText,
-                          { color: unlocked ? achievement.color : COLORS.locked },
+                          { color: unlocked ? PALETTE.neutralText : COLORS.locked },
                         ]}>
                         {unlocked ? 'Unlocked' : 'Locked'}
                       </Text>
@@ -311,7 +312,7 @@ export default function ProfileScreen() {
                 <Text style={styles.editButtonText}>Edit Profile</Text>
               </Pressable> : null}
             </View>
-            {loading ? <><ActivityIndicator color={COLORS.brand} /><Text>Loading profile...</Text></> : null}
+            {loading ? <><ActivityIndicator color={COLORS.brand} /><Text style={{color:PALETTE.text}}>Loading profile...</Text></> : null}
             {requestError ? <Text accessibilityRole="alert" style={styles.feedbackError}>{requestError}</Text> : null}
             {!loading && requestError && !draft ? <Pressable onPress={retryProfile}><Text style={styles.editButtonText}>Retry profile</Text></Pressable> : null}
             {saved ? <Text accessibilityRole="alert" style={styles.achievementNote}>Profile saved.</Text> : null}
@@ -419,7 +420,7 @@ export default function ProfileScreen() {
 // ========================================
 const styles = StyleSheet.create({
   editInput: { borderWidth: 1, borderColor: COLORS.border, borderRadius: 8, padding: 8, minHeight: 44 },
-  feedbackError: { color: COLORS.brand, fontSize: 13 },
+  feedbackError: { color: PALETTE.danger, fontSize: 13 },
   safeArea: { flex: 1, backgroundColor: 'transparent' },
   fixedHeader: {
     zIndex: 10,
@@ -473,7 +474,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.white,
     borderRadius: 56,
     backgroundColor: COLORS.softRed,
-    shadowColor: '#8B3028',
+    shadowColor: PALETTE.primaryPressed,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
     shadowRadius: 8,
@@ -515,7 +516,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 14,
     borderWidth: 1,
-    borderColor: '#F0CBC6',
+    borderColor: PALETTE.border,
     borderRadius: 21,
     backgroundColor: COLORS.softRed,
   },
@@ -537,7 +538,7 @@ const styles = StyleSheet.create({
     gap: 11,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#F0CBC6',
+    borderColor: PALETTE.border,
     borderRadius: 18,
     backgroundColor: COLORS.softRed,
   },
@@ -549,7 +550,7 @@ const styles = StyleSheet.create({
     borderRadius: 15,
   },
   currentMedalContent: { flex: 1 },
-  currentMedalLabel: { color: COLORS.muted, fontSize: 11, fontWeight: '600' },
+  currentMedalLabel: { color: PALETTE.neutralText, fontSize: 11, fontWeight: '600' },
   currentMedalTitle: { marginTop: 2, color: COLORS.text, fontSize: 16, fontWeight: '800' },
   achievementList: { gap: 10, paddingRight: 4 },
   achievementCard: {
@@ -571,7 +572,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
   },
   achievementTitle: { marginTop: 9, color: COLORS.text, fontSize: 13, fontWeight: '800', textAlign: 'center' },
-  achievementTitleLocked: { color: COLORS.muted },
+  achievementTitleLocked: { color: PALETTE.text },
   achievementRequirement: { marginTop: 4, color: COLORS.muted, fontSize: 10, fontWeight: '600' },
   achievementStatus: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 5 },
   achievementStatusText: { fontSize: 10, fontWeight: '700' },
@@ -622,7 +623,7 @@ const styles = StyleSheet.create({
     gap: 11,
     paddingHorizontal: 15,
   },
-  accountRowPressed: { backgroundColor: '#FFF5F2' },
+  accountRowPressed: { backgroundColor: PALETTE.selected },
   accountSeparator: { height: 1, marginLeft: 64, backgroundColor: COLORS.border },
   accountIcon: {
     width: 38,
@@ -630,7 +631,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 12,
-    backgroundColor: '#F5F0ED',
+    backgroundColor: PALETTE.neutralSurface,
   },
   accountText: { flex: 1, color: COLORS.text, fontSize: 14, fontWeight: '700' },
   logoutIcon: {

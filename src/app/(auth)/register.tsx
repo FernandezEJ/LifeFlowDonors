@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
 import { errorMessage } from '@/services/api';
 import { RegistrationLegal, PRESCREENING_ACKNOWLEDGEMENT } from '@/components/registration-legal';
@@ -7,6 +8,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -19,16 +21,16 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const COLORS = {
-  background: '#FFF9F2',
-  brand: '#D93A3A',
-  brandPressed: '#BE2F2F',
-  text: '#372E2E',
-  muted: '#766A68',
-  border: '#E8DDD6',
-  inputBackground: '#FFFFFF',
-  error: '#C92A2A',
-  selectedBackground: '#FDE7E3',
-  white: '#FFFFFF',
+  background: PALETTE.cream,
+  brand: PALETTE.primary,
+  brandPressed: PALETTE.primaryPressed,
+  text: PALETTE.text,
+  muted: PALETTE.neutral,
+  border: PALETTE.border,
+  inputBackground: PALETTE.surface,
+  error: PALETTE.danger,
+  selectedBackground: PALETTE.selected,
+  white: PALETTE.surface,
 };
 
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] as const;
@@ -109,24 +111,42 @@ export default function RegisterScreen() {
   const [code, setCode] = useState('');
   const [working, setWorking] = useState(false);
   const [resendSeconds, setResendSeconds] = useState(0);
+  const [editingEmail, setEditingEmail] = useState(false);
+  const [expiresIn, setExpiresIn] = useState<number | null>(null);
+  const [codeFocused, setCodeFocused] = useState(false);
+  const [activeDigit, setActiveDigit] = useState(0);
+  const [resent, setResent] = useState(false);
+  const [pendingForm, setPendingForm] = useState<FormState | null>(null);
+  const expiryDeadline = useRef<number | null>(null);
   const lock = useRef(false), generation = useRef(0), resendDeadline = useRef(0);
   const busy = authBusy || working;
   useFocusEffect(useCallback(() => () => {
     generation.current++; lock.current = false; setWorking(false);
     setPending(null); setCode(''); setLegalDocument(null);
+    setPendingForm(null); expiryDeadline.current = null; resendDeadline.current = 0;
+    setEditingEmail(false); setExpiresIn(null); setResendSeconds(0); setCodeFocused(false); setResent(false);
     setForm(current => ({ ...current, acceptedTerms: false, acknowledgedPrivacy: false, acknowledgedPrescreening: false }));
   }, []));
   useEffect(() => {
-    const timer = setInterval(() => setResendSeconds(Math.max(0, Math.ceil((resendDeadline.current - performance.now()) / 1000))), 1000);
+    const timer = setInterval(() => {
+      setResendSeconds(Math.max(0, Math.ceil((resendDeadline.current - performance.now()) / 1000)));
+      if (expiryDeadline.current !== null) setExpiresIn(Math.max(0, Math.ceil((expiryDeadline.current - performance.now()) / 1000)));
+    }, 1000);
     return () => clearInterval(timer);
   }, []);
-  const startResendWait = () => { resendDeadline.current = performance.now() + 60000; setResendSeconds(60); };
+  const startTimers = (response: { resend_after: number; expires_in: number }) => {
+    // Retain the existing resend guard if a response lacks timing information.
+    const wait = Number.isFinite(response.resend_after) && response.resend_after >= 0 ? Math.ceil(response.resend_after) : 60;
+    resendDeadline.current = performance.now() + wait * 1000; setResendSeconds(wait);
+    const expiry = Number.isFinite(response.expires_in) && response.expires_in >= 0 ? Math.ceil(response.expires_in) : null;
+    expiryDeadline.current = expiry === null ? null : performance.now() + expiry * 1000; setExpiresIn(expiry);
+  };
   const changeEmail = () => {
-    if (lock.current) return;
-    generation.current++; setPending(null); setCode(''); setRequestError(''); setErrors({});
+    if (lock.current || authBusy) return;
+    generation.current++; setEditingEmail(true); setCode(''); setCodeFocused(false); setResent(false); setRequestError(''); setErrors({});
   };
   const verify = async () => {
-    if (lock.current || !pending) return;
+    if (lock.current || authBusy || !pending || editingEmail) return;
     if (!/^\d{6}$/.test(code)) { setRequestError('Enter the 6-digit code.'); return; }
     lock.current = true; setWorking(true); setRequestError('');
     const request = generation.current;
@@ -136,10 +156,13 @@ export default function RegisterScreen() {
     } finally { if (request === generation.current) { lock.current = false; setWorking(false); } }
   };
   const resend = async () => {
-    if (lock.current || !pending || performance.now() < resendDeadline.current) return;
+    if (lock.current || authBusy || !pending || editingEmail || performance.now() < resendDeadline.current) return;
     lock.current = true; setWorking(true); setRequestError('');
     const request = generation.current;
-    try { await authApi.resendRegistration(pending); if (request === generation.current) { setCode(''); startResendWait(); } }
+    try {
+      const response = await authApi.resendRegistration(pending);
+      if (request === generation.current) { setCode(''); setActiveDigit(0); setResent(true); startTimers(response); }
+    }
     catch (error) { if (request === generation.current) setRequestError(errorMessage(error)); }
     finally { if (request === generation.current) { lock.current = false; setWorking(false); } }
   };
@@ -214,12 +237,17 @@ export default function RegisterScreen() {
     if (busy || lock.current) return;
     const validation = formValidation(); setErrors(validation);
     if (Object.keys(validation).length) return;
+    // Returning from Edit without changing the submitted details needs no new email.
+    if (pending && pendingForm && (Object.keys(form) as (keyof FormState)[]).every(field => form[field] === pendingForm[field])) {
+      setEditingEmail(false); setCode(''); setActiveDigit(0); setRequestError(''); return;
+    }
     lock.current = true; setWorking(true); setRequestError('');
     const request = generation.current;
     try {
       const response = await register(form);
       if (request !== generation.current) return;
-      setPending(response.pending_token); setCode(''); startResendWait();
+      setPendingForm({ ...form });
+      setPending(response.pending_token); setEditingEmail(false); setCode(''); setActiveDigit(0); setResent(false); startTimers(response);
     } catch (error) {
       if (request === generation.current) { setErrors(formErrors(error)); setRequestError(errorMessage(error)); }
     } finally { if (request === generation.current) { lock.current = false; setWorking(false); } }
@@ -227,33 +255,78 @@ export default function RegisterScreen() {
 
   const canCreate = Object.keys(formValidation()).length === 0;
 
-  if (pending) return <SafeAreaView style={styles.safeArea}>
+  const verificationEmail = pendingForm?.email.trim() ?? '';
+  const emailAt = verificationEmail.lastIndexOf('@');
+  const localPart = Array.from(verificationEmail.slice(0, emailAt));
+  const maskedEmail = localPart.slice(0, Math.min(2, Math.max(1, localPart.length - 1))).join('') + '***' + verificationEmail.slice(emailAt);
+
+  if (pending && !editingEmail) return <SafeAreaView style={styles.safeArea}>
     <View style={styles.decorativeCircle} />
+    <View style={styles.otpTopBar}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Back to registration" disabled={busy} onPress={changeEmail}
+        accessibilityState={{ disabled: busy }} style={({ pressed }) => [styles.otpBack, (busy || pressed) && styles.otpDimmed]}>
+        <MaterialIcons name="arrow-back" color={COLORS.text} size={24} />
+      </Pressable>
+      <Text accessibilityRole="header" style={styles.otpTopTitle}>Create Account</Text>
+      <View style={styles.otpTopSpacer} />
+    </View>
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.keyboardView}>
-      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={styles.otpScrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
-          <View style={styles.header}>
-            <Text style={styles.title}>Verify your email</Text>
-            <Text style={styles.subtitle}>We sent a 6-digit verification code to your email.</Text>
+          <View style={styles.otpHeader}>
+            <Image accessibilityLabel="LifeFlow mascot" resizeMode="contain" source={require('../../../assets/images/LogoMascot.png')} style={styles.otpMascot} />
+            <Text accessibilityRole="header" style={styles.otpTitle}>Verify Your Email</Text>
+            <Text style={styles.otpSubtitle}>We&apos;ve sent a 6-digit verification code to</Text>
+            <View style={styles.otpEmailRow}>
+              <Text style={styles.otpEmail}>{maskedEmail}</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Edit registration email" disabled={busy} onPress={changeEmail}
+                accessibilityState={{ disabled: busy }} style={({ pressed }) => [styles.otpEdit, (busy || pressed) && styles.otpDimmed]}>
+                <Text style={styles.otpLink}>Edit</Text>
+              </Pressable>
+            </View>
           </View>
           <View style={styles.form}>
-            <FormField label="6-digit code">
-              <TextInput accessibilityLabel="6-digit code" keyboardType="number-pad" autoComplete="one-time-code"
-                maxLength={6} editable={!busy} value={code} onChangeText={setCode} style={styles.input} />
+            <FormField label="Enter verification code">
+              <View style={styles.otpEntry}>
+                {/* Opaque, touch-through slots cover native text without hiding the interactive input. */}
+                <View style={styles.otpSlots} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                  {Array.from({ length: 6 }, (_, index) => <View key={index} testID={`registration-code-slot-${index}`}
+                    style={[styles.otpSlot, requestError ? styles.inputError : null, codeFocused && activeDigit === index && styles.otpSlotFocused]}>
+                    <Text maxFontSizeMultiplier={2} style={styles.otpDigit}>{code[index] || ''}</Text>
+                  </View>)}
+                </View>
+                <TextInput accessibilityLabel="6-digit code" accessibilityHint="Enter six digits or paste the full email verification code."
+                  keyboardType="number-pad" autoComplete="one-time-code" autoCorrect={false} autoCapitalize="none"
+                  maxLength={6} editable={!busy} value={code} caretHidden underlineColorAndroid="transparent"
+                  selectionColor="transparent" cursorColor="transparent" selectionHandleColor="transparent"
+                  onChangeText={value => {
+                    const digits = value.replace(/[^0-9]/g, '').slice(0, 6);
+                    setCode(digits); setActiveDigit(Math.min(digits.length, 5));
+                  }} onFocus={() => { setCodeFocused(true); setActiveDigit(Math.min(code.length, 5)); }} onBlur={() => setCodeFocused(false)}
+                  onSelectionChange={event => setActiveDigit(Math.min(event.nativeEvent.selection.start, 5))}
+                  style={styles.otpInput} />
+              </View>
             </FormField>
-            <Text style={styles.subtitle}>Code expires in 15 minutes.</Text>
+            <Text style={[styles.otpExpiry, expiresIn === 0 && styles.otpExpired]}>
+              {expiresIn === null ? 'Use the most recent code.' : expiresIn === 0 ? 'Code expired. Request a new code.'
+                : `Code expires in ${String(Math.floor(expiresIn / 60)).padStart(2, '0')}:${String(expiresIn % 60).padStart(2, '0')}`}
+            </Text>
           </View>
-          <View style={styles.actions}>
-            {requestError ? <Text accessibilityRole="alert" style={styles.errorText}>{requestError}</Text> : null}
-            <Pressable accessibilityRole="button" disabled={busy} onPress={verify} style={styles.primaryButton}>
+          <View style={styles.otpActions}>
+            <View style={styles.otpResend}>
+              <Text style={styles.otpHelper}>Didn&apos;t receive the code?</Text>
+              <Pressable accessibilityRole="button" disabled={busy || resendSeconds > 0} onPress={resend}
+                accessibilityState={{ disabled: busy || resendSeconds > 0 }} style={styles.otpTextAction}>
+                <Text style={[styles.otpLink, (busy || resendSeconds > 0) && styles.otpLinkDisabled]}>{resendSeconds > 0 ? 'Resend code in ' + resendSeconds + 's' : 'Resend code'}</Text>
+              </Pressable>
+              {resent && <Text accessibilityLiveRegion="polite" style={styles.otpFeedback}>New code requested. Please check your email.</Text>}
+            </View>
+            {requestError ? <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.errorText}>{requestError}</Text> : null}
+            <Pressable accessibilityRole="button" disabled={busy} onPress={verify} accessibilityState={{ disabled: busy, busy }}
+              style={({ pressed }) => [styles.primaryButton, busy && styles.otpDimmed, pressed && styles.primaryButtonPressed]}>
               <Text style={styles.primaryButtonText}>{busy ? 'Please wait...' : 'Verify & Create Account'}</Text>
             </Pressable>
-            <Pressable accessibilityRole="button" disabled={busy || resendSeconds > 0} onPress={resend} style={{ padding: 16 }}>
-              <Text style={styles.loginText}>{resendSeconds > 0 ? 'Resend code in ' + resendSeconds + 's' : 'Resend code'}</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" disabled={busy} onPress={changeEmail} style={{ padding: 16 }}>
-              <Text style={styles.loginText}>Change email</Text>
-            </Pressable>
+            <Text style={styles.otpSecurity}>Secure email verification</Text>
           </View>
         </View>
       </ScrollView>
@@ -326,6 +399,7 @@ export default function RegisterScreen() {
 
               <FormField label="Email Address" error={errors.email}>
                 <TextInput
+                  autoFocus={editingEmail}
                   autoCapitalize="none"
                   autoComplete="email"
                   keyboardType="email-address"
@@ -506,7 +580,7 @@ const styles = StyleSheet.create({
     width: 220,
     height: 220,
     borderRadius: 110,
-    backgroundColor: '#FDECE6',
+    backgroundColor: PALETTE.decorativeTop,
   },
   backButton: {
     alignSelf: 'flex-start',
@@ -673,4 +747,34 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
   },
+  otpTopBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8 },
+  otpBack: { width: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 14 },
+  otpTopSpacer: { width: 44 },
+  otpTopTitle: { flex: 1, color: COLORS.text, fontSize: 16, fontWeight: '700', lineHeight: 22, textAlign: 'center' },
+  otpScrollContent: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 20, paddingVertical: 24 },
+  otpHeader: { alignItems: 'center', marginBottom: 24 },
+  otpMascot: { width: 96, height: 96, marginBottom: 16 },
+  otpTitle: { color: COLORS.brand, fontSize: 28, fontWeight: '800', letterSpacing: -0.5, textAlign: 'center' },
+  otpSubtitle: { marginTop: 10, color: COLORS.muted, fontSize: 16, lineHeight: 23, textAlign: 'center' },
+  otpEmailRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 4 },
+  otpEmail: { flexShrink: 1, minWidth: 0, color: COLORS.text, fontSize: 15, lineHeight: 22, fontWeight: '600', textAlign: 'center' },
+  otpEdit: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  otpLink: { color: COLORS.brand, fontSize: 15, lineHeight: 22, fontWeight: '600', textAlign: 'center' },
+  otpLinkDisabled: { color: COLORS.muted },
+  otpEntry: { position: 'relative' },
+  otpSlots: { zIndex: 1, backgroundColor: COLORS.background, flexDirection: 'row', gap: 6 },
+  otpSlot: { flex: 1, minWidth: 0, minHeight: 56, alignItems: 'center', justifyContent: 'center', paddingVertical: 10,
+    borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, backgroundColor: COLORS.inputBackground },
+  otpSlotFocused: { borderWidth: 2, borderColor: COLORS.brand },
+  otpDigit: { color: COLORS.text, fontSize: 24, lineHeight: 32, fontWeight: '700', textAlign: 'center' },
+  otpInput: { zIndex: 0, position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, color: 'transparent', backgroundColor: 'transparent', fontSize: 24, textAlign: 'center' },
+  otpExpiry: { color: COLORS.muted, fontSize: 13, lineHeight: 19, textAlign: 'center', fontVariant: ['tabular-nums'] },
+  otpExpired: { color: COLORS.error },
+  otpActions: { gap: 16, marginTop: 24 },
+  otpResend: { gap: 2 },
+  otpHelper: { color: COLORS.text, fontSize: 14, lineHeight: 20, textAlign: 'center' },
+  otpTextAction: { minHeight: 48, paddingHorizontal: 12, paddingVertical: 12, alignItems: 'center', justifyContent: 'center' },
+  otpFeedback: { color: COLORS.muted, fontSize: 13, lineHeight: 19, textAlign: 'center' },
+  otpSecurity: { color: COLORS.muted, fontSize: 12, lineHeight: 18, textAlign: 'center' },
+  otpDimmed: { opacity: 0.55 },
 });

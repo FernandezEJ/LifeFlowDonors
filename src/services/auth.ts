@@ -77,6 +77,18 @@ export function formatMiddleInitial(value: string | null | undefined): string {
   const initial = middleInitial(value);
   return initial ? `${initial}.` : '';
 }
+// Combined names lack field boundaries. Punctuate interior single-letter tokens
+// without shortening full middle names or changing account data.
+export function formatDonorName(value: string | null | undefined): string {
+  if (typeof value !== 'string') return '';
+  const count = value.match(/\S+/gu)?.length ?? 0;
+  let index = 0;
+  return value.replace(/\S+/gu, (token) => {
+    const middle = index > 0 && index < count - 1;
+    index++;
+    return middle && /^\p{L}\p{M}*\.*$/u.test(token) ? token.replace(/\.+$/, '') + '.' : token;
+  });
+}
 export const ADULT_DONOR_NOTICE = 'You must be at least 18 years old to register for LifeFlow.';
 // Manila calendar birthdays, with a safe month-end cutoff for the eighteenth birthday.
 export function latestBirthDate(reference = new Date()): Date {

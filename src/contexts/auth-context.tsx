@@ -62,7 +62,7 @@ type AuthContextValue = {
   pointsSummary: () => Promise<PointSummary>;
   pointTransactions: (page?: number, type?: PointTransaction['type']) => Promise<Page<PointTransaction>>;
   rewards: () => Promise<Catalogue>;
-  redeemReward: (id: number, key: string) => Promise<RedemptionResponse>;
+  redeemReward: (id: number, key: string, variantId?: number) => Promise<RedemptionResponse>;
   vouchers: (page?: number, status?: VoucherStatus) => Promise<Page<Voucher> & {server_time: string}>;
   voucher: (id: number) => Promise<VoucherResponse>;
   activateVoucher: (id: number) => Promise<VoucherResponse>;
@@ -246,7 +246,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const pointsSummary = useCallback(() => donationRequest(rewardsApi.summary), [donationRequest]);
   const pointTransactions = useCallback((page = 1, type?: PointTransaction['type']) => donationRequest(saved => rewardsApi.transactions(saved, page, type)), [donationRequest]);
   const rewards = useCallback(() => donationRequest(rewardsApi.rewards), [donationRequest]);
-  const redeemReward = useCallback((id: number, key: string) => donationRequest(saved => rewardsApi.redeem(saved, id, key)), [donationRequest]);
+  const redeemReward = useCallback((id: number, key: string, variantId?: number) => donationRequest(saved => rewardsApi.redeem(saved, id, key, variantId)), [donationRequest]);
   const vouchers = useCallback((page = 1, status?: VoucherStatus) => donationRequest(saved => rewardsApi.vouchers(saved, page, status)), [donationRequest]);
   const voucher = useCallback((id: number) => donationRequest(saved => rewardsApi.voucher(saved, id)), [donationRequest]);
   const activateVoucher = useCallback((id: number) => donationRequest(saved => rewardsApi.activate(saved, id)), [donationRequest]);

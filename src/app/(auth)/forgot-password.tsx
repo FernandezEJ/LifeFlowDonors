@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -115,12 +116,12 @@ export default function ForgotPasswordScreen() {
             <Text style={styles.body}>Enter the email associated with your LifeFlow account.</Text>
             <Text style={styles.label}>Email</Text>
             <TextInput accessibilityLabel="Email" autoCapitalize="none" autoCorrect={false} autoComplete="email" keyboardType="email-address"
-              maxLength={254} editable={!busy} value={email} onChangeText={setEmail} placeholder="Enter your email" placeholderTextColor="#766A68" style={styles.input} />
+              maxLength={254} editable={!busy} value={email} onChangeText={setEmail} placeholder="Enter your email" placeholderTextColor={PALETTE.neutral} style={styles.input} />
           </> : step === 'code' ? <>
             <Text style={styles.body}>{RESET_NOTICE}</Text>
             <Text style={styles.body}>Enter the 6-digit verification code sent to your email.</Text>
             <TextInput accessibilityLabel="6-digit code" keyboardType="number-pad" autoComplete="one-time-code" maxLength={6}
-              editable={!busy} value={code} onChangeText={setCode} placeholder="6-digit code" placeholderTextColor="#766A68" style={styles.input} />
+              editable={!busy} value={code} onChangeText={setCode} placeholder="6-digit code" placeholderTextColor={PALETTE.neutral} style={styles.input} />
             <Text style={styles.body}>Code expires in 15 minutes.</Text>
           </> : step === 'password' ? <>
             <Text style={styles.body}>At least 8 characters. Passwords must match.</Text>
@@ -132,7 +133,7 @@ export default function ForgotPasswordScreen() {
               maxLength={128} secureTextEntry={!showPassword} editable={!busy} value={confirmation} onChangeText={setConfirmation} style={styles.input} />
             <Pressable accessibilityRole="button" accessibilityLabel={showPassword ? 'Hide passwords' : 'Show passwords'} disabled={busy}
               onPress={() => setShowPassword(value => !value)} style={styles.textButton}>
-              <MaterialIcons name={showPassword ? 'visibility-off' : 'visibility'} color="#766A68" size={22} />
+              <MaterialIcons name={showPassword ? 'visibility-off' : 'visibility'} color={PALETTE.neutral} size={22} />
               <Text style={styles.body}>{showPassword ? 'Hide passwords' : 'Show passwords'}</Text>
             </Pressable>
           </> : <Text style={styles.body}>Your password has been updated successfully.</Text>}
@@ -156,15 +157,15 @@ export default function ForgotPasswordScreen() {
   </SafeAreaView>;
 }
 const styles = StyleSheet.create({
-  flex:{flex:1},safeArea:{flex:1,backgroundColor:'#FFF9F2'},
+  flex:{flex:1},safeArea:{flex:1,backgroundColor:PALETTE.cream},
   scroll:{flexGrow:1,justifyContent:'center',paddingHorizontal:24,paddingVertical:28},
   content:{width:'100%',maxWidth:440,alignSelf:'center',gap:14},
   logo:{width:112,height:112,alignSelf:'center'},
-  title:{color:'#D93A3A',fontSize:30,fontWeight:'800',textAlign:'center'},
-  body:{color:'#766A68',fontSize:16,lineHeight:23},label:{color:'#372E2E',fontSize:15,fontWeight:'700'},
-  input:{minHeight:54,paddingHorizontal:16,borderWidth:1,borderColor:'#E8DDD6',borderRadius:16,backgroundColor:'#FFFFFF',color:'#372E2E',fontSize:16},
-  button:{minHeight:56,padding:12,alignItems:'center',justifyContent:'center',borderRadius:18,backgroundColor:'#D93A3A'},
-  buttonText:{color:'#FFFFFF',fontSize:17,fontWeight:'700',textAlign:'center'},
+  title:{color:PALETTE.primary,fontSize:30,fontWeight:'800',textAlign:'center'},
+  body:{color:PALETTE.neutral,fontSize:16,lineHeight:23},label:{color:PALETTE.text,fontSize:15,fontWeight:'700'},
+  input:{minHeight:54,paddingHorizontal:16,borderWidth:1,borderColor:PALETTE.border,borderRadius:16,backgroundColor:PALETTE.surface,color:PALETTE.text,fontSize:16},
+  button:{minHeight:56,padding:12,alignItems:'center',justifyContent:'center',borderRadius:18,backgroundColor:PALETTE.primary},
+  buttonText:{color:PALETTE.surface,fontSize:17,fontWeight:'700',textAlign:'center'},
   textButton:{minHeight:48,alignItems:'center',justifyContent:'center',flexDirection:'row',gap:8},
-  link:{color:'#D93A3A',fontSize:14,fontWeight:'700'},error:{color:'#C92A2A',fontSize:13,lineHeight:18},disabled:{opacity:0.5},
+  link:{color:PALETTE.primary,fontSize:14,fontWeight:'700'},error:{color:PALETTE.danger,fontSize:13,lineHeight:18},disabled:{opacity:0.5},
 });

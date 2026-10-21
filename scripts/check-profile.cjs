@@ -2,7 +2,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
 function load(path,imports={},globals={}){
  const module={exports:{}};const code=ts.transpileModule(fs.readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
- vm.runInNewContext(code,{module,exports:module.exports,require:n=>{if(n.endsWith('.png')){assert.ok(fs.existsSync(require('node:path').resolve(require('node:path').dirname(path),n)));return n;}if(!(n in imports))throw Error('Unexpected import '+n);return imports[n];},...globals});return module.exports;
+ vm.runInNewContext(code,{module,exports:module.exports,require:n=>{if (n === '@/constants/theme') return load('src/constants/theme.ts', {'react-native': {Platform: {select: options => options.default}}}); if(n.endsWith('.png')){assert.ok(fs.existsSync(require('node:path').resolve(require('node:path').dirname(path),n)));return n;}if(!(n in imports))throw Error('Unexpected import '+n);return imports[n];},...globals});return module.exports;
 }
 const flush=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
@@ -27,6 +27,11 @@ function host(){
 (async()=>{
  const requests=[];
  const service=load('src/services/auth.ts',{'./api':{apiRequest:async(path,options)=>{requests.push({path,options});},ApiError:class extends Error{}}});
+ const donorNames=[['Suffer F Cruz','Suffer F. Cruz'],['Mark D Javines','Mark D. Javines'],['Suffer F. Cruz','Suffer F. Cruz'],['Suffer F.. Cruz','Suffer F. Cruz'],['Maria Santos','Maria Santos'],['Suffer Francisco Cruz','Suffer Francisco Cruz'],[null,''],[undefined,''],['','']];
+ for(const [source,expected] of donorNames){
+   assert.equal(service.formatDonorName(source),expected);
+   assert.equal(service.formatDonorName(service.formatDonorName(source)),expected);
+ }
  const form={firstName:'Juan',middleName:'',lastName:'Cruz',email:'juan@example.com',mobileNumber:'09171234567',birthDate:'09/17/2004',gender:'Male',bloodType:'O+'};
  await service.authApi.updateProfile('private',form);
  assert.deepEqual(Object.keys(requests[0].options.body).sort(),['birth_date','blood_type','first_name','gender','last_name','middle_name','mobile_number']);
@@ -50,6 +55,16 @@ function host(){
  '@/contexts/tab-leave-context':{useTabLeave:()=>tabGuard},'@/components/confirmation-modal':{ConfirmationModal:'ConfirmationModal'},'@/components/birth-date-picker':{__esModule:true,default:'BirthDatePicker'},'@/components/notification-bell':{NotificationBell:'NotificationBell'},
  '@/contexts/auth-context':{useAuth:()=>auth},'@/services/api':{errorMessage:e=>e.message},'@/services/auth':service});
  const view=()=>h.render(screen.default);view();await flush();
+ const savedUser=auth.user,savedProfile=auth.profile;
+ auth.profile=null;
+ for(const [source,expected] of donorNames.filter(([source])=>typeof source==='string'&&source)){
+   auth.user={...savedUser,name:source};
+   const tree=view();
+   assert.ok(nodes(tree).some(n=>n.type==='Text'&&n.props.children===expected));
+   assert.ok(nodes(tree).some(n=>n.props?.accessibilityLabel===expected+' profile picture'));
+   assert.equal(auth.user.name,source);
+ }
+ auth.user=savedUser;auth.profile=savedProfile;
  for(const [source,initial] of [['C','C.'],['C.','C.'],['c','C.'],[' c. ','C.'],['C..','C.'],['Cruz','C.'],[null,''],['',''],['   ',''],[undefined,'']]){
    const original=auth.profile;auth.profile={...original,middle_name:source};
    const tree=view(),expectedName=initial?'Juan '+initial+' Cruz':'Juan Cruz';
@@ -104,8 +119,8 @@ function host(){
  tabLayout.default();
  // Exercise the installed pressable so its default themed Android ripple cannot leak through.
  assert.equal(tabProps.screenOptions.animation,undefined);
- assert.equal(tabProps.screenOptions.tabBarActiveTintColor,'#D93A3A');
- assert.equal(tabProps.screenOptions.tabBarInactiveTintColor,'#766A68');
+ assert.equal(tabProps.screenOptions.tabBarActiveTintColor,'#9B1238');
+ assert.equal(tabProps.screenOptions.tabBarInactiveTintColor,'#64748B');
  assert.equal(tabProps.children.map(tab=>tab.props.name).join(','),'index,activity,points,status,profile');
  assert.equal(tabProps.children.map(tab=>tab.props.options.title).join(','),'Home,Activity,Points,Status,Profile');
  for(const os of ['android','ios'])for(const dark of [false,true])for(const disabled of [false,true]){
@@ -157,7 +172,7 @@ function host(){
  const modalButtons=()=>nodes(modalView()).filter(n=>n.type==='Pressable');
  assert.equal(modalButtons().map(n=>n.props.accessibilityLabel).join(','),'Cancel,Discard');
  assert.ok(nodes(modalView()).some(n=>n.type==='SafeAreaView'&&n.props.edges.join(',')==='top,bottom'));
- assert.ok(nodes(modalView()).some(n=>n.props?.accessibilityViewIsModal&&n.props.style.backgroundColor==='#FFF9F2'&&n.props.style.maxHeight==='100%'));
+ assert.ok(nodes(modalView()).some(n=>n.props?.accessibilityViewIsModal&&n.props.style.backgroundColor==='#FFFFFF'&&n.props.style.maxHeight==='100%'));
  assert.ok(nodes(modalView()).some(n=>n.type==='ScrollView'));
  assert.ok(modalButtons().every(n=>n.props.style[0].minHeight>=48));
  const primary=()=>nodes(modalView()).find(n=>n.props?.accessibilityLabel==='Discard');primary().props.onPress();primary().props.onPress();
@@ -446,7 +461,7 @@ function host(){
    }
    if (tab === 'points') {
      const filter = nodes(tabView()).find(node => node.type === 'Pressable' && texts(node) === 'Earned');
-     assert.equal(filter.props.style({ pressed: false })[1].backgroundColor, '#D93A3A');
+     assert.equal(filter.props.style({ pressed: false })[1].backgroundColor, '#9B1238');
    }
    scrollers.forEach(node => { node.props.ref.current = null; });
    tabHost.blur(); tabHost.refocus(); await flush(); tabView();

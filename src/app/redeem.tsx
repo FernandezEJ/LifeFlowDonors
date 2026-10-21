@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Stack, useRouter } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -5,14 +6,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { NotificationBell } from '@/components/notification-bell';
 import { RewardCatalogue } from '@/components/reward-catalogue';
 const COLORS = {
-  background: '#FFF9F2',
-  brand: '#D93A3A',
-  brandPressed: '#BE2F2F',
-  text: '#372E2E',
-  muted: '#766A68',
-  border: '#F0E2DC',
-  white: '#FFFFFF',
-  softRed: '#FDE8E8',
+  background: PALETTE.cream,
+  brand: PALETTE.primary,
+  brandPressed: PALETTE.primaryPressed,
+  text: PALETTE.text,
+  muted: PALETTE.neutral,
+  border: PALETTE.border,
+  white: PALETTE.surface,
+  softRed: PALETTE.selected,
 };
 
 
@@ -102,7 +103,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.brand,
     borderRadius: 77,
     backgroundColor: COLORS.white,
-    shadowColor: '#8B3028',
+    shadowColor: PALETTE.primaryPressed,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.08,
     shadowRadius: 9,
@@ -138,7 +139,7 @@ const styles = StyleSheet.create({
     gap: 5,
     paddingHorizontal: 10,
     borderWidth: 1,
-    borderColor: '#F0CBC6',
+    borderColor: PALETTE.border,
     borderRadius: 12,
     backgroundColor: COLORS.softRed,
   },
@@ -152,8 +153,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     borderRadius: 20,
-    backgroundColor: '#FFF3F0',
-    shadowColor: '#6E514C',
+    backgroundColor: PALETTE.selected,
+    shadowColor: PALETTE.text,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.06,
     shadowRadius: 7,
@@ -173,7 +174,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 4,
     borderRadius: 9,
-    backgroundColor: '#756B68',
+    backgroundColor: PALETTE.neutralText,
   },
   unavailableBadgeText: { color: COLORS.white, fontSize: 9, fontWeight: '800' },
   rewardBody: { flex: 1, padding: 13 },
@@ -193,8 +194,8 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.brandPressed,
     transform: [{ scale: 0.98 }],
   },
-  redeemButtonDisabled: { backgroundColor: '#D7CECA' },
+  redeemButtonDisabled: { backgroundColor: PALETTE.border },
   redeemButtonText: { color: COLORS.white, fontSize: 13, fontWeight: '800' },
-  redeemButtonTextDisabled: { color: '#756B68' },
+  redeemButtonTextDisabled: { color: PALETTE.neutralText },
 });
 

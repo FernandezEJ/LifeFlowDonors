@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Stack, useRouter } from 'expo-router';
@@ -35,11 +36,11 @@ function answerLabel(value?: string) {
   return value === 'YES' ? 'Yes' : value === 'NO' ? 'No' : value === 'NOT_APPLICABLE' ? 'Not applicable' : value || 'Not answered';
 }
 const RESULTS: Record<EligibilityResult, { title: string; copy: string; color: string }> = {
-  eligible: { title: 'Ready to proceed', copy: 'Based on your answers, you may proceed with the donation process.', color: '#287A47' },
-  not_eligible: { title: 'Not Eligible for Now', copy: 'One or more of your answers did not meet LifeFlow\'s current pre-screening criteria.', color: '#B52E2E' },
+  eligible: { title: 'Ready to proceed', copy: 'Based on your answers, you may proceed with the donation process.', color: PALETTE.successText },
+  not_eligible: { title: 'Not Eligible for Now', copy: 'One or more of your answers did not meet LifeFlow\'s current pre-screening criteria.', color: PALETTE.danger },
   // Preserve historical output without re-evaluating old answers.
-  temporarily_ineligible: { title: 'Not Eligible for Now', copy: 'Based on your answers, one or more factors may mean you should wait before donating.', color: '#B52E2E' },
-  needs_further_screening: { title: 'Not Eligible for Now', copy: 'This saved assessment used an earlier questionnaire. It has not been re-evaluated. Please confirm with the donation facility.', color: '#514644' },
+  temporarily_ineligible: { title: 'Not Eligible for Now', copy: 'Based on your answers, one or more factors may mean you should wait before donating.', color: PALETTE.danger },
+  needs_further_screening: { title: 'Not Eligible for Now', copy: 'This saved assessment used an earlier questionnaire. It has not been re-evaluated. Please confirm with the donation facility.', color: PALETTE.neutralText },
 };
 
 // Shared accessible buttons keep event handlers outside render-time execution.
@@ -105,7 +106,7 @@ export default function EvaluationScreen() {
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
       <View style={styles.header}>
         <Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={() => router.back()} style={styles.iconButton}>
-          <MaterialIcons name="arrow-back" size={24} color="#372E2E" />
+          <MaterialIcons name="arrow-back" size={24} color={PALETTE.text} />
         </Pressable>
         <Text style={styles.headerTitle}>Self-Assessment</Text>
         <NotificationBell />
@@ -115,12 +116,12 @@ export default function EvaluationScreen() {
           <View style={styles.content}>
             {cooldown.loading && !cooldown.state && !saved ? <TabSkeleton /> : null}
             {cooldown.error ? <View style={styles.notice}>
-              <Text accessibilityRole="alert" style={styles.body}>{cooldown.error}</Text>
+              <Text accessibilityRole="alert" style={[styles.body,{color:PALETTE.danger}]}>{cooldown.error}</Text>
               {<AssessmentButton label={'Retry availability check'} onPress={() => void cooldown.reload()} disabled={loading} busy={loading} />}
             </View> : null}
             {error && !showResult ? <Text accessibilityRole="alert" style={styles.body}>{error}</Text> : null}
-            {showCooldown ? <View style={styles.notice}>
-              <MaterialIcons name="schedule" size={28} color="#D93A3A" />
+            {showCooldown ? <View style={[styles.notice,{backgroundColor:PALETTE.pendingSurface}]}>
+              <MaterialIcons name="schedule" size={28} color={PALETTE.primary} />
               <Text style={styles.subheading}>Self-Assessment Not Yet Available</Text>
               <Text style={styles.body}>You recently completed a self-assessment. You can complete another one after the current 24-hour assessment period ends.</Text>
               {cooldown.state?.next_allowed_at ? <Text style={styles.body}>Available again: {new Date(cooldown.state.next_allowed_at).toLocaleString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</Text> : null}
@@ -129,7 +130,7 @@ export default function EvaluationScreen() {
 
             {/* PRE-SCREENING RESULT: display saved Laravel output, never a local decision. */}
             {showResult && result ? <>
-              <View style={styles.complete}><MaterialIcons name="check-circle" size={22} color="#287A47" /><Text style={styles.subheading}>Assessment Complete</Text></View>
+              <View style={styles.complete}><MaterialIcons name="check-circle" size={22} color={PALETTE.successText} /><Text style={styles.subheading}>Assessment Complete</Text></View>
               <View style={styles.card} accessibilityLiveRegion="polite">
                 <Text style={styles.eyebrow}>Your Pre-Screening Result</Text>
                 <Text style={[styles.title, { color: RESULTS[result.result].color }]}>{RESULTS[result.result].title}</Text>
@@ -138,7 +139,7 @@ export default function EvaluationScreen() {
                 <Text style={styles.body}>{SCREENING_NOTICE}</Text>
               </View>
               <View style={styles.notice}>
-                <MaterialIcons name="info-outline" size={24} color="#766A68" />
+                <MaterialIcons name="info-outline" size={24} color={PALETTE.neutral} />
                 <Text style={styles.subheading}>Important Reminder</Text>
                 <Text style={styles.body}>Recent tattoos or body piercings may require a waiting period before blood donation.</Text>
                 <Text style={styles.body}>This self-assessment is only a pre-screening guide. Final eligibility will still be confirmed by the donation facility.</Text>
@@ -191,28 +192,28 @@ export default function EvaluationScreen() {
 
 const styles = StyleSheet.create({
   complete: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  flex: { flex: 1 }, safeArea: { flex: 1, backgroundColor: '#FFF9F2' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F0E2DC' },
-  headerTitle: { flex: 1, textAlign: 'center', color: '#372E2E', fontSize: 17, fontWeight: '800' },
+  flex: { flex: 1 }, safeArea: { flex: 1, backgroundColor: PALETTE.cream },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: PALETTE.border },
+  headerTitle: { flex: 1, textAlign: 'center', color: PALETTE.text, fontSize: 17, fontWeight: '800' },
   iconButton: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
   scroll: { flexGrow: 1, padding: 20, paddingBottom: 32 },
   content: { width: '100%', maxWidth: 620, alignSelf: 'center', gap: 16 },
-  card: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#F0E2DC', borderRadius: 22, padding: 20, gap: 18 },
-  notice: { backgroundColor: '#FDE8E8', borderRadius: 18, padding: 18, gap: 10 },
-  title: { color: '#372E2E', fontSize: 25, lineHeight: 33, fontWeight: '800' },
-  subheading: { color: '#372E2E', fontSize: 16, lineHeight: 23, fontWeight: '700' },
-  eyebrow: { color: '#B52E2E', fontSize: 15, fontWeight: '800' },
-  body: { color: '#514644', fontSize: 16, lineHeight: 24 },
-  hint: { color: '#766A68', fontSize: 13, lineHeight: 20 },
-  reason: { color: '#514644', fontSize: 16, lineHeight: 24, borderLeftWidth: 3, borderLeftColor: '#D93A3A', paddingLeft: 12 },
-  progress: { height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: '#F0E2DC' },
-  progressFill: { height: 8, backgroundColor: '#D93A3A' },
-  input: { minHeight: 56, borderWidth: 1, borderColor: '#D4C4BE', borderRadius: 14, padding: 14, fontSize: 20, color: '#372E2E' },
-  option: { minHeight: 56, justifyContent: 'center', padding: 16, borderWidth: 1, borderColor: '#D4C4BE', borderRadius: 14 },
-  selected: { backgroundColor: '#D93A3A', borderColor: '#D93A3A' }, selectedText: { color: '#FFFFFF' },
-  button: { minHeight: 52, padding: 14, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D93A3A' },
-  buttonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', textAlign: 'center' },
-  secondary: { backgroundColor: '#FFF9F2', borderWidth: 1, borderColor: '#D93A3A' }, secondaryText: { color: '#B52E2E' },
+  card: { backgroundColor: PALETTE.surface, borderWidth: 1, borderColor: PALETTE.border, borderRadius: 22, padding: 20, gap: 18 },
+  notice: { backgroundColor: PALETTE.infoSurface, borderRadius: 18, padding: 18, gap: 10 },
+  title: { color: PALETTE.text, fontSize: 25, lineHeight: 33, fontWeight: '800' },
+  subheading: { color: PALETTE.text, fontSize: 16, lineHeight: 23, fontWeight: '700' },
+  eyebrow: { color: PALETTE.danger, fontSize: 15, fontWeight: '800' },
+  body: { color: PALETTE.neutralText, fontSize: 16, lineHeight: 24 },
+  hint: { color: PALETTE.neutral, fontSize: 13, lineHeight: 20 },
+  reason: { color: PALETTE.neutralText, fontSize: 16, lineHeight: 24, borderLeftWidth: 3, borderLeftColor: PALETTE.primary, paddingLeft: 12 },
+  progress: { height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: PALETTE.border },
+  progressFill: { height: 8, backgroundColor: PALETTE.primary },
+  input: { minHeight: 56, borderWidth: 1, borderColor: PALETTE.border, borderRadius: 14, padding: 14, fontSize: 20, color: PALETTE.text },
+  option: { minHeight: 56, justifyContent: 'center', padding: 16, borderWidth: 1, borderColor: PALETTE.border, borderRadius: 14 },
+  selected: { backgroundColor: PALETTE.primary, borderColor: PALETTE.primary }, selectedText: { color: PALETTE.surface },
+  button: { minHeight: 52, padding: 14, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: PALETTE.primary },
+  buttonText: { color: PALETTE.surface, fontSize: 16, fontWeight: '800', textAlign: 'center' },
+  secondary: { backgroundColor: PALETTE.cream, borderWidth: 1, borderColor: PALETTE.primary }, secondaryText: { color: PALETTE.danger },
   disabled: { opacity: 0.45 }, pressed: { opacity: 0.75 },
-  reviewRow: { gap: 6, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: '#F0E2DC' },
+  reviewRow: { gap: 6, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: PALETTE.border },
 });

@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -40,7 +41,7 @@ export function RegistrationLegal({ document, onClose, onAgree, backLabel = 'Bac
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <View style={styles.header}>
         <Pressable accessibilityRole="button" accessibilityLabel={backLabel} onPress={onClose} style={styles.back}>
-          <MaterialIcons name="arrow-back" color="#372E2E" size={24} /><Text style={styles.text}>Back</Text>
+          <MaterialIcons name="arrow-back" color={PALETTE.text} size={24} /><Text style={styles.text}>Back</Text>
         </Pressable>
         <Text accessibilityRole="header" style={styles.title}>{content?.title}</Text>
         <Text style={styles.text}>Version {content?.version}</Text>
@@ -59,17 +60,17 @@ export function RegistrationLegal({ document, onClose, onAgree, backLabel = 'Bac
   </Modal>;
 }
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#FFF9F2' },
+  safe: { flex: 1, backgroundColor: PALETTE.cream },
   header: { padding: 24, gap: 12, width: '100%', maxWidth: 680, alignSelf: 'center' },
   back: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start' },
-  title: { fontSize: 28, fontWeight: '800', color: '#D93A3A' },
+  title: { fontSize: 28, fontWeight: '800', color: PALETTE.primary },
   content: { padding: 24, paddingTop: 0, gap: 24, width: '100%', maxWidth: 680, alignSelf: 'center' },
   footer: { flexDirection: 'row', gap: 12, paddingHorizontal: 24, paddingVertical: 12, width: '100%', maxWidth: 680, alignSelf: 'center' },
   action: { flex: 1, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 14, padding: 12 },
-  cancel: { borderWidth: 1, borderColor: '#D93A3A' },
-  agree: { backgroundColor: '#D93A3A' },
-  cancelText: { color: '#D93A3A', fontSize: 16, fontWeight: '700' },
-  agreeText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-  section: { gap: 8 }, heading: { fontSize: 20, fontWeight: '700', color: '#372E2E' },
-  text: { fontSize: 16, lineHeight: 24, color: '#534846' },
+  cancel: { borderWidth: 1, borderColor: PALETTE.primary },
+  agree: { backgroundColor: PALETTE.primary },
+  cancelText: { color: PALETTE.primary, fontSize: 16, fontWeight: '700' },
+  agreeText: { color: PALETTE.surface, fontSize: 16, fontWeight: '700' },
+  section: { gap: 8 }, heading: { fontSize: 20, fontWeight: '700', color: PALETTE.text },
+  text: { fontSize: 16, lineHeight: 24, color: PALETTE.neutralText },
 });

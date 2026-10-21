@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
 import { HomeDonationReminder } from '@/components/home-donation-reminder';
 import { FLOWIE_MASCOTS, HOME_MASCOT_CYCLE } from '@/constants/flowie-mascots';
@@ -21,14 +22,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const COLORS = {
-  background: '#FFF9F2',
-  brand: '#D93A3A',
-  brandPressed: '#BE2F2F',
-  text: '#372E2E',
-  muted: '#766A68',
-  border: '#F0E2DC',
-  softRed: '#FDE7E3',
-  white: '#FFFFFF',
+  background: PALETTE.cream,
+  brand: PALETTE.primary,
+  brandPressed: PALETTE.primaryPressed,
+  text: PALETTE.text,
+  muted: PALETTE.neutral,
+  border: PALETTE.border,
+  softRed: PALETTE.selected,
+  white: PALETTE.surface,
 };
 
 const FLOWIE_MESSAGES = [
@@ -336,9 +337,9 @@ const styles = StyleSheet.create({
   content: { width: '100%', maxWidth: 560, alignSelf: 'center', gap: 25 },
   greetingBlock: { paddingHorizontal: 2 },
   greetingTitle: { color: COLORS.text, fontSize: 24, fontWeight: '800', letterSpacing: -0.6 },
-  greetingSkeleton: { width: 165, height: 29, borderRadius: 10, backgroundColor: '#EEE5DF' },
+  greetingSkeleton: { width: 165, height: 29, borderRadius: 10, backgroundColor: PALETTE.border },
   flowieSection: { gap: 14 },
-  flowieArea: { padding: 14, borderRadius: 24, borderWidth: 1, borderColor: COLORS.border, backgroundColor: '#FFF0E8' },
+  flowieArea: { padding: 14, borderRadius: 24, borderWidth: 1, borderColor: COLORS.border, backgroundColor: PALETTE.selected },
   flowieRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   flowieRight: { flex: 1, minWidth: 0, gap: 10 },
   flowieImage: { width: 105, height: 125 },
@@ -352,7 +353,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     borderRadius: 19,
     backgroundColor: COLORS.white,
-    shadowColor: '#6E514C',
+    shadowColor: PALETTE.text,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.07,
     shadowRadius: 8,
@@ -395,10 +396,10 @@ const styles = StyleSheet.create({
   adminAnnouncementCard: {
     overflow: 'hidden',
     borderWidth: 1.5,
-    borderColor: '#E7A8A1',
+    borderColor: PALETTE.border,
     borderRadius: 22,
     backgroundColor: COLORS.white,
-    shadowColor: '#8B3028',
+    shadowColor: PALETTE.primaryPressed,
     shadowOffset: { width: 0, height: 5 },
     shadowOpacity: 0.12,
     shadowRadius: 11,

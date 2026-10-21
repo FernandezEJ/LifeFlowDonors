@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { FLOWIE_MASCOTS } from '@/constants/flowie-mascots';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -11,10 +12,10 @@ import { flowieAction, type FlowieActionType, type FlowieMessage } from '@/servi
 // ========================================
 export function useFlowieColors() {
   const dark = useColorScheme() === 'dark';
-  return { background: dark ? '#201B1C' : '#FFF9F2', surface: dark ? '#2D2628' : '#FFFFFF',
-    text: dark ? '#FFF4EF' : '#372E2E', muted: dark ? '#D0BFC0' : '#766A68',
-    border: dark ? '#594348' : '#EEDBD5', accent: dark ? '#FF9BA3' : '#B72935',
-    soft: dark ? '#41292F' : '#FDE8E8', primary: '#B72935', white: '#FFFFFF' };
+  return { background: dark ? '#201B1C' : PALETTE.cream, surface: dark ? '#2D2628' : PALETTE.surface,
+    text: dark ? '#FFF4EF' : PALETTE.text, muted: dark ? '#D0BFC0' : PALETTE.neutral,
+    border: dark ? '#594348' : PALETTE.border, accent: dark ? '#FF9BA3' : PALETTE.primary,
+    soft: dark ? '#41292F' : PALETTE.selected, danger: dark ? '#FCA5A5' : PALETTE.danger, success: dark ? '#86EFAC' : PALETTE.successText, softText: dark ? '#D0BFC0' : PALETTE.neutralText, primary: PALETTE.primary, white: PALETTE.surface };
 }
 
 // ========================================
@@ -44,7 +45,7 @@ export function FlowieActionCard({ action, onAction }: {
     <MaterialIcons name={item.icon} size={23} color={c.accent} />
     <View style={styles.actionContent}>
       <Text style={[styles.actionTitle, { color: c.text }]}>{action === 'open_evaluation' ? 'Evaluation Form' : item.title}</Text>
-      {action === 'open_evaluation' ? <Text style={[styles.shortcutSubtitle, { color: c.muted }]}>Check your donation readiness</Text> : null}
+      {action === 'open_evaluation' ? <Text style={[styles.shortcutSubtitle, { color: c.softText }]}>Check your donation readiness</Text> : null}
     </View>
     <MaterialIcons name="arrow-forward" size={20} color={c.accent} />
   </Pressable>;

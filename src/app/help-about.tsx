@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { useState } from 'react';
 import Constants from 'expo-constants';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -55,10 +56,10 @@ export default function HelpAboutScreen() {
 }
 const styles = StyleSheet.create({
   section: { gap: 10 },
-  heading: { color: '#372E2E', fontSize: 19, fontWeight: '700' },
-  body: { color: '#534846', fontSize: 14, lineHeight: 22 },
+  heading: { color: PALETTE.text, fontSize: 19, fontWeight: '700' },
+  body: { color: PALETTE.neutralText, fontSize: 14, lineHeight: 22 },
   question: { gap: 5, marginTop: 6 },
-  questionTitle: { color: '#372E2E', fontSize: 15, fontWeight: '700' },
+  questionTitle: { color: PALETTE.text, fontSize: 15, fontWeight: '700' },
   link: { minHeight: 54, justifyContent: 'center', gap: 5, paddingVertical: 8 },
-  linkText: { color: '#D93A3A', fontSize: 17, fontWeight: '700' },
+  linkText: { color: PALETTE.primary, fontSize: 17, fontWeight: '700' },
 });

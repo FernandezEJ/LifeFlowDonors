@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Tabs } from 'expo-router';
@@ -9,10 +10,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { HapticTab } from '@/components/haptic-tab';
 
 const COLORS = {
-  background: '#FFF9F2',
-  brand: '#D93A3A',
-  inactive: '#766A68',
-  border: '#F0E2DC',
+  background: PALETTE.cream,
+  brand: PALETTE.primary,
+  inactive: PALETTE.neutral,
+  border: PALETTE.border,
 };
 
 const TAB_BAR_HEIGHT = 68;
@@ -160,8 +161,8 @@ function MainTabs() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: COLORS.background },
   backgroundAccents: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, overflow: 'hidden' },
-  topAccent: { position: 'absolute', width: 420, height: 420, borderRadius: 210, top: -300, right: -310, backgroundColor: '#FDECE6', opacity: 0.35 },
-  bottomAccent: { position: 'absolute', width: 460, height: 460, borderRadius: 230, bottom: -280, left: -290, backgroundColor: '#FCE9E2', opacity: 0.65 },
+  topAccent: { position: 'absolute', width: 420, height: 420, borderRadius: 210, top: -300, right: -310, backgroundColor: PALETTE.decorativeTop, opacity: 0.35 },
+  bottomAccent: { position: 'absolute', width: 460, height: 460, borderRadius: 230, bottom: -280, left: -290, backgroundColor: PALETTE.decorativeBottom, opacity: 0.65 },
   tabBar: {
     position: 'absolute',
     left: 16,
@@ -173,7 +174,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     backgroundColor: COLORS.background,
     elevation: 10,
-    shadowColor: '#6E514C',
+    shadowColor: PALETTE.text,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.12,
     shadowRadius: 12,

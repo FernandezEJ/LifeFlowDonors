@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE, DonationStatusColors } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
 import { NotificationBell } from '@/components/notification-bell';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -8,14 +9,14 @@ import { useAuth } from '@/contexts/auth-context';
 import { errorMessage } from '@/services/api';
 import { DONATION_STATUS, DONATION_STATUS_DESCRIPTION, type DonationPage, type DonationParticipation, type DonationStatus } from '@/services/donations';
 const COLORS = {
-  background: '#FFF9F2',
-  brand: '#D93A3A',
-  brandPressed: '#BE2F2F',
-  text: '#372E2E',
-  muted: '#766A68',
-  border: '#F0E2DC',
-  white: '#FFFFFF',
-  softRed: '#FDE8E8',
+  background: PALETTE.cream,
+  brand: PALETTE.primary,
+  brandPressed: PALETTE.primaryPressed,
+  text: PALETTE.text,
+  muted: PALETTE.neutral,
+  border: PALETTE.border,
+  white: PALETTE.surface,
+  softRed: PALETTE.selected,
 };
 
 
@@ -66,13 +67,13 @@ export default function ActivityScreen() {
         <Text style={styles.subtitle}>Your donation activities</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>{([undefined, 'pending', 'for_verification', 'needs_revision', 'completed', 'rejected', 'cancelled'] as const).map(value => <Pressable key={value || 'all'} onPress={() => setStatus(value)} style={[styles.filterChip, value === status && styles.filterChipSelected]}><Text style={[styles.filterText, value === status && styles.filterTextSelected]}>{value ? DONATION_STATUS[value] : 'All'}</Text></Pressable>)}</ScrollView>
         <Text style={styles.historyTitle}>Joined activities {page ? '(' + page.total + ')' : ''}</Text>
-        {error ? <Pressable onPress={() => setRefresh(n => n + 1)}><Text accessibilityRole="alert" style={styles.subtitle}>{error} Tap to retry.</Text></Pressable> : null}
+        {error ? <Pressable onPress={() => setRefresh(n => n + 1)}><Text accessibilityRole="alert" style={[styles.subtitle,{color:PALETTE.danger}]}>{error} Tap to retry.</Text></Pressable> : null}
       </View>}
       ListEmptyComponent={loading && !page ? <TabSkeleton /> : <Text style={styles.subtitle}>{error ? '' : 'No joined activities yet.'}</Text>}
       renderItem={({item}) => <View style={styles.card}>
         <Text style={styles.cardTitle}>{item.opportunity.title}</Text>
         <Text style={styles.detailText}>{item.opportunity.event_date || 'Confirm arrangements with the chapter'}</Text><Text style={styles.organizer}>{item.opportunity.location}</Text>
-        <View style={styles.cardFooter}><View style={styles.statusBlock}><Text style={styles.statusText}>{DONATION_STATUS[item.status]}</Text><Text style={styles.rewardLabel}>{DONATION_STATUS_DESCRIPTION[item.status]}</Text></View>
+        <View style={styles.cardFooter}><View style={styles.statusBlock}><Text style={[styles.statusText,{color:DonationStatusColors[item.status]?.text ?? PALETTE.neutralText}]}>{DONATION_STATUS[item.status]}</Text><Text style={styles.rewardLabel}>{DONATION_STATUS_DESCRIPTION[item.status]}</Text></View>
           <Pressable style={styles.viewButton} onPress={() => router.push({ pathname: '/activity/[id]', params: { id: String(item.id) } })}><Text style={styles.viewButtonText}>View</Text></Pressable></View>
       </View>}
       ItemSeparatorComponent={() => <View style={styles.cardSeparator}/>}
@@ -165,7 +166,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     borderRadius: 21,
     backgroundColor: COLORS.white,
-    shadowColor: '#6E514C',
+    shadowColor: PALETTE.text,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.07,
     shadowRadius: 9,

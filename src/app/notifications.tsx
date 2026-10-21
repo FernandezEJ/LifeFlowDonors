@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
@@ -9,8 +10,8 @@ import { errorMessage } from '@/services/api';
 import { notificationDestination, type ImportantNotification, type NotificationPage } from '@/services/notifications';
 
 const COLORS = {
-  background: '#FFF9F2', brand: '#D93A3A', text: '#372E2E', muted: '#766A68',
-  border: '#F0E2DC', white: '#FFFFFF', softRed: '#FDE8E8', pinned: '#FFF0ED',
+  background: PALETTE.cream, brand: PALETTE.primary, text: PALETTE.text, muted: PALETTE.neutral,
+  border: PALETTE.border, white: PALETTE.surface, softRed: PALETTE.selected, pinned: PALETTE.selected,
 };
 
 // ========================================
@@ -100,7 +101,7 @@ export default function NotificationsScreen() {
             <Text style={styles.markAllText}>Enable important notifications</Text>
           </Pressable>
           {pushStatus ? <Text style={styles.cardMessage}>{pushStatus}</Text> : null}
-          {error ? <Pressable onPress={() => void load()}><Text accessibilityRole="alert" style={styles.cardMessage}>{error} Tap to retry.</Text></Pressable> : null}
+          {error ? <Pressable onPress={() => void load()}><Text accessibilityRole="alert" style={[styles.cardMessage,{color:PALETTE.danger}]}>{error} Tap to retry.</Text></Pressable> : null}
         </>}
         ListEmptyComponent={<View style={styles.emptyState}><MaterialIcons name="notifications-none" color={COLORS.muted} size={34}/>
           <Text style={styles.emptyText}>{loading ? 'Loading notifications...' : error ? 'Notifications could not be loaded.' : unreadOnly ? "You're all caught up." : 'No notifications yet.'}</Text>
@@ -111,7 +112,7 @@ export default function NotificationsScreen() {
         </Pressable> : null}
         renderItem={({ item }) => <Pressable accessibilityRole="button" disabled={busy} onPress={() => openNotification(item)}
           style={[styles.notificationCard, !item.read_at && styles.notificationUnread]}>
-          <View style={styles.typeIcon}><MaterialIcons name={item.type === 'admin_announcement' ? 'campaign' : item.type === 'donation_completed' ? 'verified' : 'error-outline'} color={COLORS.brand} size={23}/></View>
+          <View style={[styles.typeIcon,{backgroundColor:item.type==='donation_needs_revision'?PALETTE.revisionSurface:item.type==='donation_rejected'?PALETTE.dangerSurface:item.type==='donation_completed'||item.type==='donation_cooldown_complete'?PALETTE.successSurface:item.type==='donation_reminder'?PALETTE.pendingSurface:PALETTE.infoSurface}]}><MaterialIcons name={item.type === 'admin_announcement' ? 'campaign' : item.type === 'donation_completed' ? 'verified' : 'error-outline'} color={item.type==='donation_needs_revision'?PALETTE.revisionText:item.type==='donation_rejected'?PALETTE.danger:item.type==='donation_completed'||item.type==='donation_cooldown_complete'?PALETTE.successText:item.type==='donation_reminder'?PALETTE.pendingText:PALETTE.info} size={23}/></View>
           <View style={styles.notificationContent}><View style={styles.titleRow}>
             <Text style={[styles.cardTitle,!item.read_at && styles.cardTitleUnread]}>{item.title}</Text>
             {!item.read_at ? <View style={styles.unreadDot}/> : null}
@@ -198,8 +199,8 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     backgroundColor: COLORS.white,
   },
-  notificationUnread: { backgroundColor: '#FFF7F3' },
-  notificationPinned: { borderColor: '#EAB0A9', backgroundColor: COLORS.pinned },
+  notificationUnread: { backgroundColor: PALETTE.selected },
+  notificationPinned: { borderColor: PALETTE.border, backgroundColor: COLORS.pinned },
   cardPressed: { opacity: 0.72, transform: [{ scale: 0.995 }] },
   typeIcon: {
     width: 43,
@@ -226,8 +227,8 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.softRed,
   },
   pinnedText: { color: COLORS.brand, fontSize: 9, fontWeight: '800' },
-  cardMessage: { marginTop: 7, color: COLORS.muted, fontSize: 13, lineHeight: 19 },
-  cardDate: { marginTop: 8, color: COLORS.muted, fontSize: 10, fontWeight: '600' },
+  cardMessage: { marginTop: 7, color: PALETTE.neutralText, fontSize: 13, lineHeight: 19 },
+  cardDate: { marginTop: 8, color: PALETTE.neutralText, fontSize: 10, fontWeight: '600' },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 70 },
   emptyText: { marginTop: 10, color: COLORS.muted, fontSize: 14, fontWeight: '600' },
 });

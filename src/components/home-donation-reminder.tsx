@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { useCallback, useRef, useState } from 'react';
 import { AppState, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -82,18 +83,18 @@ export function HomeDonationReminder() {
     <View style={styles.overlay}><View style={styles.card} accessibilityViewIsModal>
       <Text style={styles.title}>Your donation is tomorrow</Text>
       <Text style={styles.activity}>{reminder.activity_title}</Text>
-      <Text>{reminder.event_date}{reminder.start_time ? ' ? ' + reminder.start_time : ''}</Text>
+      <Text style={{color:PALETTE.text}}>{reminder.event_date}{reminder.start_time ? ' ? ' + reminder.start_time : ''}</Text>
       <Text style={styles.note}>Rest well, eat properly, and stay hydrated.</Text>
       <Pressable accessibilityRole="button" disabled={busy} onPress={view} style={styles.primary}><Text style={styles.primaryText}>{busy ? 'Checking...' : 'View Activity'}</Text></Pressable>
-      {error && <Text accessibilityRole="alert">{error}</Text>}
-      <Pressable accessibilityRole="button" disabled={busy} onPress={acknowledge} style={styles.dismiss}><Text>Got it</Text></Pressable>
+      {error && <Text style={{color:PALETTE.danger}} accessibilityRole="alert">{error}</Text>}
+      <Pressable accessibilityRole="button" disabled={busy} onPress={acknowledge} style={styles.dismiss}><Text style={{color:PALETTE.text}}>Got it</Text></Pressable>
     </View></View>
   </Modal>;
 }
 const styles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: '#00000066', alignItems: 'center', justifyContent: 'center', padding: 24 },
-  card: { width: '100%', maxWidth: 420, padding: 24, borderRadius: 22, gap: 14, backgroundColor: '#FFF9F2' },
-  title: { color: '#D93A3A', fontSize: 22, fontWeight: '800' }, activity: { color: '#372E2E', fontSize: 17, fontWeight: '600' },
-  note: { color: '#766A68', lineHeight: 22 }, primary: { minHeight: 48, padding: 14, alignItems: 'center', borderRadius: 14, backgroundColor: '#D93A3A' },
-  primaryText: { color: '#FFFFFF', fontWeight: '700' }, dismiss: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  card: { width: '100%', maxWidth: 420, padding: 24, borderRadius: 22, gap: 14, backgroundColor: PALETTE.cream },
+  title: { color: PALETTE.primary, fontSize: 22, fontWeight: '800' }, activity: { color: PALETTE.text, fontSize: 17, fontWeight: '600' },
+  note: { color: PALETTE.neutral, lineHeight: 22 }, primary: { minHeight: 48, padding: 14, alignItems: 'center', borderRadius: 14, backgroundColor: PALETTE.primary },
+  primaryText: { color: PALETTE.surface, fontWeight: '700' }, dismiss: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
 });

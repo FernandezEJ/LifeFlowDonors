@@ -4,7 +4,7 @@ const jsx = (type, props) => ({ type, props });
 function load(file, imports = {}, globals = {}) {
   const module = { exports: {} };
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
-  vm.runInNewContext(code, { module, exports: module.exports, require: name => {
+  vm.runInNewContext(code, { module, exports: module.exports, require: name => {if (name === '@/constants/theme') return load('src/constants/theme.ts', {'react-native': {Platform: {select: options => options.default}}});
     if (name.endsWith('.png')) return name;
     if (!(name in imports)) throw Error('Unexpected import: ' + name);
     return imports[name];

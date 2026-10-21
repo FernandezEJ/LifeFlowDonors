@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { useCallback, useRef, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -52,7 +53,7 @@ export function ProfileMascotSelector() {
   return <View style={styles.content}>
     <Text accessibilityRole="header" style={styles.title}>Choose your LifeFlow mascot</Text>
     <Text style={styles.note}>Temporary preview: final mascot artwork will be added later.</Text>
-    {loading ? <ActivityIndicator color="#D93A3A" /> : null}
+    {loading ? <ActivityIndicator color={PALETTE.primary} /> : null}
     {loadError ? <><Text accessibilityRole="alert" style={styles.error}>{loadError}</Text>
       <Pressable accessibilityRole="button" onPress={() => void refresh()} style={styles.button}><Text style={styles.buttonText}>Retry loading avatars</Text></Pressable></> : null}
     <View style={styles.grid}>
@@ -76,14 +77,14 @@ export function ProfileMascotSelector() {
 }
 const styles = StyleSheet.create({
   content: { gap: 16 },
-  title: { color: '#372E2E', fontSize: 18, fontWeight: '700' },
-  note: { color: '#766A68', fontSize: 12, lineHeight: 18 },
+  title: { color: PALETTE.text, fontSize: 18, fontWeight: '700' },
+  note: { color: PALETTE.neutral, fontSize: 12, lineHeight: 18 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 12 },
-  choice: { width: '47%', minHeight: 138, alignItems: 'center', justifyContent: 'center', gap: 6, padding: 10, borderWidth: 2, borderColor: '#F0E2DC', borderRadius: 16, backgroundColor: '#FFFFFF' },
-  selected: { borderColor: '#D93A3A', backgroundColor: '#FDE8E8' },
+  choice: { width: '47%', minHeight: 138, alignItems: 'center', justifyContent: 'center', gap: 6, padding: 10, borderWidth: 2, borderColor: PALETTE.border, borderRadius: 16, backgroundColor: PALETTE.surface },
+  selected: { borderColor: PALETTE.primary, backgroundColor: PALETTE.selected },
   image: { width: 80, height: 80 },
-  label: { color: '#372E2E', fontSize: 14, fontWeight: '700' },
-  error: { color: '#B42318', fontSize: 13 },
-  button: { minHeight: 50, alignItems: 'center', justifyContent: 'center', padding: 12, borderRadius: 14, backgroundColor: '#D93A3A' },
-  buttonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+  label: { color: PALETTE.text, fontSize: 14, fontWeight: '700' },
+  error: { color: PALETTE.danger, fontSize: 13 },
+  button: { minHeight: 50, alignItems: 'center', justifyContent: 'center', padding: 12, borderRadius: 14, backgroundColor: PALETTE.primary },
+  buttonText: { color: PALETTE.surface, fontSize: 14, fontWeight: '700' },
 });

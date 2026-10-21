@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { StyleSheet, Text, View } from 'react-native';
 import type { AnnouncementDocument } from '@/services/donations';
 
@@ -33,7 +34,7 @@ export function AnnouncementBody({ description, document }: { description: strin
 const styles = StyleSheet.create({
   body: { gap: 12, marginTop: 8 },
   legacy: { marginTop: 8 },
-  text: { color: '#766A68', fontSize: 14, lineHeight: 21 },
+  text: { color: PALETTE.neutral, fontSize: 14, lineHeight: 21 },
   bold: { fontWeight: '700' }, italic: { fontStyle: 'italic' },
   list: { gap: 5, paddingLeft: 8 }, row: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   marker: { minWidth: 20 }, item: { flex: 1, flexShrink: 1 },

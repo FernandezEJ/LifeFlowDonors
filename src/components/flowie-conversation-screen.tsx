@@ -91,7 +91,7 @@ export function FlowieConversationScreen({ conversationId }: { conversationId?: 
               <FlowieMessageBubble item={{ id: 'reply-progress', role: 'flowie', message: 'Flowie Thinking...' }} pose="thinking" onAction={openAction} onPrompt={ask} />
             </View> : null}
             {chat.error ? <View style={styles.feedback}>
-              <Text accessibilityRole="alert" style={{ color: c.text }}>{chat.error}</Text>
+              <Text accessibilityRole="alert" style={{ color: c.danger }}>{chat.error}</Text>
               <Pressable accessibilityRole="button" accessibilityLabel="Refresh conversation" disabled={chat.busy || chat.loading}
                 style={styles.textButton} onPress={() => void chat.refresh()}><Text style={{ color: c.accent }}>Refresh conversation</Text></Pressable>
             </View> : null}
@@ -112,7 +112,7 @@ export function FlowieConversationScreen({ conversationId }: { conversationId?: 
                 onPress={startNew} style={[styles.primaryButton, { backgroundColor: c.primary }]}><Text style={[styles.buttonText, { color: c.white }]}>Start New Conversation</Text></Pressable>
               <Pressable accessibilityRole="button" accessibilityLabel="Delete this Conversation" disabled={chat.busy || chat.loading}
                 style={[styles.textButton, styles.centeredAction]} onPress={() => setConfirmDelete(true)}>
-                <Text style={{ color: c.accent }}>Delete this Conversation</Text></Pressable>
+                <Text style={{ color: c.danger }}>Delete this Conversation</Text></Pressable>
             </View>
           </View>
         </View> : <View style={[styles.composerBorder, { borderColor: c.border, backgroundColor: c.surface }]}>

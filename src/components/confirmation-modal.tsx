@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useRef, useState, type ComponentProps } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -21,11 +22,11 @@ export function ConfirmationModal({ visible, icon = 'help-outline', title, messa
       {dismissible && dismissOnBackdrop && <Pressable accessible={false} disabled={busy} onPress={dismiss} style={styles.backdropDismiss}/>}
       <View accessibilityViewIsModal style={styles.card}>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content} bounces={false} keyboardShouldPersistTaps="handled">
-      <View style={styles.icon}><MaterialIcons accessible={false} importantForAccessibility="no" name={icon} size={30} color={variant === 'neutral' ? '#766A68' : '#BE2F2F'} /></View>
+      <View style={[styles.icon,{backgroundColor:variant==='destructive'?PALETTE.dangerSurface:variant==='warning'?PALETTE.pendingSurface:PALETTE.neutralSurface}]}><MaterialIcons accessible={false} importantForAccessibility="no" name={icon} size={30} color={variant === 'neutral' ? PALETTE.neutral : variant==='warning'?PALETTE.pending:PALETTE.danger} /></View>
       <Text accessibilityRole="header" style={styles.title}>{title}</Text><Text style={styles.message}>{message}</Text>
       <View style={styles.actions}>
         <Pressable accessibilityRole="button" accessibilityLabel={secondaryLabel} accessibilityState={{ disabled: busy }} disabled={busy} onPress={onSecondary} style={[styles.button, styles.secondary, busy && styles.disabled]}><Text style={styles.secondaryText}>{secondaryLabel}</Text></Pressable>
-        <Pressable accessibilityRole="button" accessibilityLabel={primaryLabel} accessibilityState={{ disabled: busy, busy }} disabled={busy} onPress={() => void confirm()} style={[styles.button, styles.primary, variant === 'destructive' && styles.destructive, busy && styles.disabled]}>{busy ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.primaryText}>{primaryLabel}</Text>}</Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel={primaryLabel} accessibilityState={{ disabled: busy, busy }} disabled={busy} onPress={() => void confirm()} style={[styles.button, styles.primary, variant === 'warning' && styles.warning, variant === 'destructive' && styles.destructive, busy && styles.disabled]}>{busy ? <ActivityIndicator color={PALETTE.surface} /> : <Text style={styles.primaryText}>{primaryLabel}</Text>}</Pressable>
       </View>
       </ScrollView>
     </View></SafeAreaView>
@@ -34,13 +35,13 @@ export function ConfirmationModal({ visible, icon = 'help-outline', title, messa
 const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: 'rgba(55,46,46,0.35)' },
   backdropDismiss: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 },
-  card: { width: '100%', maxWidth: 360, maxHeight: '100%', borderRadius: 24, backgroundColor: '#FFF9F2', elevation: 4, shadowColor: '#372E2E', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 10 },
+  card: { width: '100%', maxWidth: 360, maxHeight: '100%', borderRadius: 24, backgroundColor: PALETTE.surface, elevation: 4, shadowColor: PALETTE.text, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 10 },
   scroll: { flexGrow: 0, borderRadius: 24 }, content: { padding: 24 },
-  icon: { alignSelf: 'center', backgroundColor: '#FFF4EF', borderRadius: 30, padding: 14, marginBottom: 16 },
-  title: { textAlign: 'center', fontSize: 21, lineHeight: 28, fontWeight: '700', color: '#372E2E' },
-  message: { textAlign: 'center', fontSize: 15, lineHeight: 22, color: '#766A68', marginTop: 10 },
+  icon: { alignSelf: 'center', backgroundColor: PALETTE.selected, borderRadius: 30, padding: 14, marginBottom: 16 },
+  title: { textAlign: 'center', fontSize: 21, lineHeight: 28, fontWeight: '700', color: PALETTE.text },
+  message: { textAlign: 'center', fontSize: 15, lineHeight: 22, color: PALETTE.neutral, marginTop: 10 },
   actions: { flexDirection: 'row', gap: 12, marginTop: 24 },
   button: { flex: 1, minWidth: 0, minHeight: 48, borderRadius: 14, justifyContent: 'center', alignItems: 'center', padding: 10 },
-  secondary: { borderWidth: 1, borderColor: '#D9C9C3' }, primary: { backgroundColor: '#D93A3A' }, destructive: { backgroundColor: '#BE2F2F' }, disabled: { opacity: 0.65 },
-  secondaryText: { color: '#534542', fontWeight: '600', textAlign: 'center', flexShrink: 1 }, primaryText: { color: '#FFFFFF', fontWeight: '700', textAlign: 'center', flexShrink: 1 },
+  secondary: { borderWidth: 1, borderColor: PALETTE.border }, primary: { backgroundColor: PALETTE.primary }, warning: { backgroundColor: PALETTE.pending }, destructive: { backgroundColor: PALETTE.danger }, disabled: { opacity: 0.65 },
+  secondaryText: { color: PALETTE.neutralText, fontWeight: '600', textAlign: 'center', flexShrink: 1 }, primaryText: { color: PALETTE.surface, fontWeight: '700', textAlign: 'center', flexShrink: 1 },
 });

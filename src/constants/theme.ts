@@ -5,16 +5,41 @@
 
 import { Platform } from 'react-native';
 
-const tintColorLight = '#0a7ea4';
+// Shared semantic colors. Cream/decorative surfaces retain the polished mobile identity.
+export const LifeFlowColors = {
+  primary: '#9B1238', primaryPressed: '#7D0F2D',
+  danger: '#B42318', dangerPressed: '#912017', dangerSurface: '#FEF3F2',
+  success: '#15803D', successText: '#166534', successSurface: '#ECFDF3',
+  pending: '#B45309', pendingText: '#92400E', pendingSurface: '#FFF7E6',
+  revision: '#EA580C', revisionAction: '#C2410C', revisionPressed: '#9A3412',
+  revisionText: '#9A3412', revisionSurface: '#FFF7ED',
+  info: '#1D4ED8', infoSurface: '#EFF6FF',
+  neutral: '#64748B', neutralText: '#475569', neutralSurface: '#F1F5F9',
+  background: '#F8FAFC', surface: '#FFFFFF', text: '#0F172A', border: '#E2E8F0', selected: '#FFF1F3',
+  cream: '#FFF9F2', decorativeTop: '#FDECE6', decorativeBottom: '#FCE9E2',
+  pointsSurface: '#FFF3DC', pointsBorder: '#F1DFC1',
+} as const;
+
+// Presentation only: Laravel remains authoritative for participation status.
+export const DonationStatusColors = {
+  pending: { text: LifeFlowColors.pendingText, surface: LifeFlowColors.pendingSurface },
+  for_verification: { text: LifeFlowColors.pendingText, surface: LifeFlowColors.pendingSurface },
+  needs_revision: { text: LifeFlowColors.revisionText, surface: LifeFlowColors.revisionSurface },
+  completed: { text: LifeFlowColors.successText, surface: LifeFlowColors.successSurface },
+  rejected: { text: LifeFlowColors.danger, surface: LifeFlowColors.dangerSurface },
+  cancelled: { text: LifeFlowColors.neutralText, surface: LifeFlowColors.neutralSurface },
+} as const;
+
+const tintColorLight = LifeFlowColors.primary;
 const tintColorDark = '#fff';
 
 export const Colors = {
   light: {
-    text: '#11181C',
-    background: '#fff',
+    text: LifeFlowColors.text,
+    background: LifeFlowColors.background,
     tint: tintColorLight,
-    icon: '#687076',
-    tabIconDefault: '#687076',
+    icon: LifeFlowColors.neutral,
+    tabIconDefault: LifeFlowColors.neutral,
     tabIconSelected: tintColorLight,
   },
   dark: {

@@ -5,7 +5,7 @@ import * as SecureStore from 'expo-secure-store';
 // A per-account request key survives closure after a lost success response.
 // This contains no credentials and cannot authorize spending without Sanctum.
 // ========================================
-export type PendingRedemption = { rewardId: number; requestKey: string };
+export type PendingRedemption = { rewardId: number; requestKey: string; variantId?: number };
 const key = (userId: number) => 'lifeflow-redemption-' + userId;
 export const redemptionStorage = {
   read: async (userId: number): Promise<PendingRedemption | null> => {

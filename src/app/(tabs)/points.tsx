@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
 import { useAuth } from '@/contexts/auth-context';
 import { errorMessage } from '@/services/api';
@@ -10,17 +11,17 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const COLORS = {
-  background: '#FFF9F2',
-  brand: '#D93A3A',
-  brandPressed: '#BE2F2F',
-  text: '#372E2E',
-  muted: '#766A68',
-  border: '#F0E2DC',
-  white: '#FFFFFF',
-  softRed: '#FDE8E8',
-  transactionBackground: '#FFF3DC',
-  earned: '#348455',
-  redeemed: '#CC684A',
+  background: PALETTE.cream,
+  brand: PALETTE.primary,
+  brandPressed: PALETTE.primaryPressed,
+  text: PALETTE.text,
+  muted: PALETTE.neutral,
+  border: PALETTE.border,
+  white: PALETTE.surface,
+  softRed: PALETTE.selected,
+  transactionBackground: PALETTE.pointsSurface,
+  earned: PALETTE.successText,
+  redeemed: PALETTE.primary,
 };
 
 type TransactionFilter = 'all' | 'earned' | 'redeemed';
@@ -119,7 +120,7 @@ export default function PointsScreen() {
             </Pressable>
             </View>
           </View>
-          {balanceError ? <View><Text accessibilityRole="alert">{balanceError}</Text><Pressable accessibilityRole="button" disabled={balanceLoading} onPress={() => void loadBalance()} style={styles.retry}><Text style={styles.vouchersText}>Retry balance</Text></Pressable></View> : null}
+          {balanceError ? <View><Text style={{color:PALETTE.danger}} accessibilityRole="alert">{balanceError}</Text><Pressable accessibilityRole="button" disabled={balanceLoading} onPress={() => void loadBalance()} style={styles.retry}><Text style={styles.vouchersText}>Retry balance</Text></Pressable></View> : null}
           <View style={styles.transactionsSection}>
             <Text style={styles.historyHeading}>Points History</Text>
             <View style={styles.filterBar}>
@@ -145,7 +146,7 @@ export default function PointsScreen() {
             </View>
 
             {loading && !page ? <TabSkeleton /> : null}
-            {error ? <View><Text accessibilityRole="alert">{error}</Text><Pressable onPress={() => void load()}><Text>Retry</Text></Pressable></View> : null}
+            {error ? <View><Text accessibilityRole="alert" style={{color:PALETTE.danger}}>{error}</Text><Pressable onPress={() => void load()}><Text style={{color:PALETTE.text}}>Retry</Text></Pressable></View> : null}
             {page || !loading ? <ScrollView ref={historyScrollRef} key={selectedFilter} accessibilityLabel="Points history" nestedScrollEnabled
               showsVerticalScrollIndicator={false} scrollEnabled={filteredTransactions.length > 5} bounces={false}
               style={[styles.historyViewport, filteredTransactions.length > 5 && styles.historyLimited]}
@@ -177,7 +178,7 @@ export default function PointsScreen() {
                   <Text style={styles.emptyText}>{error ? 'History unavailable.' : 'No transactions yet.'}</Text>
                 </View>
               )}
-            {page && page.current_page < page.last_page ? <Pressable style={styles.retry} disabled={loading} onPress={() => void load(page.current_page + 1)}><Text>{loading ? 'Loading more...' : 'Load more transactions'}</Text></Pressable> : null}
+            {page && page.current_page < page.last_page ? <Pressable style={styles.retry} disabled={loading} onPress={() => void load(page.current_page + 1)}><Text style={{color:PALETTE.text}}>{loading ? 'Loading more...' : 'Load more transactions'}</Text></Pressable> : null}
             </ScrollView> : null}
           </View>
           </>}
@@ -247,7 +248,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.brand,
     borderRadius: 77,
     backgroundColor: COLORS.white,
-    shadowColor: '#8B3028',
+    shadowColor: PALETTE.primaryPressed,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.08,
     shadowRadius: 9,
@@ -281,7 +282,7 @@ const styles = StyleSheet.create({
   transactionsSection: {
     padding: 15,
     borderWidth: 1,
-    borderColor: '#F1DFC1',
+    borderColor: PALETTE.pointsBorder,
     borderRadius: 23,
     backgroundColor: COLORS.transactionBackground,
   },

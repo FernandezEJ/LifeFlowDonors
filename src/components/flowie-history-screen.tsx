@@ -34,7 +34,7 @@ export function FlowieManagementActions({ onEnded }: { onEnded: () => Promise<vo
       style={[styles.endButton, { backgroundColor: c.primary }, !canEnd && styles.disabled]}>
       {chat.busy ? <ActivityIndicator color={c.white} /> : <Text style={[styles.endText, { color: c.white }]}>End Conversation</Text>}
     </Pressable>
-    {chat.error ? <View style={styles.feedback}><Text accessibilityRole="alert" style={{ color: c.text }}>{chat.error}</Text>
+    {chat.error ? <View style={styles.feedback}><Text accessibilityRole="alert" style={{ color: c.danger }}>{chat.error}</Text>
       <Pressable accessibilityRole="button" accessibilityLabel="Refresh active conversation" disabled={chat.busy || chat.loading}
         style={styles.textButton} onPress={() => void chat.refresh()}><Text style={{ color: c.accent }}>Retry</Text></Pressable></View> : null}
     <ConfirmationModal visible={confirmEnd} title="End Conversation"
@@ -62,7 +62,7 @@ export function FlowieHistoryScreen({ deleted = false }: { deleted?: boolean }) 
           <Text style={{ color: c.accent, fontWeight: '700' }}>{item.recoverable ? 'Restore' : 'Recovery period ended'}</Text>}
       </Pressable>
     </> : <View style={styles.metadata}><Text style={[styles.detail, { color: c.muted }]}>{flowieDate(item.last_message_at ?? item.created_at)}</Text>
-      <Text style={[styles.status, { color: c.accent, backgroundColor: c.soft }]}>{item.status === 'active' ? 'Active' : 'Ended'}</Text></View>}
+      <Text style={[styles.status, { color: item.status === 'active' ? c.success : c.softText, backgroundColor: c.soft }]}>{item.status === 'active' ? 'Active' : 'Ended'}</Text></View>}
   </View>;
   return <><Head><title>{title} | LifeFlow</title></Head><Stack.Screen options={{ headerShown: false, title }} />
     <SafeAreaView edges={['top', 'bottom']} style={[styles.screen, { backgroundColor: c.background }]}>
@@ -85,8 +85,8 @@ export function FlowieHistoryScreen({ deleted = false }: { deleted?: boolean }) 
                 onPress={() => router.push('/flowie-recently-deleted')}><Text style={[styles.deletedText, { color: c.accent }]}>Recently Deleted</Text></Pressable>
             </View>
           </> : null}
-          {history.notice ? <Text accessibilityLiveRegion="polite" style={[styles.feedback, { color: c.accent }]}>{history.notice}</Text> : null}
-          {history.error ? <View style={styles.feedback}><Text accessibilityRole="alert" style={{ color: c.text }}>{history.error}</Text>
+          {history.notice ? <Text accessibilityLiveRegion="polite" style={[styles.feedback, { color: c.success }]}>{history.notice}</Text> : null}
+          {history.error ? <View style={styles.feedback}><Text accessibilityRole="alert" style={{ color: c.danger }}>{history.error}</Text>
             <Pressable accessibilityRole="button" accessibilityLabel="Retry history" disabled={history.loading || history.restoring !== null}
               style={styles.textButton} onPress={history.refresh}><Text style={{ color: c.accent }}>Retry</Text></Pressable></View> : null}
         </>}

@@ -2,7 +2,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
 function load(path,imports={},globals={}){
  const module={exports:{}};const code=ts.transpileModule(fs.readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
- vm.runInNewContext(code,{module,exports:module.exports,require:n=>{if(n.endsWith('.png')){assert.ok(fs.existsSync(require('node:path').resolve(require('node:path').dirname(path),n)));return n;}if(!(n in imports))throw Error('Unexpected import '+n);return imports[n];},...globals});return module.exports;
+ vm.runInNewContext(code,{module,exports:module.exports,require:n=>{if (n === '@/constants/theme') return load('src/constants/theme.ts', {'react-native': {Platform: {select: options => options.default}}}); if(n.endsWith('.png')){assert.ok(fs.existsSync(require('node:path').resolve(require('node:path').dirname(path),n)));return n;}if(!(n in imports))throw Error('Unexpected import '+n);return imports[n];},...globals});return module.exports;
 }
 const flush=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
@@ -179,6 +179,7 @@ function host(){
    const confirmation=()=>restModal().props;
    assert.ok(texts(view()).includes('Final donation eligibility is determined by the facility.'));
    if(source==='9'){assert.ok(nodes(view()).some(n=>n.type==='Image' && n.props.source?.uri===admin.image_url));assert.ok(texts(view()).includes('September 14, 2026'));assert.equal(nodes(view()).find(n=>n.type==='Text'&&n.props.children===admin.description).props.numberOfLines,undefined);}
+   button(view(),'Evaluate').props.onPress();assert.equal(routes.pop(),'/evaluation','Evaluate keeps the existing self-assessment route');
    const go=button(view(),'Go Donate');go.props.onPress();go.props.onPress();await flush();
    assert.equal(joins,0,'No creation before confirmation');
    if(['pending','for_verification','needs_revision'].includes(scenario)){
@@ -230,5 +231,69 @@ function host(){
    detailHost.unmount();
   }
  }
+ // Task 03 exercises the actual details screen through its native boundary.
+ async function detailsScenario({id='9',result={opportunity:admin},error,width=375,fontScale=1}={}){
+  const h=host(),routes=[],calls=[];let response=result,failure=error;
+  const auth={opportunity:async key=>{calls.push(['load',key]);if(failure)throw failure;return response;},
+   donationHistory:async()=>({data:[]}),eligibilityState:async()=>({assessment:{result:'eligible'},cooldown_active:true,remaining_seconds:100}),
+   joinOpportunity:async key=>{calls.push(['join',key]);throw new ApiError('This announcement is no longer available.',404);}};
+  const module=load('src/app/announcement/[id].tsx',{...shared,'@/components/confirmation-modal':{ConfirmationModal:'ConfirmationModal'},
+   '@/services/eligibility':eligibility,'react-native':{...native,useWindowDimensions:()=>({width,fontScale})},react:h.react,
+   'expo-router':{Stack:{Screen:'Screen'},useFocusEffect:h.focus,useRouter:()=>({push:r=>routes.push(r),back:()=>routes.push('back'),canGoBack:()=>true,replace:r=>routes.push(r)}),useLocalSearchParams:()=>({id})},
+   '@/contexts/auth-context':{useAuth:()=>auth},'@/services/api':{ApiError,errorMessage:e=>e.message}});
+  const view=()=>h.render(module.default);const initial=view();await flush();
+  return {h,view,initial,routes,calls,auth,setResponse:value=>{response=value;failure=undefined;}};
+ }
+ const flatStyle=value=>Object.assign({},...[value].flat(Infinity).filter(Boolean));
+ let d=await detailsScenario({result:{opportunity:{...admin,start_time:'09:05:00',end_time:'15:30:00',description_document:richDoc}}});
+ let tree=d.view(),copy=texts(tree);
+ const safe=nodes(tree).find(n=>n.type==='SafeAreaView');assert.equal(safe.props.style.backgroundColor,'#FFF9F2');
+ assert.deepEqual(Array.from(safe.props.edges),['top','right','bottom','left']);
+ assert.ok(nodes(d.initial).some(n=>n.props?.accessibilityLabel==='Loading announcement'));assert.equal(button(d.initial,'Go Donate'),undefined,'No actions before loading');
+ const headings=nodes(tree).filter(n=>n.type==='Text'&&n.props.accessibilityRole==='header').map(n=>texts(n));
+ assert.deepEqual(headings,['Announcement Details',admin.title,'About This Event','LifeFlow Donation Rewards','Before You Donate']);
+ for(const label of ['Event Date','September 14, 2026','9:05 AM – 3:30 PM','Event Location',admin.location,'Bring ID','1.','2.','Points are awarded only after an Admin verifies your donation.','300','50','500'])assert.ok(copy.includes(label),label);
+ assert.doesNotMatch(copy,/09:05:00|15:30:00/);
+ for(const [a,b] of [[admin.title,'Event Date'],['Event Date','Event Location'],['Event Location','About This Event'],['About This Event','LifeFlow Donation Rewards'],['LifeFlow Donation Rewards','Before You Donate'],['Before You Donate','Evaluate']])assert.ok(copy.indexOf(a)<copy.indexOf(b),`${a} before ${b}`);
+ assert.equal(nodes(tree).find(n=>n.type==='Image').props.resizeMode,'cover');
+ assert.equal(nodes(tree).find(n=>n.type==='Image').props.source.uri,admin.image_url);
+ assert.ok(nodes(tree).some(n=>n.props?.style?.aspectRatio===16/9),'Banner retains proportional sizing');
+ assert.ok(!nodes(tree).some(n=>n.type==='Text'&&n.props.children==='Bloodletting'),'No fabricated category');
+ const scroll=nodes(tree).find(n=>n.type==='ScrollView');assert.equal(scroll.props.style.flex,1);
+ assert.ok(!nodes(scroll).includes(button(tree,'Evaluate'))&&!nodes(scroll).includes(button(tree,'Go Donate')),'CTA is a layout sibling below scroll content');
+ assert.ok(nodes(tree).some(n=>n.type==='View'&&n.props.style?.flexShrink===0&&n.props.style?.backgroundColor==='#FFF9F2'));
+ assert.ok(button(tree,'Evaluate').props.style({pressed:false}).some(s=>s?.borderWidth===1));
+ assert.ok(button(tree,'Go Donate').props.style({pressed:false}).some(s=>s?.backgroundColor==='#9B1238'));
+ nodes(tree).find(n=>n.props?.accessibilityLabel==='Go back').props.onPress();assert.equal(d.routes.pop(),'back');
+ const brokenImage=nodes(tree).find(n=>n.type==='Image');brokenImage.props.onError();assert.ok(texts(d.view()).includes('No event image available'));assert.equal(nodes(d.view()).find(n=>n.type==='Image'),undefined);d.h.unmount();
+ for(const [width,fontScale,stacked] of [[320,1,true],[375,1,false],[375,2,true],[768,1,false]]){
+  d=await detailsScenario({width,fontScale,result:{opportunity:{...admin,title:'A very long event title '.repeat(12),description:'Complete event description. '.repeat(100)}}});tree=d.view();
+  const row=nodes(tree).find(n=>n.type==='View'&&Array.isArray(n.props.style)&&n.props.style.some(s=>s?.maxWidth===620&&s?.gap===10));
+  assert.equal(flatStyle(row.props.style).flexDirection,stacked?'column':'row');
+  for(const label of ['Evaluate','Go Donate']){
+   const action=button(tree,label),appearance=flatStyle(action.props.style({pressed:false}));assert.ok(appearance.minHeight>=44);
+   assert.equal(appearance.minWidth,0);if(stacked)assert.equal(appearance.flexBasis,'auto','Larger fonts retain natural button height');
+  }
+  const longText=nodes(tree).find(n=>n.type==='Text'&&typeof n.props.children==='string'&&n.props.children.startsWith('Complete event description.'));
+  assert.equal(longText.props.numberOfLines,undefined);assert.equal(longText.props.children.length,'Complete event description. '.repeat(100).length);d.h.unmount();
+ }
+ for(const partial of [{title:'',description:'',location:null,event_date:null,start_time:'bad',end_time:'bad',image_url:null},
+   {event_date:'2026-02-30',start_time:'00:00:00',end_time:'12:00:00',image_url:'file:///private/poster.png'}]){
+  d=await detailsScenario({result:{opportunity:{...admin,...partial}}});copy=texts(d.view());assert.ok(copy.includes('No event image available')&&copy.includes('Date to be announced'));
+  if(partial.title==='')for(const label of ['Announcement','Location to be announced','No event description is available.'])assert.ok(copy.includes(label));
+  else assert.ok(copy.includes('12:00 AM – 12:00 PM'));d.h.unmount();
+ }
+ for(const id of [undefined,'bad-id','../9','0']){
+  // Explicit missing parameter must bypass the helper's default ID.
+  d=await detailsScenario({id:id===undefined?null:id});assert.ok(texts(d.view()).includes('This announcement is unavailable.'));assert.equal(d.calls.length,0);assert.equal(button(d.view(),'Go Donate'),undefined);d.h.unmount();
+ }
+ for(const result of [null,{}, {opportunity:null}]){d=await detailsScenario({result});assert.ok(texts(d.view()).includes('This announcement is unavailable.'));assert.equal(button(d.view(),'Go Donate'),undefined);d.h.unmount();}
+ d=await detailsScenario({error:new ApiError('Not found',404)});assert.match(texts(d.view()),/unavailable or has expired/);assert.equal(button(d.view(),'Go Donate'),undefined);
+ d.setResponse({opportunity:admin});button(d.view(),'Retry donation details').props.onPress();await flush();assert.ok(button(d.view(),'Go Donate'));assert.equal(d.calls.filter(c=>c[0]==='load').length,2);d.h.unmount();
+ d=await detailsScenario({error:new Error('Network unavailable')});assert.match(texts(d.view()),/Network unavailable/);assert.ok(button(d.view(),'Retry donation details'));d.h.unmount();
+ d=await detailsScenario();button(d.view(),'Go Donate').props.onPress();await flush();nodes(d.view()).find(n=>n.type==='ConfirmationModal').props.onPrimary();await flush();
+ assert.match(texts(d.view()),/This announcement is no longer available/);assert.equal(d.routes.length,0);assert.equal(d.calls.filter(c=>c[0]==='join').length,1);d.h.unmount();
+ const late=deferred();d=await detailsScenario({result:late.promise});d.h.unmount();late.resolve({opportunity:admin});await flush();assert.equal(button(d.view(),'Go Donate'),undefined,'Late detail response cannot restore a departed screen');
+ console.log('Task 03 details UI checks passed: cream theme, screenshot hierarchy, real banner/failure fallback, dates/times/nulls, full safe rich text/plain text, truthful guidance, footer/320/375dp/large-font configuration, Back/Evaluate, invalid/empty/expired/network/retry states and server-rejected join. Native boundaries mocked.');
  console.log('Red Cross / Go Donate checks passed: both sources, ordered validation, popup routes, expiry, cancel, duplicate taps, changed-server-state recovery, offline safety and shared Activity navigation.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

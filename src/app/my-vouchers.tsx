@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
@@ -6,19 +7,19 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { NotificationBell } from '@/components/notification-bell';
 import { useAuth } from '@/contexts/auth-context';
 import { errorMessage } from '@/services/api';
-import { voucherActionLabel, voucherDate, voucherState, voucherStatusLabel, type Page, type Voucher, type VoucherStatus } from '@/services/rewards';
+import { rewardLabel, hasVoucherValue, voucherActionLabel, voucherDate, voucherState, voucherStatusLabel, type Page, type Voucher, type VoucherStatus } from '@/services/rewards';
 const COLORS = {
-  background: '#FFF9F2',
-  brand: '#D93A3A',
-  brandPressed: '#BE2F2F',
-  text: '#372E2E',
-  muted: '#766A68',
-  border: '#F0E2DC',
-  white: '#FFFFFF',
-  softRed: '#FDE8E8',
-  active: '#287A47',
-  activeBackground: '#E2F5E9',
-  expiredBackground: '#EEE9E6',
+  background: PALETTE.cream,
+  brand: PALETTE.primary,
+  brandPressed: PALETTE.primaryPressed,
+  text: PALETTE.text,
+  muted: PALETTE.neutral,
+  border: PALETTE.border,
+  white: PALETTE.surface,
+  softRed: PALETTE.selected,
+  active: PALETTE.successText,
+  activeBackground: PALETTE.successSurface,
+  expiredBackground: PALETTE.neutralSurface,
 };
 
 
@@ -73,22 +74,22 @@ export default function MyVouchersScreen() {
       <FlatList data={records} keyExtractor={item => String(item.id)} contentContainerStyle={styles.listContent}
         refreshing={loading} onRefresh={() => void load()} ItemSeparatorComponent={() => <View style={styles.separator} />}
         ListHeaderComponent={<View style={styles.listHeader}>
-          <Text style={styles.introTitle}>Your reward vouchers</Text><Text style={styles.introText}>Activate a claim code when you are ready to collect your reward.</Text>
+          <Text style={styles.introTitle}>Your rewards</Text><Text style={styles.introText}>Activate a claim code when you are ready to collect your reward.</Text>
           <View style={styles.filterBar}>{FILTERS.map(filter => <Pressable key={filter} accessibilityRole="button" accessibilityState={{ selected: selected === filter }}
             onPress={() => { if (selected !== filter) { setPage(null); setSelected(filter); } }} style={[styles.filterChip, selected === filter && styles.filterChipSelected]}>
             <Text style={[styles.filterText, selected === filter && styles.filterTextSelected]}>{filter}</Text></Pressable>)}</View>
-          {error ? <View><Text accessibilityRole="alert">{error}</Text><Pressable onPress={() => void load()}><Text>Retry</Text></Pressable></View> : null}
+          {error ? <View><Text accessibilityRole="alert" style={{color:PALETTE.danger}}>{error}</Text><Pressable onPress={() => void load()}><Text style={{color:PALETTE.text}}>Retry</Text></Pressable></View> : null}
         </View>}
-        ListEmptyComponent={<View style={styles.emptyState}><Text style={styles.emptyText}>{loading ? 'Loading vouchers...' : error ? 'Vouchers unavailable.' : 'No vouchers found.'}</Text></View>}
-        ListFooterComponent={currentPage && currentPage.current_page < currentPage.last_page ? <Pressable accessibilityRole="button" disabled={loading} onPress={() => void load(currentPage.current_page + 1)}><Text>Load more</Text></Pressable> : null}
+        ListEmptyComponent={<View style={styles.emptyState}><Text style={styles.emptyText}>{loading ? 'Loading rewards...' : error ? 'Rewards unavailable.' : 'No rewards found.'}</Text></View>}
+        ListFooterComponent={currentPage && currentPage.current_page < currentPage.last_page ? <Pressable accessibilityRole="button" disabled={loading} onPress={() => void load(currentPage.current_page + 1)}><Text style={{color:PALETTE.text}}>Load more</Text></Pressable> : null}
         renderItem={({ item }) => <View style={styles.voucherCard}>
           <View style={styles.cardTopRow}><View style={styles.voucherIcon}><MaterialIcons name="confirmation-number" color={COLORS.brand} size={25} /></View>
-            <View style={styles.cardHeading}><Text style={styles.voucherTitle}>{item.reward.name}</Text><Text style={styles.voucherCost}>{item.points_spent} Blood Points</Text></View>
-            <View style={[styles.statusBadge, { backgroundColor: voucherState(item) === 'claimed' ? COLORS.activeBackground : voucherState(item) === 'legacy' || voucherState(item) === 'unavailable' ? COLORS.expiredBackground : COLORS.softRed }]}><Text style={styles.statusText}>{voucherStatusLabel(item)}</Text></View></View>
+            <View style={styles.cardHeading}><Text style={styles.voucherTitle}>{rewardLabel(item.reward)}</Text>{hasVoucherValue(item.reward) && <Text style={styles.voucherCost}>Voucher Value: ₱{item.reward.voucher_value}</Text>}<Text style={styles.voucherCost}>{item.points_spent} Blood Points</Text></View>
+            <View style={[styles.statusBadge, { backgroundColor: voucherState(item) === 'claimed' ? COLORS.activeBackground : voucherState(item) === 'pending_claim' ? PALETTE.pendingSurface : COLORS.expiredBackground }]}><Text style={[styles.statusText,{color:voucherState(item)==='claimed'?PALETTE.successText:voucherState(item)==='pending_claim'?PALETTE.pendingText:PALETTE.neutralText}]}>{voucherStatusLabel(item)}</Text></View></View>
           {item.activated_at ? <Text style={styles.stateMessage}>Activated: {voucherDate(item.activated_at)}</Text> : null}
           {voucherState(item) === 'claimed' ? <Text style={styles.stateMessage}>Claimed: {voucherDate(item.claimed_at)}</Text> : null}
           {voucherState(item) === 'available' ? <Text style={styles.stateMessage}>Ready to activate your claim code.</Text> : null}
-          <Pressable accessibilityRole="button" accessibilityLabel={`${voucherActionLabel(item)} for ${item.reward.name}`} disabled={loading} style={styles.viewButton} onPress={() => router.push({ pathname: '/voucher', params: { id: String(item.id) } })}><Text style={styles.viewButtonText}>{voucherActionLabel(item)}</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel={`${voucherActionLabel(item)} for ${rewardLabel(item.reward)}`} disabled={loading} style={styles.viewButton} onPress={() => router.push({ pathname: '/voucher', params: { id: String(item.id) } })}><Text style={styles.viewButtonText}>{voucherActionLabel(item)}</Text></Pressable>
         </View>} />
     </SafeAreaView></>;
 }
@@ -162,7 +163,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 5,
     borderWidth: 1,
-    borderColor: '#F0CBC6',
+    borderColor: PALETTE.border,
     borderRadius: 18,
     backgroundColor: 'transparent',
   },
@@ -179,7 +180,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     borderRadius: 20,
     backgroundColor: COLORS.white,
-    shadowColor: '#6E514C',
+    shadowColor: PALETTE.text,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.05,
     shadowRadius: 7,

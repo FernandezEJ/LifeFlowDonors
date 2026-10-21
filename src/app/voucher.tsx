@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { ConfirmationModal } from '@/components/confirmation-modal';
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
@@ -7,21 +8,21 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { NotificationBell } from '@/components/notification-bell';
 import { useAuth } from '@/contexts/auth-context';
 import { errorMessage } from '@/services/api';
-import { ACTIVATION_MESSAGE, usableClaimCode, voucherDate, voucherState, voucherStatusLabel, type VoucherResponse } from '@/services/rewards';
+import { rewardLabel, hasVoucherValue, ACTIVATION_MESSAGE, usableClaimCode, voucherDate, voucherState, voucherStatusLabel, type VoucherResponse } from '@/services/rewards';
 const COLORS = {
-  background: '#FFF9F2',
-  brand: '#D93A3A',
-  brandPressed: '#BE2F2F',
-  text: '#372E2E',
-  muted: '#766A68',
-  border: '#F0E2DC',
-  white: '#FFFFFF',
-  softRed: '#FDE8E8',
-  warning: '#FFF3DC',
-  warningBorder: '#F0D8A4',
-  active: '#287A47',
-  activeBackground: '#E2F5E9',
-  expiredBackground: '#EEE9E6',
+  background: PALETTE.cream,
+  brand: PALETTE.primary,
+  brandPressed: PALETTE.primaryPressed,
+  text: PALETTE.text,
+  muted: PALETTE.neutral,
+  border: PALETTE.border,
+  white: PALETTE.surface,
+  softRed: PALETTE.selected,
+  warning: PALETTE.pendingSurface,
+  warningBorder: PALETTE.border,
+  active: PALETTE.successText,
+  activeBackground: PALETTE.successSurface,
+  expiredBackground: PALETTE.neutralSurface,
 };
 
 
@@ -48,11 +49,11 @@ export default function VoucherScreen() {
     const current = ++generation.current; setLoading(true); setError(''); setResponse(null);
     lock.current = false; setConfirmActivation(false);
     if (!accountId) { setLoading(false); return; }
-    if (!Number.isSafeInteger(voucherId) || voucherId <= 0) { setResponse(null); setError('Voucher not found.'); setLoading(false); return; }
+    if (!Number.isSafeInteger(voucherId) || voucherId <= 0) { setResponse(null); setError('Reward not found.'); setLoading(false); return; }
     try {
       const result = await getVoucher(voucherId);
       if (current === generation.current) {
-        if (result.voucher.id !== voucherId) setError('Voucher not found.');
+        if (result.voucher.id !== voucherId) setError('Reward not found.');
         else setResponse({ ...result, accountId });
       }
     }
@@ -86,7 +87,7 @@ export default function VoucherScreen() {
       if (current !== generation.current) return;
       const result = await getVoucher(voucherId);
       if (current === generation.current) {
-        if (result.voucher.id !== voucherId) setError('Voucher not found.');
+        if (result.voucher.id !== voucherId) setError('Reward not found.');
         else setResponse({ ...result, accountId });
       }
     }
@@ -110,14 +111,14 @@ export default function VoucherScreen() {
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
       <View style={styles.fixedHeader}><View style={styles.header}>
         <Pressable accessibilityLabel="Go back" onPress={() => router.back()} style={styles.headerButton}><MaterialIcons name="arrow-back" color={COLORS.text} size={23} /></Pressable>
-        <Text style={styles.headerTitle}>Voucher</Text><NotificationBell />
+        <Text style={styles.headerTitle}>Reward</Text><NotificationBell />
       </View></View>
       <ScrollView contentContainerStyle={styles.scrollContent} refreshControl={<RefreshControl refreshing={loading} onRefresh={() => { if (!submitted.current) void load(); }} tintColor={COLORS.brand} />}><View style={styles.content}>
-        {loading ? <Text accessibilityLiveRegion="polite">{busy ? 'Activating claim code...' : 'Loading voucher...'}</Text> : null}
-        {error ? <View><Text accessibilityRole="alert">{error}</Text><Pressable disabled={busy} onPress={() => void load()}><Text>Retry</Text></Pressable></View> : null}
+        {loading ? <Text style={{color:PALETTE.text}} accessibilityLiveRegion="polite">{busy ? 'Activating claim code...' : 'Loading reward...'}</Text> : null}
+        {error ? <View><Text accessibilityRole="alert" style={{color:PALETTE.danger}}>{error}</Text><Pressable disabled={busy} onPress={() => void load()}><Text style={{color:PALETTE.text}}>Retry</Text></Pressable></View> : null}
         {voucher ? <>
-          <View style={styles.titleBlock}><View style={[styles.statusBadge, state === 'claimed' && styles.activeBadge, (state === 'legacy' || state === 'unavailable') && styles.expiredBadge]}><Text style={[styles.statusText, state === 'claimed' && styles.activeStatusText, (state === 'legacy' || state === 'unavailable') && styles.expiredStatusText]}>{voucherStatusLabel(voucher)}</Text></View>
-            <Text style={styles.voucherTitle}>{voucher.reward.name}</Text><Text style={styles.voucherCost}>{voucher.points_spent} Blood Points</Text><Text style={styles.description}>{voucher.reward.description}</Text></View>
+          <View style={styles.titleBlock}><View style={[styles.statusBadge, state === 'pending_claim' && {backgroundColor:PALETTE.pendingSurface}, state === 'claimed' && styles.activeBadge, (state === 'legacy' || state === 'unavailable') && styles.expiredBadge]}><Text style={[styles.statusText, state === 'pending_claim' && {color:PALETTE.pendingText}, state === 'claimed' && styles.activeStatusText, (state === 'legacy' || state === 'unavailable') && styles.expiredStatusText]}>{voucherStatusLabel(voucher)}</Text></View>
+            <Text style={styles.voucherTitle}>{rewardLabel(voucher.reward)}</Text>{hasVoucherValue(voucher.reward) && <Text style={styles.voucherCost}>Voucher Value: ₱{voucher.reward.voucher_value}</Text>}<Text style={styles.voucherCost}>{voucher.points_spent} Blood Points</Text><Text style={styles.description}>{voucher.reward.description}</Text></View>
           {state === 'available' ? <>
             <View style={styles.warningCard}><Text style={styles.warningText}>{ACTIVATION_MESSAGE}</Text></View>
             <View style={styles.actionRow}><Pressable style={styles.cancelButton} onPress={() => router.back()}><Text style={styles.cancelButtonText}>Cancel</Text></Pressable>
@@ -129,15 +130,15 @@ export default function VoucherScreen() {
             <Text style={styles.description}>Show this code to staff when collecting your item. It has no expiration. Staff will confirm your claim after handover.</Text>
           </View> : null}
           {state === 'claimed' || state === 'legacy' || state === 'unavailable' ? <View style={styles.expiredCard}>
-            <Text style={styles.expiredTitle}>{state === 'claimed' ? 'Reward claimed' : state === 'legacy' ? 'Legacy voucher' : 'Voucher unavailable'}</Text>
+            <Text style={styles.expiredTitle}>{state === 'claimed' ? 'Reward claimed' : state === 'legacy' ? 'Legacy voucher' : 'Reward unavailable'}</Text>
             <Text style={styles.expiredText}>{state === 'claimed' ? 'Your claim was confirmed by staff.' : state === 'legacy' ? 'This is a record from the previous voucher flow. No claim code is available here.' : 'Claim information is unavailable. Pull down to refresh or try again later.'}</Text>
           </View> : null}
-          {voucher.activated_at || state === 'claimed' ? <View style={styles.detailsCard}><Text style={styles.detailsTitle}>Voucher details</Text>
+          {voucher.activated_at || state === 'claimed' ? <View style={styles.detailsCard}><Text style={styles.detailsTitle}>Reward details</Text>
             {voucher.activated_at ? <Text style={styles.detailValue}>Activated: {voucherDate(voucher.activated_at)}</Text> : null}
             {state === 'claimed' ? <Text style={styles.detailValue}>Claimed: {voucherDate(voucher.claimed_at)}</Text> : null}
           </View> : null}
         </> : null}
-        <Pressable accessibilityRole="button" style={styles.backToVouchersButton} onPress={() => router.dismissTo('/my-vouchers')}><Text style={styles.activateButtonText}>Back to My Rewards</Text></Pressable>
+        <Pressable accessibilityRole="button" style={styles.backToVouchersButton} onPress={() => router.dismissTo('/my-vouchers')}><Text style={[styles.activateButtonText,{color:PALETTE.neutralText}]}>Back to My Rewards</Text></Pressable>
       </View></ScrollView>
     </SafeAreaView>
     <ConfirmationModal visible={confirmActivation && !!voucher && state === 'available'} icon="confirmation-number" variant="warning" title="Activate Claim Code" message={ACTIVATION_MESSAGE} secondaryLabel="Cancel" primaryLabel="Activate Claim Code" dismissible={false} onSecondary={()=>{setConfirmActivation(false);lock.current=false;}} onPrimary={()=>{setConfirmActivation(false);return activate();}} />
@@ -204,9 +205,9 @@ const styles = StyleSheet.create({
   },
   activeBadge: { backgroundColor: COLORS.activeBackground },
   expiredBadge: { backgroundColor: COLORS.expiredBackground },
-  statusText: { color: COLORS.brand, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  statusText: { color: PALETTE.neutralText, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
   activeStatusText: { color: COLORS.active },
-  expiredStatusText: { color: COLORS.muted },
+  expiredStatusText: { color: PALETTE.neutralText },
   voucherTitle: { marginTop: 13, color: COLORS.text, fontSize: 29, fontWeight: '800' },
   voucherCost: { marginTop: 5, color: COLORS.brand, fontSize: 14, fontWeight: '700' },
   description: {
@@ -229,7 +230,7 @@ const styles = StyleSheet.create({
   },
   warningContent: { flex: 1 },
   warningTitle: { color: COLORS.text, fontSize: 16, fontWeight: '800' },
-  warningText: { marginTop: 7, color: COLORS.muted, fontSize: 14, lineHeight: 21 },
+  warningText: { marginTop: 7, color: PALETTE.pendingText, fontSize: 14, lineHeight: 21 },
   actionRow: { flexDirection: 'row', gap: 12 },
   cancelButton: {
     minHeight: 50,
@@ -237,11 +238,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,
-    borderColor: COLORS.brand,
+    borderColor: PALETTE.border,
     borderRadius: 16,
     backgroundColor: COLORS.background,
   },
-  cancelButtonText: { color: COLORS.brand, fontSize: 14, fontWeight: '800' },
+  cancelButtonText: { color: PALETTE.neutralText, fontSize: 14, fontWeight: '800' },
   activateButton: {
     minHeight: 50,
     flex: 1.4,
@@ -288,6 +289,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 16,
-    backgroundColor: COLORS.brand,
+    backgroundColor: PALETTE.neutralSurface,
   },
 });

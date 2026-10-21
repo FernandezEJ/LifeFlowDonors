@@ -1,3 +1,4 @@
+import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { NotificationProvider } from '@/contexts/notification-context';
 import { Stack } from 'expo-router';
 import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router/react-navigation';
@@ -10,6 +11,11 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 export const unstable_settings = {
   initialRouteName: 'index',
 };
+
+const lightTheme = { ...DefaultTheme, colors: { ...DefaultTheme.colors,
+  primary: PALETTE.primary, background: PALETTE.cream, card: PALETTE.surface,
+  text: PALETTE.text, border: PALETTE.border, notification: PALETTE.danger,
+} };
 
 // ========================================
 // ROOT AUTH PROVIDER
@@ -36,14 +42,14 @@ function SessionNavigator() {
   const colorScheme = useColorScheme();
   const { user, restoring, sessionError, restore } = useAuth();
   if (restoring || sessionError) {
-    return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#FFF9F2' }}>
-      {restoring ? <><ActivityIndicator color="#D93A3A" /><Text>Restoring session...</Text></> :
-        <><Text>{sessionError}</Text><Button title="Retry" onPress={() => void restore()} /></>}
+    return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: PALETTE.cream }}>
+      {restoring ? <><ActivityIndicator color={PALETTE.primary} /><Text style={{color:PALETTE.text}}>Restoring session...</Text></> :
+        <><Text style={{color:PALETTE.danger}}>{sessionError}</Text><Button color={PALETTE.primary} title="Retry" onPress={() => void restore()} /></>}
     </View>;
   }
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : lightTheme}>
       <Stack>
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Protected guard={!user}>
