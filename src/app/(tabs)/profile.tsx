@@ -1,5 +1,6 @@
 import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
+import { LoadError } from '@/components/load-state';
 import { ConfirmationModal } from '@/components/confirmation-modal';
 import { useTabLeave } from '@/contexts/tab-leave-context';
 import { profileMascotImage } from '@/constants/profile-settings';
@@ -8,7 +9,7 @@ import { NotificationBell } from '@/components/notification-bell';
 import { type DonationSummary } from '@/services/donations';
 import { useAuth } from '@/contexts/auth-context';
 import { errorMessage } from '@/services/api';
-import { formErrors, formatDonorName, formatMiddleInitial, toProfileForm, type ProfileForm } from '@/services/auth';
+import { BLOOD_TYPES, cleanProfileMobileInput, formErrors, formatDonorName, formatMiddleInitial, profileBirthDate, profileEditErrors, toProfileForm, type ProfileForm } from '@/services/auth';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'react';
@@ -76,12 +77,20 @@ export default function ProfileScreen() {
   const { donationSummary } = useAuth();
   const [summary, setSummary] = useState<DonationSummary | null>(null);
   const [summaryError, setSummaryError] = useState('');
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const summaryVersion = useRef(0), summaryRequest = useRef<number | null>(null);
+  const loadSummary = useCallback(async () => {
+    if (summaryRequest.current === summaryVersion.current) return;
+    const version = ++summaryVersion.current; summaryRequest.current = version;
+    setSummaryLoading(true); setSummaryError('');
+    try { const result = await donationSummary(); if (summaryVersion.current === version) setSummary(result); }
+    catch (failure) { if (summaryVersion.current === version) setSummaryError(errorMessage(failure)); }
+    finally { if (summaryRequest.current === version) summaryRequest.current = null; if (summaryVersion.current === version) setSummaryLoading(false); }
+  }, [donationSummary]);
   useFocusEffect(useCallback(() => {
-    let active = true; setSummaryError('');
-    donationSummary().then(data => { if (active) setSummary(data); })
-      .catch(e => { if (active) setSummaryError(errorMessage(e)); });
-    return () => { active = false; };
-  }, [donationSummary]));
+    void loadSummary();
+    return () => { summaryVersion.current++; };
+  }, [loadSummary]));
   const CURRENT_MEDAL = summary ? ACHIEVEMENTS.find(item => item.title === summary.achievement.label) : null;
   // ========================================
   // PROFILE LOADING AND EDITING
@@ -100,9 +109,10 @@ export default function ProfileScreen() {
 
   useFocusEffect(useCallback(() => {
     let active = true;
-    loadProfile().catch(error => { if (active) setRequestError(errorMessage(error)); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+    fetching.current = true; setLoading(true);
+    loadProfile().then(() => { if (active) setRequestError(''); }).catch(error => { if (active) setRequestError(errorMessage(error)); })
+      .finally(() => { if (active) { fetching.current = false; setLoading(false); } });
+    return () => { active = false; fetching.current = false; };
   }, [loadProfile]));
 
   const draftRef = useRef(draft);
@@ -141,6 +151,8 @@ export default function ProfileScreen() {
   // ========================================
   const handleSave = async () => {
     if (!draft || busy || saving.current) return;
+    const validation = profileEditErrors(draft);
+    if (Object.keys(validation).length) { setErrors(validation); setRequestError(''); return; }
     saving.current = true;
     setRequestError('');
     setErrors({});
@@ -176,7 +188,7 @@ export default function ProfileScreen() {
 
       <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
-          {loading && !profile ? <TabSkeleton variant="profile" /> : <>
+          {loading && !profile ? <TabSkeleton variant="profile" label="Loading donor profile" /> :
           <View style={styles.profileHero}>
             <View style={styles.avatarArea}>
               <View accessibilityLabel={`${fullName} profile picture`} style={styles.avatar}>
@@ -201,7 +213,8 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          <View style={styles.statsRow}>
+          }
+          {!summary && summaryLoading ? <TabSkeleton variant="profile-summary" label="Loading donor summary" /> : <View style={styles.statsRow}>
             <View style={styles.statCard}>
               <View style={styles.statIcon}>
                 <MaterialIcons name="bloodtype" color={COLORS.brand} size={26} />
@@ -218,7 +231,8 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          {summaryError ? <Text accessibilityRole="alert" style={styles.donorLabel}>{summaryError}</Text> : null}
+          }
+          {summaryError ? <LoadError message={summaryError} subject="donor summary" retryLabel="Retry donor summary" loading={summaryLoading} onRetry={() => void loadSummary()} /> : null}
 
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Achievements</Text>
@@ -307,16 +321,15 @@ export default function ProfileScreen() {
             <View style={styles.informationHeading}>
               <Text style={[styles.sectionTitle, { flex: 1 }]}>Profile Information</Text>
               {!draft ? <Pressable accessibilityRole="button" disabled={busy || loading || !personal}
-                onPress={() => { setDraft(personal); setErrors({}); setRequestError(''); setSaved(false); }}
+                onPress={() => { setDraft(personal ? { ...personal, mobileNumber: cleanProfileMobileInput(personal.mobileNumber) } : null); setErrors({}); setRequestError(''); setSaved(false); }}
                 style={({ pressed }) => [styles.editLink, { opacity: busy || loading || !personal ? 0.5 : pressed ? 0.7 : 1 }]}>
                 <Text style={styles.editButtonText}>Edit Profile</Text>
               </Pressable> : null}
             </View>
-            {loading ? <><ActivityIndicator color={COLORS.brand} /><Text style={{color:PALETTE.text}}>Loading profile...</Text></> : null}
-            {requestError ? <Text accessibilityRole="alert" style={styles.feedbackError}>{requestError}</Text> : null}
-            {!loading && requestError && !draft ? <Pressable onPress={retryProfile}><Text style={styles.editButtonText}>Retry profile</Text></Pressable> : null}
+            {loading && personal ? <ActivityIndicator color={COLORS.brand} accessibilityLabel="Refreshing profile" /> : null}
+            {requestError && !draft ? <LoadError message={requestError} subject="profile" retryLabel="Retry profile" loading={loading} onRetry={() => void retryProfile()} /> : requestError ? <Text accessibilityRole="alert" style={styles.feedbackError}>{requestError}</Text> : null}
             {saved ? <Text accessibilityRole="alert" style={styles.achievementNote}>Profile saved.</Text> : null}
-            <View style={styles.informationCard}>
+            {loading && !personal ? <TabSkeleton variant="profile-fields" label="Loading profile information" /> : <View style={styles.informationCard}>
               {PERSONAL_FIELDS.map((item, index) => (
                 <View
                   key={item.label}
@@ -326,33 +339,51 @@ export default function ProfileScreen() {
                   ]}>
                   <Text style={styles.informationLabel}>{item.label}</Text>
                   {item.field === 'email' ? <View style={styles.fieldValue}>
-                    <Text selectable style={styles.informationValue}>{personal?.email || '--'}</Text>
-                    {user?.email_verified_at ? <Text style={styles.verifiedText}>Verified</Text> : null}
+                    <Text selectable style={[styles.informationValue, styles.emailValue]}
+                      accessibilityLabel={personal?.email ? `${personal.email}${user?.email_verified_at ? ', verified email' : ''}` : 'Email not available'}>
+                      {personal?.email || '--'}
+                      {personal?.email && user?.email_verified_at ? <Text style={styles.verifiedText}>{' '}
+                        <MaterialIcons name="check-circle" size={14} color={PALETTE.success} accessible={false} />{' Verified'}</Text> : null}
+                    </Text>
                     {draft ? <Text style={styles.achievementNote}>Change email in Profile Settings.</Text> : null}
                   </View> : draft ? <View style={styles.fieldValue}>
                     {item.field === 'birthDate' ? <BirthDatePicker value={draft.birthDate} disabled={busy}
                       onChange={value => {
                         setDraft(current => current ? { ...current, birthDate: value } : current);
                         setErrors(current => ({ ...current, birthDate: undefined }));
-                      }} /> : <TextInput
+                      }} /> : item.field === 'bloodType' ? <View style={styles.bloodTypeOptions}>
+                        {BLOOD_TYPES.map(bloodType => {
+                          const selected = draft.bloodType === bloodType;
+                          return <Pressable key={bloodType} accessibilityRole="radio" accessibilityLabel={bloodType}
+                            accessibilityState={{ selected, disabled: busy }} disabled={busy}
+                            onPress={() => {
+                              setDraft(current => current ? { ...current, bloodType } : current);
+                              setErrors(current => ({ ...current, bloodType: undefined }));
+                            }} style={[styles.bloodTypeChip, selected && styles.bloodTypeSelected, errors.bloodType && styles.selectionError]}>
+                            <Text style={[styles.bloodTypeTextOption, selected && styles.bloodTypeTextSelected]}>{bloodType}</Text>
+                          </Pressable>;
+                        })}
+                      </View> : <TextInput
                       accessibilityLabel={item.label}
                       editable={!busy}
                       autoCapitalize={item.field === 'middleName' ? 'characters' : 'sentences'}
-                      maxLength={item.field === 'middleName' ? 1 : undefined}
+                      maxLength={item.field === 'mobileNumber' ? 11 : item.field === 'middleName' ? 1 : undefined}
                       keyboardType={item.field === 'mobileNumber' ? 'phone-pad' : 'default'}
-                      placeholder={item.field === 'gender' ? 'Male or Female' : item.label}
+                      placeholder={item.field === 'mobileNumber' ? '09XXXXXXXXX' : item.field === 'gender' ? 'Male or Female' : item.label}
                       style={[styles.informationValue, styles.editInput]}
                       value={draft[item.field]}
                       onChangeText={value => {
-                        setDraft(current => current ? { ...current, [item.field]: item.field === 'middleName' ? value.toUpperCase() : value } : current);
+                        setDraft(current => current ? { ...current, [item.field]: item.field === 'middleName' ? value.toUpperCase() : item.field === 'mobileNumber' ? cleanProfileMobileInput(value) : value } : current);
                         setErrors(current => ({ ...current, [item.field]: undefined }));
                       }}
                     />}
+                    {item.field === 'mobileNumber' ? <Text style={styles.achievementNote}>Enter an 11-digit mobile number starting with 09.</Text> : null}
                     {errors[item.field] ? <Text style={styles.feedbackError}>{errors[item.field]}</Text> : null}
-                  </View> : <Text selectable style={styles.informationValue}>{(item.field === 'middleName' ? formatMiddleInitial(personal?.middleName) : personal?.[item.field]) || '--'}</Text>}
+                  </View> : <Text selectable style={styles.informationValue}>{(item.field === 'middleName' ? formatMiddleInitial(personal?.middleName) : item.field === 'birthDate' ? profileBirthDate(personal?.birthDate) : personal?.[item.field]) || '--'}</Text>}
                 </View>
               ))}
             </View>
+            }
             {draft ? <Pressable accessibilityRole="button" disabled={busy} onPress={() => void handleSave()}
               style={({ pressed }) => [styles.editButton, pressed && styles.editButtonPressed]}>
               <Text style={styles.editButtonText}>{busy ? 'Saving...' : 'Save Profile'}</Text>
@@ -387,7 +418,7 @@ export default function ProfileScreen() {
                 <View style={styles.accountIcon}>
                   <MaterialIcons name="help-outline" color={COLORS.text} size={21} />
                 </View>
-                <Text style={styles.accountText}>Help / About LifeFlow</Text>
+                <Text style={styles.accountText}>About LifeFlow</Text>
                 <MaterialIcons name="chevron-right" color={COLORS.muted} size={23} />
               </Pressable>
               <View style={styles.accountSeparator} />
@@ -405,7 +436,6 @@ export default function ProfileScreen() {
           </View>
 
 
-          </>}
         </View>
       </ScrollView>
       <ConfirmationModal visible={!!pendingLeave} icon="delete-outline" variant="destructive" title="Discard changes?" message="You have unsaved changes. Do you want to discard them?" secondaryLabel="Stay" primaryLabel="Discard" onSecondary={() => setPendingLeave(null)} onPrimary={() => { const leave = pendingLeave; setDraft(null); draftRef.current = null; setErrors({}); setRequestError(''); setPendingLeave(null); leave?.(); }} />
@@ -587,7 +617,14 @@ const styles = StyleSheet.create({
   informationHeading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   editLink: { minHeight: 44, justifyContent: 'center', alignItems: 'flex-end', flexShrink: 0 },
   fieldValue: { gap: 5, width: '100%' },
-  verifiedText: { color: COLORS.muted, fontSize: 11, fontWeight: '600' },
+  emailValue: { lineHeight: 22 },
+  verifiedText: { color: PALETTE.success, fontSize: 11, fontWeight: '700' },
+  bloodTypeOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  bloodTypeChip: { minHeight: 46, minWidth: 68, flexGrow: 1, flexBasis: '21%', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border, borderRadius: 14, backgroundColor: COLORS.white },
+  bloodTypeSelected: { borderColor: COLORS.brand, backgroundColor: COLORS.softRed },
+  selectionError: { borderColor: PALETTE.danger },
+  bloodTypeTextOption: { color: COLORS.text, fontSize: 15, fontWeight: '600' },
+  bloodTypeTextSelected: { color: COLORS.brand, fontWeight: '800' },
   informationRow: {
     minHeight: 58,
     gap: 6,

@@ -1,6 +1,8 @@
 import { LifeFlowColors as PALETTE, DonationStatusColors } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
+import { EmptyState, LoadError } from '@/components/load-state';
 import { NotificationBell } from '@/components/notification-bell';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -27,7 +29,9 @@ const COLORS = {
 export default function ActivityScreen() {
   const router = useRouter();
   const scrollRef = useRef<FlatList<DonationParticipation>>(null);
+  const opening = useRef(false);
   useFocusEffect(useCallback(() => {
+    opening.current = false;
     scrollRef.current?.scrollToOffset({ offset: 0, animated: false });
   }, []));
   const { donationHistory } = useAuth();
@@ -37,12 +41,14 @@ export default function ActivityScreen() {
   const [error, setError] = useState('');
   const generation = useRef(0);
   const lock = useRef(false);
+  const retryMore = useRef(false);
   const previousStatus = useRef(status);
   const [refresh, setRefresh] = useState(0);
   useFocusEffect(useCallback(() => {
     // Retry changes restart the focused history request.
     void refresh;
     const version = ++generation.current;
+    retryMore.current = false;
     lock.current = true; setLoading(true); setError(''); if (previousStatus.current !== status) setPage(null); previousStatus.current = status;
     donationHistory(1, status).then(data => { if (generation.current === version) setPage(data); })
       .catch(e => { if (generation.current === version) setError(errorMessage(e)); })
@@ -52,11 +58,18 @@ export default function ActivityScreen() {
   const more = async () => {
     if (lock.current || !page || page.current_page >= page.last_page) return;
     const version = generation.current;
+    retryMore.current = true;
     lock.current = true; setLoading(true); setError('');
     try { const data = await donationHistory(page.current_page + 1, status);
       if (version === generation.current) setPage({ ...data, data: [...page.data, ...data.data] });
     } catch(e) { if (version === generation.current) setError(errorMessage(e)); }
     finally { if (version === generation.current) { lock.current = false; setLoading(false); } }
+  };
+  const openActivity = (item: DonationParticipation) => {
+    // Block repeated taps during the transition; returning to this tab resets the guard.
+    if (opening.current) return;
+    opening.current = true;
+    router.push({ pathname: '/activity/[id]', params: { id: String(item.id) } });
   };
   return <SafeAreaView edges={['top']} style={styles.safeArea}>
     <View style={styles.fixedHeader}><View style={styles.header}><Text style={styles.headerTitle}>Activity</Text>
@@ -64,18 +77,32 @@ export default function ActivityScreen() {
     </View></View>
     <FlatList ref={scrollRef} showsVerticalScrollIndicator={false} data={page?.data || []} keyExtractor={item => String(item.id)} contentContainerStyle={styles.listContent}
       ListHeaderComponent={<View style={styles.listHeader}>
-        <Text style={styles.subtitle}>Your donation activities</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>{([undefined, 'pending', 'for_verification', 'needs_revision', 'completed', 'rejected', 'cancelled'] as const).map(value => <Pressable key={value || 'all'} onPress={() => setStatus(value)} style={[styles.filterChip, value === status && styles.filterChipSelected]}><Text style={[styles.filterText, value === status && styles.filterTextSelected]}>{value ? DONATION_STATUS[value] : 'All'}</Text></Pressable>)}</ScrollView>
         <Text style={styles.historyTitle}>Joined activities {page ? '(' + page.total + ')' : ''}</Text>
-        {error ? <Pressable onPress={() => setRefresh(n => n + 1)}><Text accessibilityRole="alert" style={[styles.subtitle,{color:PALETTE.danger}]}>{error} Tap to retry.</Text></Pressable> : null}
+        {error ? <LoadError message={error} subject="activities" loading={loading} onRetry={() => { if (retryMore.current) return more(); if (!lock.current) { lock.current = true; setRefresh(n => n + 1); } }} /> : null}
       </View>}
-      ListEmptyComponent={loading && !page ? <TabSkeleton /> : <Text style={styles.subtitle}>{error ? '' : 'No joined activities yet.'}</Text>}
-      renderItem={({item}) => <View style={styles.card}>
-        <Text style={styles.cardTitle}>{item.opportunity.title}</Text>
-        <Text style={styles.detailText}>{item.opportunity.event_date || 'Confirm arrangements with the chapter'}</Text><Text style={styles.organizer}>{item.opportunity.location}</Text>
-        <View style={styles.cardFooter}><View style={styles.statusBlock}><Text style={[styles.statusText,{color:DonationStatusColors[item.status]?.text ?? PALETTE.neutralText}]}>{DONATION_STATUS[item.status]}</Text><Text style={styles.rewardLabel}>{DONATION_STATUS_DESCRIPTION[item.status]}</Text></View>
-          <Pressable style={styles.viewButton} onPress={() => router.push({ pathname: '/activity/[id]', params: { id: String(item.id) } })}><Text style={styles.viewButtonText}>View</Text></Pressable></View>
-      </View>}
+      ListEmptyComponent={loading && !page ? <TabSkeleton variant="activity" label="Loading activities" /> : !error && page ? <EmptyState icon="event-note"
+        title={status ? 'No matching activities' : 'No donation activities yet'} description={status ? `No activities have the ${DONATION_STATUS[status]} status. Try another filter.` : 'Activities you join will appear here.'} /> : null}
+      renderItem={({item}) => <Pressable accessibilityRole="button"
+        accessibilityLabel={`View activity: ${item.opportunity.title}. ${DONATION_STATUS[item.status]}`}
+        onPress={() => openActivity(item)} style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}>
+        <View style={styles.cardHeader}>
+          <Text style={[styles.cardTitle, styles.cardHeading]}>{item.opportunity.title}</Text>
+          <MaterialIcons name="chevron-right" size={22} color={COLORS.brand} style={styles.cardChevron} accessible={false} />
+        </View>
+        <View style={styles.details}>
+          <View style={styles.detailRow}><MaterialIcons name="calendar-today" size={17} color={COLORS.muted} accessible={false} />
+            <Text style={styles.detailText}>{item.opportunity.event_date || 'Confirm arrangements with the chapter'}</Text></View>
+          {item.opportunity.location ? <View style={styles.detailRow}><MaterialIcons name="place" size={17} color={COLORS.muted} accessible={false} />
+            <Text style={styles.detailText}>{item.opportunity.location}</Text></View> : null}
+        </View>
+        <View style={styles.cardFooter}><View style={styles.statusBlock}>
+          <View style={[styles.statusBadge, { backgroundColor: DonationStatusColors[item.status]?.surface ?? PALETTE.neutralSurface }]}>
+            <Text style={[styles.statusText, { color: DonationStatusColors[item.status]?.text ?? PALETTE.neutralText }]}>{DONATION_STATUS[item.status]}</Text>
+          </View>
+          <Text style={styles.rewardLabel}>{DONATION_STATUS_DESCRIPTION[item.status]}</Text>
+        </View></View>
+      </Pressable>}
       ItemSeparatorComponent={() => <View style={styles.cardSeparator}/>}
       ListFooterComponent={page && page.current_page < page.last_page ? <Pressable disabled={loading} onPress={more} style={styles.viewButton}><Text style={styles.viewButtonText}>{loading ? 'Loading…' : 'Load more'}</Text></Pressable> : null}/>
   </SafeAreaView>;
@@ -129,7 +156,7 @@ const styles = StyleSheet.create({
     paddingTop: 20,
     paddingBottom: 28,
   },
-  listHeader: { gap: 20, marginBottom: 12 },
+  listHeader: { gap: 14, marginBottom: 12 },
   subtitle: { color: COLORS.muted, fontSize: 14, lineHeight: 20 },
   filters: { gap: 9, paddingRight: 4 },
   filterChip: {
@@ -178,15 +205,17 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 10,
   },
-  cardHeading: { flex: 1 },
+  cardPressed: { opacity: 0.75 },
+  cardHeading: { flex: 1, minWidth: 0 },
+  cardChevron: { flexShrink: 0, marginTop: 1 },
   cardTitle: { color: COLORS.text, fontSize: 17, fontWeight: '800', lineHeight: 23 },
   organizer: { marginTop: 4, color: COLORS.muted, fontSize: 13, fontWeight: '600' },
-  statusBadge: { paddingHorizontal: 9, paddingVertical: 6, borderRadius: 12 },
+  statusBadge: { alignSelf: 'flex-start', maxWidth: '100%', paddingHorizontal: 9, paddingVertical: 5, borderRadius: 12 },
   statusText: { color: COLORS.text, fontSize: 12, lineHeight: 18, fontWeight: '800', flexShrink: 1 },
   statusBlock: { flex: 1, minWidth: 0, gap: 4 },
   details: { gap: 7, marginTop: 15 },
-  detailRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  detailText: { flex: 1, color: COLORS.muted, fontSize: 13, lineHeight: 19 },
+  detailRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  detailText: { flex: 1, minWidth: 0, color: COLORS.muted, fontSize: 13, lineHeight: 19 },
   cardFooter: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -198,7 +227,7 @@ const styles = StyleSheet.create({
     borderTopColor: COLORS.border,
   },
   rewardBlock: { flex: 1 },
-  rewardLabel: { color: COLORS.muted, fontSize: 11, fontWeight: '600' },
+  rewardLabel: { color: COLORS.muted, fontSize: 12, lineHeight: 18, fontWeight: '600' },
   rewardValue: { marginTop: 3, color: COLORS.brand, fontSize: 14, fontWeight: '800' },
   cancelledReward: { color: COLORS.muted },
   viewButton: {

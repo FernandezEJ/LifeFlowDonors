@@ -17,7 +17,7 @@ const FAQS = [
 export default function HelpAboutScreen() {
   const [document, setDocument] = useState<'terms' | 'privacy' | null>(null);
   return <>
-    <ProfileSettingsPage title="Help / About LifeFlow" fallback="/(tabs)/profile">
+    <ProfileSettingsPage title="About LifeFlow" fallback="/(tabs)/profile">
       <View style={styles.section}>
         <Text accessibilityRole="header" style={styles.heading}>About LifeFlow</Text>
         <Text style={styles.body}>LifeFlow is a donor-focused blood donation support app. It helps you prepare for donation, follow your activities and find app guidance.</Text>
@@ -51,7 +51,7 @@ export default function HelpAboutScreen() {
         <Text style={styles.body}>{Constants.expoConfig?.version ?? 'Not available'}</Text>
       </View>
     </ProfileSettingsPage>
-    <RegistrationLegal document={document} onClose={() => setDocument(null)} backLabel="Back to Help / About LifeFlow" />
+    <RegistrationLegal document={document} onClose={() => setDocument(null)} backLabel="Back to About LifeFlow" />
   </>;
 }
 const styles = StyleSheet.create({

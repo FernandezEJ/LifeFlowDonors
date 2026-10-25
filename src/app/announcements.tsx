@@ -1,5 +1,6 @@
 import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
+import { EmptyState, LoadError } from '@/components/load-state';
 import { useAuth } from '@/contexts/auth-context';
 import { errorMessage } from '@/services/api';
 import { announcementImageUrl, formatDonationDate } from '@/services/announcement-presentation';
@@ -58,11 +59,8 @@ export default function AnnouncementsScreen() {
       showsVerticalScrollIndicator={false}
       refreshing={refreshing}
       onRefresh={() => refresh.current()}
-      ListHeaderComponent={error ? <View style={styles.notice}>
-        <Text style={styles.description}>{error}</Text>
-        <Pressable accessibilityRole="button" disabled={refreshing} onPress={() => refresh.current()} style={styles.retry}><Text style={styles.link}>Retry</Text></Pressable>
-      </View> : null}
-      ListEmptyComponent={loading ? <TabSkeleton /> : !error ? <View style={styles.notice}><Text style={styles.description}>No active announcements right now. Check back for upcoming donation events.</Text></View> : null}
+      ListHeaderComponent={error ? <LoadError message={error} subject="announcements" loading={refreshing} onRetry={() => refresh.current()} /> : null}
+      ListEmptyComponent={loading ? <TabSkeleton variant="announcement" label="Loading announcements" /> : !error && !refreshing ? <EmptyState icon="campaign" title="No active announcements" description="Check back for upcoming donation events." /> : null}
       renderItem={({ item }) => {
         const image = announcementImageUrl(item.image_url);
         return <Pressable accessibilityRole="button" accessibilityLabel={`View announcement: ${item.title}`} onPress={() => router.push({ pathname: '/announcement/[id]', params: { id: String(item.id) } })} style={({ pressed }) => [styles.card, pressed && styles.pressed]}>

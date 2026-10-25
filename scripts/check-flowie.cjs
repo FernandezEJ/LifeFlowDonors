@@ -7,8 +7,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const ts = require('typescript');
-const jsx = (type, props) => ({ type, props });
+const jsx = (type, props) => typeof type === 'function' && ['LoadError', 'EmptyState', 'SectionError'].includes(type.name) ? type(props) : ({ type, props });
 function load(path, imports = {}, globals = {}) {
+  if (!imports['@/components/load-state'] && path !== 'src/components/load-state.tsx' && imports['react/jsx-runtime'] && imports['@expo/vector-icons/MaterialIcons'] && imports.react) imports = { ...imports, '@/components/load-state': load('src/components/load-state.tsx', imports, globals) };
   const module = { exports: {} };
   const code = ts.transpileModule(fs.readFileSync(path, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
@@ -24,6 +25,7 @@ function load(path, imports = {}, globals = {}) {
 const nodes = value => !value || typeof value !== 'object' ? [] : Array.isArray(value) ? value.flatMap(nodes) : [value, ...nodes(value.props?.children)];
 const find = (tree, type) => nodes(tree).find(n => n.type === type);
 const native = { View:'View', Text:'Text', Pressable:'Pressable', Image:'Image', FlatList:'FlatList', TextInput:'TextInput',
+  AppState:{addEventListener:()=>({remove(){}})},
   KeyboardAvoidingView:'KeyboardAvoidingView', ScrollView:'ScrollView', Platform:{OS:'android'}, StyleSheet:{create:x=>x}, useWindowDimensions:()=>({width:360}) };
 const shared = { 'react/jsx-runtime':{jsx,jsxs:jsx,Fragment:'Fragment'}, 'react-native':native,
   '@expo/vector-icons/MaterialIcons':{__esModule:true,default:'Icon'}, 'react-native-safe-area-context':{SafeAreaView:'SafeAreaView'} };
@@ -103,21 +105,23 @@ const routes = [], router = { push: route => routes.push(route) };
 const h = host();
 const timers = new Map(); let timerId = 0, profileLoads = 0;
 const home = load('src/app/(tabs)/index.tsx', { ...shared, react: h.react,
+  '@/components/announcement-image': { AnnouncementImage: 'AnnouncementImage' },
   '@/services/announcement-presentation': {}, '@/components/home-donation-reminder': { HomeDonationReminder: 'Reminder' },
   '@/constants/flowie-mascots': load('src/constants/flowie-mascots.ts'), 'expo-router': { useRouter: () => router, useFocusEffect: h.focus },
   '@/components/notification-bell': { NotificationBell: 'Bell' }, '@/contexts/auth-context': { useAuth: () => auth },
   '@/services/donations': { boardItems: () => [] }, '@/services/api': { errorMessage: e => e.message } },
-  { setInterval: (run, delay) => { const id = ++timerId; timers.set(id, { run, delay }); return id; }, clearInterval: id => timers.delete(id) });
+  { setInterval: (run, delay) => { const id = ++timerId; timers.set(id, { run, delay }); return id; }, clearInterval: id => timers.delete(id),
+    setTimeout: (run, delay) => { const id = ++timerId; timers.set(id, { run, delay }); return id; }, clearTimeout: id => timers.delete(id) });
 const auth = { profile: null, loadProfile: async () => { profileLoads++; },
   opportunities: async () => ({ data: [] }), donationHistory: async () => ({ data: [] }) };
 const render = () => h.render(home.default);
 assert.ok(nodes(render()).some(n => n.type === 'TabSkeleton')); await flush();
 assert.equal(profileLoads, 1);
-assert.ok(nodes(render()).some(n => n.props?.accessibilityLabel === 'Loading greeting'));
+assert.ok(!nodes(render()).some(n => n.props?.accessibilityLabel === 'Loading greeting'));
 assert.ok(!nodes(render()).some(n => n.type === 'Text' && [].concat(n.props.children).includes('Donor')));
 auth.profile = { first_name: '  Inky  ' };
-const greeting = nodes(render()).find(n => n.type === 'Text' && Array.isArray(n.props.children) && n.props.children[0] === 'Hello, ');
-assert.equal(greeting.props.children[1], 'Inky');
+const greeting = nodes(render()).find(n => n.type === 'Text' && Array.isArray(n.props.children) && /^Good (morning|afternoon|evening)$/.test(n.props.children[0]));
+assert.equal(greeting.props.children[1], ', Inky');
 assert.ok(!nodes(render()).some(n => n.props?.accessibilityLabel === 'Loading greeting'));
 for (const [width, fontScale] of [[320, 1], [360, 1], [768, 1], [320, 1.7]]) {
   native.useWindowDimensions = () => ({ width, fontScale });
@@ -157,7 +161,7 @@ for (const [width, fontScale] of [[320, 1], [360, 1], [768, 1], [320, 1.7]]) {
 }
 const refresh = [...timers.values()].find(timer => timer.delay === 30000);
 refresh.run(); await flush(); assert.equal(profileLoads, 2);
-assert.ok(nodes(render()).some(n => n.type === 'Text' && n.props.children?.[1] === 'Inky'));
+assert.ok(nodes(render()).some(n => n.type === 'Text' && n.props.children?.[1] === ', Inky'));
 h.blur(); h.refocus(); await flush(); assert.equal(profileLoads, 3);
 h.unmount();
 assert.equal(timers.size, 0);

@@ -3,7 +3,7 @@ import { useAuth } from '@/contexts/auth-context';
 import { errorMessage } from '@/services/api';
 import { RegistrationLegal, PRESCREENING_ACKNOWLEDGEMENT } from '@/components/registration-legal';
 import BirthDatePicker from '@/components/birth-date-picker';
-import { authApi, formErrors, latestBirthDate, ADULT_DONOR_NOTICE } from '@/services/auth';
+import { authApi, formErrors, latestBirthDate, ADULT_DONOR_NOTICE, BLOOD_TYPES } from '@/services/auth';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
@@ -33,7 +33,6 @@ const COLORS = {
   white: PALETTE.surface,
 };
 
-const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] as const;
 const GENDERS = ['Male', 'Female'] as const;
 
 type BloodType = (typeof BLOOD_TYPES)[number] | '';

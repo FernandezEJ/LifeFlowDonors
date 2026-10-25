@@ -1,5 +1,6 @@
 import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
+import { LoadError } from '@/components/load-state';
 import { NotificationBell } from '@/components/notification-bell';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -7,7 +8,7 @@ import { useCallback, useRef } from 'react';
 
 import { useEligibilityCooldown, formatEligibilityWait } from '@/hooks/use-eligibility-cooldown';
 import { SCREENING_NOTICE, formatDonationRestDate, type EligibilityAssessment } from '@/services/eligibility';
-import { type ImageSourcePropType, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { type ImageSourcePropType, ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const COLORS = {
@@ -143,7 +144,7 @@ export default function StatusScreen() {
   } : STATUS_PRESENTATION[state];
   const showReason = !onRest && !!assessment?.reasons.length;
   const mascot = onRest ? STATUS_MASCOTS.rest
-    : (!loading || !!cooldown.state) && !error && (state === 'NOT_ELIGIBLE' || state === 'NEEDS_SCREENING')
+    : (!loading || !!cooldown.state) && (!error || !!cooldown.state) && (state === 'NOT_ELIGIBLE' || state === 'NEEDS_SCREENING')
       ? STATUS_MASCOTS.concerned ?? STATUS_MASCOTS.happy : STATUS_MASCOTS.happy;
   // ========================================
   // DONOR SUMMARY
@@ -173,7 +174,7 @@ export default function StatusScreen() {
 
       <ScrollView ref={scrollRef} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
-          {loading && !cooldown.state ? <TabSkeleton variant="summary" /> : <>
+          {loading && !cooldown.state ? <TabSkeleton variant="status" label="Loading donor status" /> : !error || cooldown.state ? <>
           <View style={[styles.statusCard, { backgroundColor: presentation.background }]}>
             <View style={styles.mascotArea}>
               <Image
@@ -188,9 +189,9 @@ export default function StatusScreen() {
             </View>
             <View style={styles.statusContent}>
               <Text style={[styles.statusTitle, { color: presentation.color }]}>
-                {onRest ? presentation.title : loading && !cooldown.state ? 'Loading pre-screening…' : error ? 'Pre-screening unavailable' : presentation.title}
+                {onRest ? presentation.title : loading && !cooldown.state ? 'Loading pre-screening…' : error && !cooldown.state ? 'Pre-screening unavailable' : presentation.title}
               </Text>
-              <Text style={styles.statusDescription}>{onRest ? presentation.description : error || presentation.description}</Text>
+              <Text style={styles.statusDescription}>{onRest || cooldown.state ? presentation.description : error || presentation.description}</Text>
               {onRest ? <>
                 <Text style={styles.statusDescription}>You can donate again on:</Text>
                 <Text style={[styles.statusTitle, { color: presentation.color }]}>{formatDonationRestDate(cooldown.state?.next_eligible_donation_at)}</Text>
@@ -229,6 +230,7 @@ export default function StatusScreen() {
             </View>
           </View>
 
+          </> : null}
           <View style={styles.disclaimerCard}>
             <MaterialIcons name="info-outline" color={COLORS.brand} size={22} />
             <Text style={styles.disclaimerText}>
@@ -237,6 +239,7 @@ export default function StatusScreen() {
           </View>
 
           {/* One compact countdown accompanies the action; exact dates stay in Donor Summary. */}
+          {(!loading || cooldown.state) && (!error || cooldown.state) ? <>
           <View style={styles.updateSection}>
           <Pressable
             accessibilityRole="button"
@@ -253,10 +256,9 @@ export default function StatusScreen() {
           </Text> : null}
           </View>
           {/* Refresh errors keep the action locked until server availability is known. */}
-          {error ? <Pressable accessibilityRole="button" onPress={() => void cooldown.reload()} style={styles.updateButton}>
-            <Text style={styles.updateButtonText}>Retry availability check</Text>
-          </Pressable> : null}
-          </>}
+          </> : null}
+          {error ? <LoadError message={error} subject="donor status" retryLabel="Retry availability check" loading={loading} onRetry={() => cooldown.reload()} /> : null}
+          {loading && cooldown.state ? <ActivityIndicator size="small" color={COLORS.brand} accessibilityLabel="Refreshing donor status" /> : null}
         </View>
       </ScrollView>
     </SafeAreaView>

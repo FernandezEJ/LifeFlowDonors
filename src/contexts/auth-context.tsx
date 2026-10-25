@@ -58,6 +58,11 @@ type AuthContextValue = {
   readAllNotifications: () => Promise<{unread_count: number}>;
   registerDeviceToken: (deviceToken: string) => Promise<{registered: boolean}>;
   unregisterDeviceToken: (deviceToken: string) => Promise<{removed: boolean}>;
+  captureDeviceTokenSession: () => {
+    isCurrent: () => boolean;
+    register: (deviceToken: string) => Promise<{registered: boolean}>;
+    unregister: (deviceToken: string) => Promise<{removed: boolean}>;
+  };
   // Protected rewards calls share the same stale-session and logout safeguards.
   pointsSummary: () => Promise<PointSummary>;
   pointTransactions: (page?: number, type?: PointTransaction['type']) => Promise<Page<PointTransaction>>;
@@ -80,6 +85,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const mutation = useRef(false);
   const profileVersion = useRef(0);
   const cleanupPending = useRef(false);
+  const [pushSessionVersion, setPushSessionVersion] = useState(0);
+  const pushSessionVersionRef = useRef(0);
+  const pushSessionActive = useRef(false);
+  const invalidatePushSession = useCallback(() => {
+    pushSessionVersionRef.current++;
+    setPushSessionVersion(pushSessionVersionRef.current);
+  }, []);
 
   // ========================================
   // LOCAL CLEANUP AND RESTORATION
@@ -87,13 +99,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // token for retry and do not reveal protected screens before validation.
   // ========================================
   const clearSession = useCallback(async () => {
+    pushSessionActive.current = false;
+    invalidatePushSession();
     token.current = null;
     setUser(null);
     setProfile(null);
     cleanupPending.current = true;
     try { await tokenStorage.remove(); cleanupPending.current = false; }
     catch { throw new ApiError('Signed out, but device storage could not be cleared. Please retry before restarting the app.'); }
-  }, []);
+  }, [invalidatePushSession]);
 
   const restore = useCallback(async () => {
     try {
@@ -103,6 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (saved) {
         const current = await authApi.currentUser(saved);
         token.current = saved;
+        pushSessionActive.current = true;
         setUser(current);
       }
     } catch (error) {
@@ -139,6 +154,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new ApiError('Could not securely save the session. Your account may already exist; please try logging in.');
     }
     token.current = response.token;
+    invalidatePushSession();
+    pushSessionActive.current = true;
     setUser(response.user);
     setProfile(response.donor_profile || null);
   }
@@ -238,6 +255,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const readAllNotifications = useCallback(() => donationRequest(notificationApi.readAll), [donationRequest]);
   const registerDeviceToken = useCallback((deviceToken: string) => donationRequest(saved => notificationApi.register(saved, deviceToken)), [donationRequest]);
   const unregisterDeviceToken = useCallback((deviceToken: string) => donationRequest(saved => notificationApi.unregister(saved, deviceToken)), [donationRequest]);
+  const captureDeviceTokenSession = useCallback(() => {
+    const saved = token.current;
+    const version = pushSessionVersion;
+    const isCurrent = () => saved !== null && token.current === saved
+      && version === pushSessionVersionRef.current && pushSessionActive.current;
+    const request = async <T,>(operation: (session: string) => Promise<T>): Promise<T> => {
+      if (!isCurrent()) throw new ApiError('Your session changed. Please try again.', 401);
+      const result = await donationRequest(operation);
+      if (!isCurrent()) throw new ApiError('Your session changed. Please try again.', 401);
+      return result;
+    };
+    return { isCurrent,
+      register: (deviceToken: string) => request(session => notificationApi.register(session, deviceToken)),
+      unregister: (deviceToken: string) => request(session => notificationApi.unregister(session, deviceToken)),
+    };
+  }, [donationRequest, pushSessionVersion]);
 
   // ========================================
   // PRIVATE POINTS AND VOUCHER REQUESTS
@@ -267,6 +300,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Returns a safe warning when server revocation could not be confirmed.
   // ========================================
   const logout = () => exclusive(async () => {
+    // Invalidate pending permission/token work before waiting for server logout.
+    pushSessionActive.current = false;
+    invalidatePushSession();
     let warning: string | undefined;
     try { if (token.current) await authApi.logout(token.current); }
     catch (error) {
@@ -278,7 +314,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return warning;
   });
 
-  return <AuthContext.Provider value={{ homeReminders, flowieChat, flowieHistory, flowieDeleted, flowieDetail, endFlowie, deleteFlowie, restoreFlowie, pointsSummary, pointTransactions, rewards, redeemReward, vouchers, voucher, activateVoucher, listNotifications, notificationCount, readNotification, readAllNotifications, registerDeviceToken, unregisterDeviceToken, user, profile, restoring, sessionError, busy,
+  return <AuthContext.Provider value={{ homeReminders, flowieChat, flowieHistory, flowieDeleted, flowieDetail, endFlowie, deleteFlowie, restoreFlowie, pointsSummary, pointTransactions, rewards, redeemReward, vouchers, voucher, activateVoucher, listNotifications, notificationCount, readNotification, readAllNotifications, registerDeviceToken, unregisterDeviceToken, captureDeviceTokenSession, user, profile, restoring, sessionError, busy,
     restore: async () => { setRestoring(true); await restore(); },
     requestLoginCode: mobile => exclusive(() => authApi.requestLoginCode(mobile)),
     login: (mobile, code) => exclusive(async () => acceptSession(await authApi.login(mobile, code))),

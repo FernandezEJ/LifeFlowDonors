@@ -1,7 +1,7 @@
 /* E2 and post-E3 revisions: execute production services, hooks and screen handlers with E1-shaped responses.
  * No real donor data, database resets, provider calls or automatic mail are used. */
 const assert = require('node:assert/strict'), fs = require('node:fs');
-const { load, host, flush, nodes, texts, native, shared } = require('./flowie-test-boundaries.cjs');
+const { load, host, flush, nodes, texts, native, shared, flushFrames, animationFrames, emitKeyboard, keyboardListenerCount } = require('./flowie-test-boundaries.cjs');
 const preview = load('src/services/flowie-preview.ts');
 class ApiError extends Error { constructor(message, status) { super(message); this.status = status; } }
 const page = (data, current = 1, last = 1) => ({ data, current_page: current, last_page: last, total: data.length });
@@ -224,7 +224,7 @@ const fakeChat = { messages: [{ id: '1', role: 'user', message: 'Saved' }], conv
   startNew: () => { chatState = { ...chatState, id: undefined, conversation: null, messages: [] }; } };
 chatState = fakeChat;
 const components = { useFlowieColors: () => ({ background: 'cream', surface: 'white', border: 'border', accent: 'red', primary: 'red' }), FlowieActionCard: 'Evaluation', FlowieMessageBubble: 'Assistant', QuickPromptChip: 'Chip', UserMessageBubble: 'User' };
-const screen = load('src/components/flowie-conversation-screen.tsx', { ...shared, react: screenHost.react, 'expo-router': { Stack: { Screen: 'Screen' }, useRouter: () => router },
+const screen = load('src/components/flowie-conversation-screen.tsx', { ...shared, react: screenHost.react, 'expo-router': { Stack: { Screen: 'Screen' }, useFocusEffect: screenHost.focus, useRouter: () => router },
   '@/hooks/use-flowie-conversation': { useFlowieConversation: () => chatState }, '@/components/confirmation-modal': { ConfirmationModal: 'Confirmation' },
   '@/components/flowie-components': components, '@/services/flowie-preview': preview });
 let target;
@@ -240,22 +240,32 @@ await check('three-dot navigates to full-screen Conversations with no popup, bel
 await check('Evaluation and all quick questions navigate/send; input has no plus, handles duplicate stale press and retains failed draft', async () => {
   find(render(), 'Evaluation').props.onAction('open_evaluation'); assert.equal(routes.pop(), '/evaluation');
   find(render(), 'Evaluation').props.onAction('https://evil.test'); assert.equal(routes.length, 0);
+  assert.equal(button('Quick Questions').props.accessibilityState.expanded,false);
+  assert.equal(nodes(render()).filter(n => n.type === 'Chip').length,0);
+  assert.ok(nodes(button('Quick Questions')).some(n=>n.props?.name==='chevron-right'));
+  assert.ok(nodes(button('Quick Questions')).some(n=>n.props?.name==='help-outline'));
+  button('Quick Questions').props.onPress();
   assert.deepEqual(nodes(render()).filter(n => n.type === 'Chip').map(n => n.props.label), Array.from(preview.QUICK_PROMPTS));
+  assert.ok(nodes(button('Quick Questions')).some(n=>n.props?.name==='keyboard-arrow-down'));
   assert.ok(!nodes(render()).some(n => n.props?.name === 'add'));
   assert.equal(find(render(), 'TextInput').props.maxLength, 1000); assert.equal(find(render(), 'TextInput').props.multiline, true);
   find(render(), 'TextInput').props.onChangeText('Question');
+  assert.equal(button('Quick Questions').props.accessibilityState.expanded,false);
   const press = button('Send message').props.onPress; press(); press(); assert.deepEqual(sent, ['Question']);
   resolvesSend(false); await flush(); assert.equal(find(render(), 'TextInput').props.value, 'Question');
   chatState = { ...chatState, busy: true, sending: true }; render();
+  button('Quick Questions').props.onPress();
   find(render(), 'Chip').props.onPress('My status'); assert.equal(sent.length, 1);
   chatState = { ...chatState, busy: false, sending: false }; render();
   find(render(), 'Chip').props.onPress('My status'); resolvesSend(true); await flush(); assert.equal(sent.at(-1), 'My status');
+  assert.equal(button('Quick Questions').props.accessibilityState.expanded,false);
   native.Platform.OS = 'ios'; assert.equal(find(render(), 'KeyboardAvoidingView').props.behavior, 'padding'); native.Platform.OS = 'android';
   assert.equal(find(render(), 'KeyboardAvoidingView').props.behavior, 'height');
 });
 await check('ended title/message retain normal alignment; only Start New/Delete are centered, transcript stays read-only', async () => {
   chatState = { ...fakeChat, conversation: meta(3, 'ended') };
   assert.ok(texts(render()).includes('Conversation Ended')); assert.ok(!find(render(), 'TextInput')); assert.ok(!button('End Conversation'));
+  assert.equal(button('Quick Questions'),undefined);
   assert.equal(find(render(), 'FlatList').props.data[0].message, 'Saved'); assert.ok(button('Delete this Conversation'));
   assert.ok(!button('View Conversation History'));
   const title = nodes(render()).find(n => n.type === 'Text' && n.props.children === 'Conversation Ended');
@@ -286,10 +296,192 @@ await check('initial chat skeleton only, background messages stay, explicit retr
   chatState = { ...fakeChat, ready: false, loading: true, messages: [] }; const initial = find(render(), 'FlatList').props;
   assert.equal(initial.data.length, 0); assert.ok(find(initial.ListEmptyComponent, 'TabSkeleton'));
   chatState = { ...fakeChat, loading: true }; assert.equal(find(render(), 'FlatList').props.data[0].message, 'Saved');
-  chatState = { ...fakeChat, error: 'Offline' }; assert.ok(nodes(find(render(), 'FlatList').props.ListFooterComponent).some(n => n.props?.accessibilityLabel === 'Refresh conversation'));
+  chatState = { ...fakeChat, error: 'Offline' }; assert.ok(nodes(find(render(), 'FlatList').props.ListHeaderComponent).some(n => n.props?.accessibilityLabel === 'Refresh conversation'));
   assert.equal(find(render(), 'title').props.children, 'Flowie | LifeFlow');
 });
 screenHost.unmount();
+await check('Phase E Quick Questions is collapsed per entry, accessible, wrapping, typing/prompt collapsed and absent when ended', async () => {
+  const uiHost=host();let state={...fakeChat,send:async value=>{prompts.push(value);return true;}};const prompts=[];
+  const module=load('src/components/flowie-conversation-screen.tsx',{...shared,react:uiHost.react,
+    'expo-router':{Stack:{Screen:'Screen'},useFocusEffect:uiHost.focus,useRouter:()=>router},
+    '@/hooks/use-flowie-conversation':{useFlowieConversation:()=>state},'@/components/confirmation-modal':{ConfirmationModal:'Confirmation'},
+    '@/components/flowie-components':components,'@/services/flowie-preview':preview});
+  const view=()=>uiHost.render(()=>module.FlowieConversationScreen({conversationId:3}));
+  const toggle=()=>nodes(view()).find(n=>n.props?.accessibilityLabel==='Quick Questions');
+  const chipNodes=()=>nodes(view()).filter(n=>n.type==='Chip');
+  assert.equal(toggle().props.accessibilityRole,'button');assert.equal(toggle().props.accessibilityState.expanded,false);assert.equal(chipNodes().length,0);
+  assert.ok(toggle().props.style({pressed:false})[0].minHeight>=44);assert.ok(nodes(toggle()).some(n=>n.props?.name==='chevron-right'&&n.props.accessible===false));
+  assert.ok(nodes(toggle()).some(n=>n.props?.name==='help-outline'));
+  toggle().props.onPress();assert.equal(toggle().props.accessibilityState.expanded,true);assert.ok(nodes(toggle()).some(n=>n.props?.name==='keyboard-arrow-down'));
+  assert.deepEqual(chipNodes().map(n=>n.props.label),Array.from(preview.QUICK_PROMPTS));
+  const quickScroll=find(view(),'ScrollView');assert.equal(quickScroll.props.contentContainerStyle.flexWrap,'wrap');assert.ok(quickScroll.props.style.maxHeight<=160);
+  toggle().props.onPress();assert.equal(chipNodes().length,0);toggle().props.onPress();find(view(),'TextInput').props.onFocus();assert.equal(chipNodes().length,0);
+  toggle().props.onPress();find(view(),'TextInput').props.onChangeText('Draft\nsecond line');assert.equal(chipNodes().length,0);assert.equal(find(view(),'TextInput').props.value,'Draft\nsecond line');
+  toggle().props.onPress();const prompt=chipNodes()[0];prompt.props.onPress(prompt.props.label);prompt.props.onPress(prompt.props.label);await flush();
+  assert.deepEqual(prompts,[preview.QUICK_PROMPTS[0]]);assert.equal(chipNodes().length,0);assert.equal(find(view(),'TextInput').props.value,'Draft\nsecond line');
+  toggle().props.onPress();uiHost.blur();assert.equal(keyboardListenerCount(),0);uiHost.refocus();assert.equal(toggle().props.accessibilityState.expanded,false);
+  state={...state,conversation:meta(3,'ended')};assert.equal(toggle(),undefined);assert.ok(!find(view(),'TextInput'));
+  assert.equal(find(view(),'FlatList').props.data[0].message,'Saved');uiHost.unmount();assert.equal(keyboardListenerCount(),0);assert.equal(animationFrames.size,0);
+});
+function scrollingFixture(initial={...fakeChat}) {
+  const uiHost=host();let state=initial,content=0,height=0,target;const scrolls=[];
+  const module=load('src/components/flowie-conversation-screen.tsx',{...shared,react:uiHost.react,
+    'expo-router':{Stack:{Screen:'Screen'},useFocusEffect:uiHost.focus,useRouter:()=>router},
+    '@/hooks/use-flowie-conversation':{useFlowieConversation:()=>state},'@/components/confirmation-modal':{ConfirmationModal:'Confirmation'},
+    '@/components/flowie-components':components,'@/services/flowie-preview':preview});
+  const view=()=>uiHost.render(()=>module.FlowieConversationScreen({conversationId:target}));const transcript=()=>find(view(),'FlatList');
+  const event=offset=>({nativeEvent:{contentOffset:{y:offset},layoutMeasurement:{height},contentSize:{height:content}}});
+  transcript().props.ref.current={scrollToOffset:options=>{assert.equal(options.offset,0);scrolls.push(options.animated);},scrollToEnd:()=>assert.fail('A saved transcript must not seek an estimated end')};
+  return {view,transcript,scrolls,input:()=>find(view(),'TextInput'),
+    latest:()=>nodes(view()).find(n=>n.props?.accessibilityLabel==='Latest Messages, return to newest messages'),
+    toggle:()=>nodes(view()).find(n=>n.props?.accessibilityLabel==='Quick Questions'),
+    update:patch=>{state={...state,...patch};return view();},
+    route:(value,patch)=>{target=value;state={...state,...patch};return view();},
+    layout:value=>{height=value;transcript().props.onLayout({nativeEvent:{layout:{height,width:360}}});},
+    content:value=>{content=value;transcript().props.onContentSizeChange(360,content);},
+    scroll:offset=>transcript().props.onScroll(event(offset)),
+    drag:offset=>{transcript().props.onScrollBeginDrag();transcript().props.onScroll(event(offset));transcript().props.onScrollEndDrag(event(offset));},
+    momentum:offset=>{transcript().props.onMomentumScrollBegin();transcript().props.onScroll(event(offset));transcript().props.onMomentumScrollEnd(event(offset));},
+    settleBottom:()=>transcript().props.onScroll(event(0)),
+    blur:uiHost.blur,refocus:uiHost.refocus,close:uiHost.unmount};
+}
+await check('hotfix: a long asynchronously hydrated chat opens at the native newest anchor without measurement-driven bottom seeking', async () => {
+  const messages=Array.from({length:500},(_,i)=>({id:String(i+1),role:i%2?'flowie':'user',message:('Variable-height message '+i+' ').repeat(1+(i%17))}));
+  const original=JSON.stringify(messages);
+  const ui=scrollingFixture({...fakeChat,id:undefined,conversation:null,ready:false,loading:true,messages:[]});
+  ui.layout(420);ui.content(260);flushFrames();assert.deepEqual(ui.scrolls,[]);
+  await Promise.resolve();ui.update({id:42,conversation:meta(42),ready:true,loading:false,messages});
+  // These are the successive spacer/row measurements emitted while a long list virtualizes.
+  for(const height of [8500,13890,22760,31000,31240,31318,31318]){
+    ui.content(height);flushFrames();ui.view();
+    assert.deepEqual(ui.scrolls,[],'Initial history must not walk through estimated bottom offsets');
+    assert.ok(!ui.latest(),'Latest Messages must not flash during initial placement');
+  }
+  assert.equal(ui.transcript().props.inverted,true);
+  assert.equal(ui.transcript().props.data[0].id,'500');assert.equal(ui.transcript().props.data.at(-1).id,'1');
+  assert.equal(JSON.stringify(messages),original,'Only presentation order changes; saved history is untouched');
+  assert.equal(ui.transcript().props.keyExtractor(ui.transcript().props.data[0]),'500');
+  assert.equal(ui.transcript().props.disableVirtualization,undefined);assert.equal(ui.transcript().props.getItemLayout,undefined);
+  ui.blur();ui.refocus();flushFrames();ui.content(31800);flushFrames();assert.deepEqual(ui.scrolls,[],'Repeated focus/late measurements stay at the initial anchor');
+  ui.close();assert.equal(animationFrames.size,0);
+});
+await check('hotfix: switching long conversations cancels queued placement and ignores old layout, gesture and frame callbacks', async () => {
+  const messages=id=>Array.from({length:200},(_,i)=>({id:id+'-'+i,role:'user',message:'Saved message '.repeat(1+i%11)}));
+  const ui=scrollingFixture({...fakeChat,messages:messages(3)});
+  ui.route(3,{});ui.layout(420);ui.content(15000);flushFrames();ui.drag(800);assert.ok(ui.latest());
+  const old=ui.transcript().props;ui.latest().props.onPress();
+  const staleFrame=[...animationFrames.values()][0];assert.equal(typeof staleFrame,'function');
+  ui.route(8,{id:undefined,conversation:null,ready:false,loading:true,messages:[]});
+  assert.equal(animationFrames.size,0);assert.ok(!ui.latest());
+  ui.layout(380);ui.content(250);await Promise.resolve();
+  ui.update({id:8,conversation:meta(8),ready:true,loading:false,messages:messages(8)});ui.content(19000);
+  const queued=animationFrames.size;assert.equal(queued,1);
+  staleFrame();old.onContentSizeChange(360,22000);old.onLayout({nativeEvent:{layout:{height:100}}});
+  old.onScrollBeginDrag();old.onScroll({nativeEvent:{contentOffset:{y:9000}}});old.onMomentumScrollBegin();old.onMomentumScrollEnd({nativeEvent:{contentOffset:{y:9000}}});
+  assert.equal(animationFrames.size,queued,'A stale frame cannot clear the new conversation frame');
+  flushFrames();assert.deepEqual(ui.scrolls,[]);assert.ok(!ui.latest());assert.equal(ui.transcript().props.data[0].id,'8-199');
+  for(const height of [19800,21000,21050]){ui.content(height);flushFrames();assert.ok(!ui.latest());}
+  assert.deepEqual(ui.scrolls,[]);ui.drag(600);assert.ok(ui.latest());
+  const closed=ui.transcript().props;ui.latest().props.onPress();ui.close();
+  closed.onContentSizeChange(360,23000);closed.onLayout({nativeEvent:{layout:{height:500}}});closed.onScrollBeginDrag();
+  flushFrames();assert.deepEqual(ui.scrolls,[]);assert.equal(animationFrames.size,0);
+});
+await check('hotfix: empty, failed, retried and interrupted hydration never hides the transcript or loses recovery UI', async () => {
+  const ui=scrollingFixture({...fakeChat,id:undefined,conversation:null,ready:false,loading:true,messages:[]});
+  ui.layout(0);ui.content(0);assert.ok(find(ui.transcript().props.ListEmptyComponent,'TabSkeleton'));flushFrames();
+  ui.update({loading:false,error:'Offline'});
+  assert.ok(nodes(ui.transcript().props.ListHeaderComponent).some(n=>n.props?.accessibilityLabel==='Refresh conversation'));
+  assert.ok(nodes(ui.transcript().props.ListHeaderComponent).some(n=>n.props?.accessibilityRole==='alert'));
+  assert.equal(ui.transcript().props.style.opacity,undefined);assert.equal(ui.transcript().props.accessibilityElementsHidden,undefined);
+  ui.update({loading:true,error:''});ui.layout(400);ui.content(220);flushFrames();
+  await Promise.resolve();ui.update({ready:true,loading:false,messages:[]});ui.content(180);flushFrames();
+  assert.equal(ui.transcript().props.data[0].message,preview.FLOWIE_INTRO);assert.ok(!ui.latest());assert.deepEqual(ui.scrolls,[]);
+  ui.close();assert.equal(animationFrames.size,0);
+});
+await check('hotfix: programmatic offsets are not reading intent, and incoming rows retain native history anchoring', async () => {
+  const ui=scrollingFixture();ui.layout(400);ui.content(12000);flushFrames();
+  ui.scroll(200);assert.ok(!ui.latest(),'A native layout/placement event is not an intentional drag');
+  ui.content(12100);flushFrames();assert.deepEqual(ui.scrolls,[false]);ui.settleBottom();
+  for(const height of [12500,13000,13010]){ui.content(height);flushFrames();assert.ok(!ui.latest());}
+  assert.deepEqual(ui.scrolls,[false],'Late measurements do not restart an acknowledged placement');
+  ui.drag(900);const count=ui.scrolls.length;
+  ui.update({messages:[...fakeChat.messages,{id:'reply-new',role:'flowie',message:'A new reply with variable height '.repeat(30)}]});
+  ui.content(13800);flushFrames();assert.ok(ui.latest());assert.equal(ui.scrolls.length,count);
+  assert.equal(ui.transcript().props.data[0].id,'reply-new');
+  assert.equal(ui.transcript().props.maintainVisibleContentPosition.minIndexForVisible,0);
+  ui.close();
+});
+await check('Phase E revision: hydrated placement is non-animated; unchanged layout, typing and keyboard events never re-scroll', async () => {
+  const ui=scrollingFixture({...fakeChat,id:undefined,conversation:null,ready:false,loading:true,messages:[]});
+  ui.layout(400);ui.content(600);flushFrames();assert.deepEqual(ui.scrolls,[],'No scroll through loading placeholders');
+  ui.update({id:3,conversation:meta(3),ready:true,loading:false,messages:Array.from({length:60},(_,i)=>({id:String(i+1),role:'user',message:'Saved '+i}))});
+  ui.content(2400);ui.layout(400);assert.equal(animationFrames.size,1);flushFrames();assert.deepEqual(ui.scrolls,[]);ui.settleBottom();
+  ui.layout(400);ui.content(2400);ui.view();ui.view();ui.input().props.onFocus();
+  for(let i=1;i<=20;i++)ui.input().props.onChangeText('Typing a message...'.slice(0,i));
+  emitKeyboard('keyboardDidShow');emitKeyboard('keyboardDidHide');emitKeyboard('keyboardDidChangeFrame');flushFrames();
+  assert.deepEqual(ui.scrolls,[]);assert.equal(animationFrames.size,0);assert.equal(keyboardListenerCount(),0,'Keyboard spacing is handled by layout, without competing event listeners');
+  // The native newest anchor survives viewport changes without corrective bottom searches.
+  ui.layout(250);ui.scroll(0);ui.layout(250);ui.content(2400);flushFrames();assert.deepEqual(ui.scrolls,[]);ui.settleBottom();
+  ui.layout(250);ui.content(2400);flushFrames();assert.equal(ui.scrolls.length,0);
+  ui.layout(220);flushFrames();assert.equal(ui.scrolls.length,0);ui.settleBottom();
+  ui.layout(400);flushFrames();ui.settleBottom();assert.equal(ui.scrolls.length,0,'Multiline shrink/grow and keyboard dismissal retain the native anchor');
+  ui.layout(250);flushFrames();ui.layout(400);flushFrames();assert.equal(ui.scrolls.length,0,'Rapid reopen/dismiss never repeats placement');ui.settleBottom();
+  const count=ui.scrolls.length;ui.toggle().props.onPress();ui.toggle().props.onPress();flushFrames();assert.equal(ui.scrolls.length,count,'Panel toggling alone does not command a scroll');
+  assert.ok(!ui.latest());ui.close();assert.equal(animationFrames.size,0);
+});
+await check('Phase E revision: history intent, momentum and hysteresis; Latest Messages is measured, distinct and resumes following', async () => {
+  const ui=scrollingFixture();ui.layout(400);ui.content(2400);flushFrames();ui.settleBottom();
+  ui.drag(300);assert.ok(ui.latest());assert.equal(ui.latest().props.accessibilityRole,'button');
+  const control=ui.latest(),style=control.props.style({pressed:false})[0];assert.equal(style.position,'absolute');assert.ok(style.minHeight>=44);
+  assert.ok(nodes(control).some(n=>n.props?.name==='arrow-downward'&&n.props.accessible===false));
+  control.props.onLayout({nativeEvent:{layout:{height:92}}});assert.equal(ui.transcript().props.contentContainerStyle[1].paddingTop,116,'Reserve measured room for larger text at the inverted newest edge');
+  assert.equal(ui.transcript().props.maintainVisibleContentPosition.minIndexForVisible,0,'Native anchoring preserves the visible history row when a reply is prepended');
+  ui.content(2492);flushFrames();const count=ui.scrolls.length;
+  ui.input().props.onFocus();ui.input().props.onChangeText('Still reading');ui.layout(250);ui.content(2692);emitKeyboard('keyboardDidShow');flushFrames();
+  assert.equal(ui.scrolls.length,count,'Focus, typing, replies and resizing cannot pull a history reader to the bottom');assert.ok(ui.latest());
+  ui.toggle().props.onPress();ui.layout(200);flushFrames();assert.equal(ui.scrolls.length,count);ui.input().props.onFocus();assert.equal(ui.toggle().props.accessibilityState.expanded,false);
+  ui.layout(400);ui.drag(170);assert.ok(ui.latest());ui.drag(100);assert.ok(ui.latest(),'Middle hysteresis band retains reading mode');
+  ui.drag(50);assert.ok(!ui.latest());ui.drag(100);assert.ok(!ui.latest(),'Middle band does not toggle bottom-follow off');
+  ui.drag(170);assert.ok(ui.latest());ui.latest().props.onPress();ui.content(2600);flushFrames();assert.equal(ui.scrolls.length,count+1);assert.equal(ui.scrolls.at(-1),true);ui.settleBottom();assert.ok(!ui.latest());
+  assert.equal(ui.transcript().props.maintainVisibleContentPosition,undefined);
+  ui.momentum(300);assert.ok(!ui.latest(),'Programmatic animation events do not become donor scroll intent');ui.settleBottom();
+  ui.content(2700);flushFrames();assert.equal(ui.scrolls.length,count+1,'Incoming content stays at offset zero without another scroll');ui.settleBottom();
+  // A real drag, including its subsequent momentum, stops following and cancels queued work.
+  ui.content(2800);const beforeGesture=ui.scrolls.length;ui.drag(2300);ui.momentum(200);flushFrames();assert.equal(ui.scrolls.length,beforeGesture);assert.ok(ui.latest());
+  ui.blur();ui.content(3000);emitKeyboard('keyboardDidShow');flushFrames();assert.equal(ui.scrolls.length,beforeGesture);ui.refocus();flushFrames();assert.equal(ui.scrolls.length,beforeGesture,'Returning to a retained chat preserves older-message reading');
+  ui.latest().props.onPress();assert.equal(animationFrames.size,1);ui.close();assert.equal(animationFrames.size,0);
+});
+await check('Phase E revision: sending waits for the new message, uses one intentional animation, and a later scroll-up wins over replies', async () => {
+  let release;const sentQuestions=[];const ui=scrollingFixture({...fakeChat,send:value=>{sentQuestions.push(value);return new Promise(resolve=>{release=resolve;});}});
+  ui.layout(400);ui.content(2400);flushFrames();ui.settleBottom();ui.drag(300);ui.input().props.onChangeText('Multiple\nlines');
+  const send=nodes(ui.view()).find(n=>n.props?.accessibilityLabel==='Send message');assert.ok(nodes(send).some(n=>n.props?.name==='send'));assert.ok(!nodes(send).some(n=>n.props?.name==='arrow-upward'));
+  send.props.onPress();send.props.onPress();assert.deepEqual(sentQuestions,['Multiple\nlines']);ui.layout(440);flushFrames();assert.deepEqual(ui.scrolls,[],'Do not first animate to pre-send content on composer resize');
+  ui.update({sending:true,busy:true});ui.content(2700);ui.content(2700);flushFrames();assert.deepEqual(ui.scrolls,[true]);ui.settleBottom();
+  ui.update({sending:false,busy:false});release(true);await flush();ui.content(2900);flushFrames();assert.deepEqual(ui.scrolls,[true]);ui.settleBottom();
+  ui.drag(300);ui.input().props.onChangeText('Second question');nodes(ui.view()).find(n=>n.props?.accessibilityLabel==='Send message').props.onPress();ui.content(3100);flushFrames();ui.settleBottom();
+  ui.drag(300);const count=ui.scrolls.length;ui.update({id:3,sending:false,busy:false});release(true);await flush();ui.content(3400);flushFrames();assert.equal(ui.scrolls.length,count);assert.ok(ui.latest());
+  assert.equal(ui.scrolls.filter(Boolean).length,2,'At most one animated transition for each explicit send');ui.close();
+  // The first returned server conversation ID is not a new navigation command.
+  const first=scrollingFixture({...fakeChat,id:undefined,conversation:null});first.layout(300);first.content(1600);flushFrames();first.settleBottom();first.drag(300);
+  const before=first.scrolls.length;first.update({id:8,conversation:meta(8)});first.content(1800);flushFrames();assert.equal(first.scrolls.length,before);assert.ok(first.latest());first.close();
+});
+await check('Phase E revision: short/ended chats, iOS resize, narrow/landscape/font layout and icon clarity', async () => {
+  const short=scrollingFixture();short.layout(400);short.content(180);flushFrames();short.drag(0);assert.ok(!short.latest());assert.deepEqual(short.scrolls,[]);
+  assert.equal(short.transcript().props.contentContainerStyle[0].justifyContent,'flex-end','Keep short chats at the visual top despite inversion');short.close();
+  const originalOS=native.Platform.OS,originalDimensions=native.useWindowDimensions;native.Platform.OS='ios';
+  for(const dimensions of [{width:320,height:640,fontScale:2},{width:720,height:320,fontScale:1}]){
+    native.useWindowDimensions=()=>dimensions;const ui=scrollingFixture();ui.layout(200);ui.content(1600);flushFrames();ui.settleBottom();
+    emitKeyboard('keyboardDidChangeFrame');flushFrames();assert.deepEqual(ui.scrolls,[]);ui.layout(160);flushFrames();assert.deepEqual(ui.scrolls,[]);ui.settleBottom();
+    assert.equal(find(ui.view(),'KeyboardAvoidingView').props.behavior,'padding');assert.equal(find(ui.view(),'KeyboardAvoidingView').props.keyboardVerticalOffset,undefined);
+    assert.ok(nodes(ui.toggle()).some(n=>n.props?.name==='help-outline'));assert.ok(nodes(ui.toggle()).some(n=>n.props?.name==='chevron-right'));
+    ui.toggle().props.onPress();assert.ok(nodes(ui.toggle()).some(n=>n.props?.name==='keyboard-arrow-down'));assert.ok(find(ui.view(),'ScrollView').props.style.maxHeight<=dimensions.height*.2);
+    const label=nodes(ui.toggle()).find(n=>n.type==='Text');assert.equal(label.props.style[0].minWidth,0);assert.equal(label.props.numberOfLines,undefined);
+    assert.equal(ui.input().props.multiline,true);assert.equal(ui.input().props.style[0].maxHeight,120);
+    const send=nodes(ui.view()).find(n=>n.props?.accessibilityLabel==='Send message');assert.ok(nodes(send).some(n=>n.props?.name==='send'));assert.equal(send.props.style({pressed:false})[0].width,48);assert.equal(send.props.style({pressed:false})[0].height,48);
+    assert.equal(find(ui.view(),'Evaluation').props.action,'open_evaluation');ui.update({conversation:meta(3,'ended')});assert.ok(!ui.input());assert.ok(!ui.toggle());ui.drag(300);assert.ok(ui.latest(),'Ended history can still return to its latest message');ui.close();
+  }
+  native.Platform.OS=originalOS;native.useWindowDimensions=originalDimensions;assert.equal(keyboardListenerCount(),0);assert.equal(animationFrames.size,0);
+});
 await check('full-screen history has top End, history-left/deleted-right, scrolling/pagination, detail and recovery navigation', async () => {
   let restored = null, refreshed = 0, loadedMore = 0;
   const manager = host();

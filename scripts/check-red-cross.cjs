@@ -1,19 +1,21 @@
 /* Actual service/hook/screen handlers; native and React boundaries are mocked. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
 function load(path,imports={},globals={}){
+ if(!imports['@/components/load-state'] && path!=='src/components/load-state.tsx' && imports['react/jsx-runtime'] && imports['@expo/vector-icons/MaterialIcons'] && imports.react)imports={...imports,'@/components/load-state':load('src/components/load-state.tsx',imports,globals)};
  const module={exports:{}};const code=ts.transpileModule(fs.readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
  vm.runInNewContext(code,{module,exports:module.exports,require:n=>{if (n === '@/constants/theme') return load('src/constants/theme.ts', {'react-native': {Platform: {select: options => options.default}}}); if(n.endsWith('.png')){assert.ok(fs.existsSync(require('node:path').resolve(require('node:path').dirname(path),n)));return n;}if(!(n in imports))throw Error('Unexpected import '+n);return imports[n];},...globals});return module.exports;
 }
 const flush=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
-const jsx=(type,props)=>typeof type==='function'?type(props):({type,props});
+const jsx=(type,props,key)=>typeof type==='function'?type(props):({type,key,props});
 const nodes=v=>!v||typeof v!=='object'?[]:Array.isArray(v)?v.flatMap(nodes):[v,...nodes(v.props?.children)];
 const texts=v=>nodes(v).filter(n=>n.type==='Text').map(n=>Array.isArray(n.props.children)?n.props.children.join(''):n.props.children).join('\n');
-const button=(tree,label)=>nodes(tree).find(n=>n.type==='Pressable'&&texts(n).includes(label));
+const button=(tree,label)=>nodes(tree).find(n=>n.type==='Pressable'&&(texts(n).includes(label)||n.props.accessibilityLabel===label));
 const native={View:'View',Text:'Text',Pressable:'Pressable',Image:'Image',ScrollView:'ScrollView',TextInput:'TextInput',StyleSheet:{create:x=>x},Alert:{alert:()=>{throw Error('Unexpected validation alert');}}};
 const presentation=load('src/services/announcement-presentation.ts',{'./api':{API_BASE_URL:'http://device.test:8000/api'}},{URL});
 const eligibility=load('src/services/eligibility.ts',{'./api':{ApiError:class extends Error{}}});
 const shared={'@/services/announcement-presentation':presentation,'@/components/tab-skeleton':{TabSkeleton:'TabSkeleton'},'react/jsx-runtime':{jsx,jsxs:jsx,Fragment:'Fragment'},'react-native':native,'@expo/vector-icons/MaterialIcons':{__esModule:true,default:'Icon'},'react-native-safe-area-context':{SafeAreaView:'SafeAreaView'}};
+shared['@/components/announcement-image']={AnnouncementImage:props=>({type:'AnnouncementImage',props:{...props,children:props.uri?null:{type:'Text',props:{children:'No event image available'}}}})};
 const body=load('src/components/announcement-body.tsx',{'react/jsx-runtime':{jsx,jsxs:jsx},'react-native':native});
 shared['@/components/announcement-body']=body;
 const richDoc={version:1,blocks:[{type:'paragraph',content:[{text:'Hello',bold:true,italic:true}]},
@@ -30,14 +32,16 @@ for(const document of [null,{version:2,blocks:[]},{version:1,blocks:[{type:'ifra
 }
 // Deterministic hook host preserves slots, effect dependencies and cleanup.
 function host(){
- const slots=[];let cursor=0;const queued=[];
+ const slots=[];let cursor=0;const queued=[],focusSlots=new Set();
  const effect=(fn,deps)=>{const i=cursor++,old=slots[i];if(!old||deps.some((d,j)=>d!==old.deps[j])){slots[i]={deps,cleanup:old?.cleanup};queued.push(()=>{slots[i].cleanup?.();slots[i].cleanup=fn();});}};
  const react={
  useState:initial=>{const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return [slots[i],v=>{slots[i]=typeof v==='function'?v(slots[i]):v;}];},
  useRef:initial=>{const i=cursor++;return slots[i]||={current:initial};},
  useCallback:(fn,deps)=>{const i=cursor++,old=slots[i];if(!old||deps.some((d,j)=>d!==old.deps[j]))slots[i]={deps,fn};return slots[i].fn;},
- useEffect:effect};
- return {react,focus:fn=>effect(fn,[fn]),render:fn=>{cursor=0;const result=fn();while(queued.length)queued.shift()();return result;},unmount:()=>slots.forEach(s=>s?.cleanup?.())};
+ useMemo:(fn,deps)=>{const i=cursor++,old=slots[i];if(!old||deps.some((d,j)=>d!==old.deps[j]))slots[i]={deps,value:fn()};return slots[i].value;},
+ memo:fn=>fn,useEffect:effect};
+ return {react,focus:fn=>{focusSlots.add(cursor);effect(fn,[fn]);},render:fn=>{cursor=0;const result=fn();while(queued.length)queued.shift()();return result;},
+  blur:()=>focusSlots.forEach(i=>{slots[i].cleanup?.();slots[i].cleanup=undefined;slots[i].deps=[];}),unmount:()=>slots.forEach(s=>s?.cleanup?.())};
 }
 
 (async()=>{
@@ -64,18 +68,25 @@ function host(){
  const routes=[];let dialog;
  const router={push:route=>routes.push(route),back:()=>routes.push('back'),canGoBack:()=>true,replace:route=>routes.push(route)};
  const boundary={...native,useWindowDimensions:()=>({width:360}),Alert:{alert:(...args)=>{dialog=args;}}};
- async function home(posts, history=[]){
-  const h=host(),timers=new Set(),auth={loadProfile:async()=>{},opportunities:async()=>({data:posts}),donationHistory:async()=>({data:history})};
-  const module=load('src/app/(tabs)/index.tsx',{...shared,'@/components/home-donation-reminder':{HomeDonationReminder:'Reminder'},'@/constants/flowie-mascots':load('src/constants/flowie-mascots.ts'),'react-native':boundary,react:h.react,'expo-router':{useFocusEffect:h.focus,useRouter:()=>router},
+ async function home(posts, history=[], options={}){
+  const h=host(),timers=new Map(),clock={now:options.now??Date.now()};let foreground;
+  const auth={profile:null,loadProfile:async()=>{},opportunities:async()=>({data:posts}),donationHistory:async()=>({data:history}),...options.auth};
+  const addTimer=(kind,fn,delay)=>{const key={};timers.set(key,{kind,fn,delay});return key;};
+  const module=load('src/app/(tabs)/index.tsx',{...shared,'@/components/home-donation-reminder':{HomeDonationReminder:'Reminder'},'@/constants/flowie-mascots':load('src/constants/flowie-mascots.ts'),react:h.react,'expo-router':{useFocusEffect:h.focus,useRouter:()=>router},
    '@/contexts/auth-context':{useAuth:()=>auth},'@/services/donations':donations,'@/services/api':{errorMessage:e=>e.message},
-   '@/components/notification-bell':{NotificationBell:'Bell'}},{setInterval:fn=>{timers.add(fn);return fn;},clearInterval:fn=>timers.delete(fn)});
-  const view=()=>h.render(module.default);view();await flush();return {view,auth,timers,close:()=>h.unmount()};
+   '@/components/notification-bell':{NotificationBell:'Bell'},
+   'react-native':{...boundary,useWindowDimensions:()=>({width:options.width??360,fontScale:options.fontScale??1}),AppState:{addEventListener:(_,fn)=>{foreground=fn;return {remove(){foreground=null;}};}}}},
+   {Date:class extends Date{constructor(...args){super(...(args.length?args:[clock.now]));}static now(){return clock.now;}},
+    setInterval:(fn,delay)=>addTimer('interval',fn,delay),clearInterval:key=>timers.delete(key),
+    setTimeout:(fn,delay)=>addTimer('timeout',fn,delay),clearTimeout:key=>timers.delete(key)});
+  const view=()=>h.render(module.default);const initial=view();await flush();return {view,initial,auth,timers,clock,foreground:()=>foreground?.('active'),
+    fire:key=>{const timer=timers.get(key);if(timer?.kind==='timeout')timers.delete(key);timer?.fn();},blur:()=>h.blur(),close:()=>h.unmount()};
  }
- let h=await home([]);assert.ok(texts(h.view()).includes('PINNED'));
+ let h=await home([]);assert.ok(texts(h.view()).includes('DONATION OPTION'));assert.ok(!texts(h.view()).includes('PINNED'));
  button(h.view(),'View Donation Option').props.onPress();assert.equal(routes.pop().params.id,'red-cross-dagupan');h.close();
  h=await home([admin]);assert.ok(texts(h.view()).indexOf('Admin bloodletting')<texts(h.view()).indexOf('Donate Through the Philippine Red Cross'));
- assert.ok(nodes(h.view()).some(n=>n.type==='Image' && n.props.source?.uri===admin.image_url));
- button(h.view(),'View Announcement').props.onPress();assert.equal(routes.pop().params.id,'9');h.close();
+ assert.ok(nodes(h.view()).some(n=>n.type==='AnnouncementImage' && n.props.uri===admin.image_url));
+ button(h.view(),'View Details').props.onPress();assert.equal(routes.pop().params.id,'9');h.close();
 
  // Part 2: shared public media, calendar dates, featured limits, refresh and routes.
  assert.equal(presentation.announcementImageUrl('http://localhost/storage/announcements/a.png'), 'http://device.test:8000/storage/announcements/a.png');
@@ -94,8 +105,8 @@ function host(){
  h=await home([older,admin],[latest,{...latest,id:74,opportunity:older}]);
  let homeTree=h.view();
  assert.ok(!texts(homeTree).includes('Older announcement'));
- assert.equal(nodes(homeTree).filter(n=>n.type==='Pressable'&&texts(n)==='View Announcement').length,1);
- assert.equal(nodes(homeTree).find(n=>n.type==='Text'&&n.props.children===admin.description).props.numberOfLines,3);
+ assert.equal(nodes(homeTree).filter(n=>n.type==='Pressable'&&n.props.accessibilityLabel?.startsWith('View details:')).length,1);
+ assert.equal(nodes(homeTree).find(n=>n.type==='Text'&&n.props.children===admin.description).props.numberOfLines,2);
  assert.ok(texts(homeTree).includes('September 14, 2026'));
  for(const [label,expected] of [['View all announcements','/announcements'],['View all activity','/(tabs)/activity']]) {
   nodes(homeTree).find(n=>n.props?.accessibilityLabel===label).props.onPress();assert.equal(routes.pop(),expected);
@@ -108,8 +119,113 @@ function host(){
  }
  const pendingHome=deferred();h.auth.opportunities=()=>pendingHome.promise;h.view();
  assert.ok(!nodes(h.view()).some(n=>n.type==='TabSkeleton'),'Background reload preserves Home content');
- pendingHome.reject(new Error('Offline'));await flush();assert.ok(texts(h.view()).includes('Admin bloodletting'));assert.ok(texts(h.view()).includes('Offline'));h.close();
+ pendingHome.reject(new Error('Offline'));await flush();assert.ok(texts(h.view()).includes('Admin bloodletting'));assert.ok(texts(h.view()).includes('Connection Problem'));h.close();
  assert.equal(h.timers.size,0);
+
+ // Phase A: local greeting boundaries, focus/foreground changes and no per-second clock.
+ for(const [hour,minute,greeting] of [[4,59,'Good evening'],[5,0,'Good morning'],[11,59,'Good morning'],[12,0,'Good afternoon'],[17,59,'Good afternoon'],[18,0,'Good evening']]){
+  h=await home([],[],{now:new Date(2026,9,24,hour,minute).getTime(),auth:{profile:{first_name:' Harry '}}});
+  assert.ok(texts(h.view()).includes(greeting+', Harry'));
+  assert.ok(!Array.from(h.timers.values()).some(t=>t.kind==='interval'&&t.delay===1000));
+  const [key,timer]=Array.from(h.timers.entries()).find(([,t])=>t.kind==='timeout');
+  h.clock.now+=timer.delay;h.fire(key);
+  assert.ok(texts(h.view()).includes((hour<5||hour>=18?'Good morning':hour<12?'Good afternoon':'Good evening')+', Harry'));
+  h.clock.now=new Date(2026,9,24,18,1).getTime();h.foreground();await flush();assert.ok(texts(h.view()).includes('Good evening, Harry'));
+  h.blur();h.clock.now=new Date(2026,9,25,5,1).getTime();h.view();await flush();assert.ok(texts(h.view()).includes('Good morning, Harry'));h.close();
+ }
+ for(const name of [null,undefined,'','   ']){
+  h=await home([],[],{auth:{profile:{first_name:name}}});const greeting=nodes(h.view()).find(n=>n.type==='Text'&&texts(n).startsWith('Good '));
+  assert.ok(greeting);assert.doesNotMatch(texts(greeting),/,|undefined|null/);h.close();
+ }
+ const profileWait=deferred();h=await home([admin],[latest],{auth:{loadProfile:()=>profileWait.promise}});
+ assert.ok(/Good (morning|afternoon|evening)/.test(texts(h.view())),'The local greeting remains available while profile data loads');
+ assert.ok(texts(h.view()).includes(admin.title)&&button(h.view(),'View recent activity'),'Slow profile cannot block loaded sections');
+ h.auth.profile={first_name:'Harry'};profileWait.resolve();await flush();assert.match(texts(h.view()),/Good (morning|afternoon|evening), Harry/);h.close();
+ const boardWait=deferred();let boardRequests=0;
+ h=await home([], [latest], {auth:{profile:{first_name:'Harry'},opportunities:()=>{boardRequests++;return boardWait.promise;}}});
+ assert.ok(texts(h.view()).includes('Harry'));assert.ok(button(h.view(),'View recent activity'));
+ assert.ok(nodes(h.view()).some(n=>n.type==='TabSkeleton'&&n.props.label==='Loading announcements'));
+ button(h.view(),'Ask Flowie').props.onPress();assert.equal(routes.pop(),'/flowie');
+ const refreshKey=Array.from(h.timers.entries()).find(([,t])=>t.kind==='interval'&&t.delay===30000)[0];
+ h.fire(refreshKey);h.fire(refreshKey);await flush();assert.equal(boardRequests,1,'Pending sections coalesce periodic refreshes');
+ h.blur();h.view();await flush();assert.equal(boardRequests,1,'Quick refocus reuses the same in-flight request');
+ boardWait.resolve({data:[admin]});await flush();assert.ok(button(h.view(),'View Details'));h.close();
+ let offline=true,boardCount=0,activityCount=0,profileCount=0;
+ h=await home([],[],{auth:{loadProfile:async()=>{profileCount++;if(offline)throw new Error('Profile offline');},
+  opportunities:async()=>{boardCount++;if(offline)throw new Error('Board offline');return {data:[admin]};},
+  donationHistory:async()=>{activityCount++;if(offline)throw new Error('Activity offline');return {data:[latest]};}}});
+ assert.ok(button(h.view(),'Retry profile')&&button(h.view(),'Retry announcements')&&button(h.view(),'Retry activity'));
+ assert.ok(button(h.view(),'View Donation Option'));assert.ok(!nodes(h.view()).some(n=>n.type==='TabSkeleton'));
+ offline=false;button(h.view(),'Retry announcements').props.onPress();await flush();
+ assert.equal(boardCount,2);assert.equal(activityCount,1);assert.equal(profileCount,1);assert.ok(button(h.view(),'View Details'));
+ button(h.view(),'Retry activity').props.onPress();await flush();assert.ok(button(h.view(),'View recent activity'));
+ button(h.view(),'Retry profile').props.onPress();await flush();assert.ok(!texts(h.view()).includes('Profile offline'));h.close();
+ for(const [width,fontScale] of [[320,1],[320,2],[768,2]]){
+  h=await home([admin],[],{width,fontScale});const tree=h.view();
+  const ask=button(tree,'Ask Flowie'),style=Object.assign({},...ask.props.style({pressed:false}).filter(Boolean));
+  assert.equal(style.flexDirection,'row');assert.ok(style.minHeight>=44);
+  assert.ok(nodes(ask).some(n=>n.type==='Icon'&&n.props.name==='arrow-forward'));
+  assert.ok(nodes(tree).some(n=>n.type==='Image'&&n.props.accessibilityLabel==='Flowie, the LifeFlow assistant'));
+  const card=nodes(tree).find(n=>n.type==='Pressable'&&n.props.accessibilityLabel==='View details: '+admin.title);
+  assert.ok(card.props.style({pressed:true}).some(s=>s?.opacity<1));assert.equal(nodes(card).filter(n=>n.type==='Pressable').length,1);
+  assert.equal(nodes(card).find(n=>n.type==='AnnouncementImage').props.preview,true);h.close();
+ }
+ // Real shared image component: fixed covers, full details, stable sources and fresh-image/error recovery.
+ const imageHost=host(),imageModule=load('src/components/announcement-image.tsx',{...shared,react:imageHost.react},{URL});
+ let imageProps={uri:'https://cdn.test/portrait.png',title:'Portrait',preview:true};
+ const renderImage=()=>imageHost.render(()=>imageModule.AnnouncementImage(imageProps));
+ renderImage().props.onLayout({nativeEvent:{layout:{width:320}}});
+ nodes(renderImage()).find(n=>n.type==='Image').props.onLoad({nativeEvent:{source:{width:400,height:1200}}});
+ assert.equal(renderImage().props.style[1].aspectRatio,16/9);assert.equal(nodes(renderImage()).find(n=>n.type==='Image').props.resizeMode,'cover');
+ assert.equal(nodes(renderImage()).find(n=>n.type==='Image').props.fadeDuration,0);
+ const originalSource=nodes(renderImage()).find(n=>n.type==='Image').props.source;
+ imageProps={...imageProps};assert.equal(nodes(renderImage()).find(n=>n.type==='Image').props.source,originalSource,'Unchanged rerenders retain the native source');
+ imageProps={...imageProps,preview:false};assert.equal(renderImage().props.style[1].height,960,'Detail preserves full portrait aspect ratio');
+ assert.equal(nodes(renderImage()).find(n=>n.type==='Image').props.resizeMode,'contain');
+ const previousLoad=nodes(renderImage()).find(n=>n.type==='Image').props.onLoad;
+ imageProps={uri:'https://cdn.test/banner.png',title:'Banner',preview:false};previousLoad({nativeEvent:{source:{width:400,height:1200}}});
+ assert.equal(renderImage().props.style[1].height,180,'Late image metadata cannot resize the new URL');
+ nodes(renderImage()).find(n=>n.type==='Image').props.onLoad({nativeEvent:{source:{width:1200,height:400}}});
+ assert.equal(renderImage().props.style[1].height,320/3);
+ nodes(renderImage()).find(n=>n.type==='Image').props.onError();assert.ok(texts(renderImage()).includes('No event image available'));
+ imageProps={uri:null,title:'Missing'};assert.ok(texts(renderImage()).includes('No event image available'));imageHost.unmount();
+ const signed=(file,stamp,extra='')=>`https://media.test/announcements/${file}.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Date=${stamp}&X-Amz-Expires=900&X-Amz-Credential=test&X-Amz-SignedHeaders=host&X-Amz-Signature=${stamp}&X-Amz-Security-Token=${stamp}${extra}`;
+ const coverHost=host(),coverModule=load('src/components/announcement-image.tsx',{...shared,react:coverHost.react},{URL});
+ let coverProps={uri:signed('one','first'),title:'First title',preview:true};
+ const cover=()=>coverHost.render(()=>coverModule.AnnouncementImage(coverProps));
+ const nativeImage=()=>nodes(cover()).find(n=>n.type==='Image');
+ const loadedImage=nativeImage();loadedImage.props.onLoad({nativeEvent:{source:{width:400,height:1200}}});
+ for(const stamp of ['second','third','fourth']){
+  coverProps={...coverProps,uri:signed('one',stamp),title:'Updated title'};
+  assert.equal(nativeImage().props.source,loadedImage.props.source,'Re-signing an already-loaded object must not reload the native image');
+  assert.equal(nativeImage().key,undefined,'Signed URLs must not key/remount the image');
+  assert.equal(nativeImage().props.accessibilityLabel,'Updated title event banner');
+ }
+ // If the retained source ever fails, retry the newest signed URL, not the expired one.
+ nativeImage().props.onError();assert.equal(nativeImage().props.source.uri,coverProps.uri);
+ const oldError=nativeImage().props.onError;
+ coverProps={...coverProps,uri:signed('two','new-upload')};assert.equal(nativeImage().props.source.uri,coverProps.uri,'A real image replacement updates immediately');
+ oldError();assert.ok(nativeImage(),'An old error cannot hide a new upload');
+ nativeImage().props.onLoad({nativeEvent:{source:{width:1200,height:400}}});
+ assert.equal(cover().props.style[1].aspectRatio,16/9,'Portrait and landscape covers use the same layout');
+ coverProps={...coverProps,uri:signed('two','version','&versionId=new')};assert.equal(nativeImage().props.source.uri,coverProps.uri,'Non-signing query/version changes remain meaningful');
+ nativeImage().props.onError();assert.ok(texts(cover()).includes('No event image available'));
+ coverProps={...coverProps,uri:signed('two','retry','&versionId=new')};assert.equal(nativeImage().props.source.uri,coverProps.uri,'Failed images accept refreshed URLs');
+ nativeImage().props.onLoad({nativeEvent:{source:{width:1200,height:400}}});
+ coverProps={...coverProps,uri:'https://cdn.test/legacy.png?v=1'};nativeImage().props.onLoad({nativeEvent:{source:{width:1200,height:400}}});
+ coverProps={...coverProps,uri:'https://cdn.test/legacy.png?v=2'};assert.equal(nativeImage().props.source.uri,coverProps.uri,'Legacy cache-busting queries are preserved');
+ coverProps={...coverProps,uri:null};assert.ok(texts(cover()).includes('No event image available'));assert.equal(cover().props.style[1].aspectRatio,16/9);coverHost.unmount();
+ // Home still applies real title/image updates and retains valid cards during silent polling.
+ let refreshedPost=admin;h=await home([admin],[],{auth:{opportunities:async()=>({data:[{...refreshedPost}]})}});
+ const poll=Array.from(h.timers.entries()).find(([,t])=>t.kind==='interval'&&t.delay===30000)[0];
+ const before=nodes(h.view()).find(n=>n.type==='AnnouncementImage');h.fire(poll);await flush();
+ assert.equal(nodes(h.view()).find(n=>n.type==='AnnouncementImage').props.uri,before.props.uri);
+ assert.ok(!nodes(h.view()).some(n=>n.type==='TabSkeleton'));
+ refreshedPost={...admin,title:'Changed event',image_url:'https://cdn.test/updated.png'};h.fire(poll);await flush();
+ assert.ok(texts(h.view()).includes('Changed event'));assert.equal(nodes(h.view()).find(n=>n.type==='AnnouncementImage').props.uri,refreshedPost.image_url);
+ button(h.view(),'View Details').props.onPress();assert.equal(routes.pop().params.id,'9');h.close();
+ console.log('Dashboard revision checks passed: uniform 16:9 covers, no Android fade, stable native source through repeated signing/refresh, real image/version updates, stale-event protection and error recovery; full detail images preserved.');
+ console.log('Phase A Dashboard checks passed: local greeting/focus/boundaries, independent loading/retry, cached refresh, request coalescing, 320dp/large-font styles, whole-card routes, unpinned labels and full-aspect image fallback.');
 
  // Announcements screen uses the same active filter and existing detail route.
  const listHost=host(),listTimers=new Set();let listResult=deferred();
@@ -135,29 +251,81 @@ function host(){
  failedHost.render(failedList.default);await flush();const failedTree=failedHost.render(failedList.default);assert.ok(texts(nodes(failedTree).find(n=>n.type==='FlatList').props.ListHeaderComponent).includes('Unavailable'));failedHost.unmount();
  console.log('Part 2 checks passed: public image URLs, date-only formatting, latest-only Home, all activity statuses, cached refresh, list loading/error/retry/empty, timer cleanup and navigation.');
 
- const activityHost=host();
- const activityAuth={donationHistory:async()=>({data:[],total:0,current_page:1,last_page:1})};
+ const activityHost=host(),historyCalls=[];
+ const emptyHistory={data:[],total:0,current_page:1,last_page:1};
+ let historyResult=async()=>emptyHistory;
+ const activityAuth={donationHistory:(page,status)=>{historyCalls.push({page,status});return historyResult(page,status);}};
  const activity=load('src/app/(tabs)/activity.tsx',{...shared,'react-native':{...native,FlatList:'FlatList'},react:activityHost.react,
   'expo-router':{useFocusEffect:activityHost.focus,useRouter:()=>router},'@/contexts/auth-context':{useAuth:()=>activityAuth},
   '@/services/donations':donations,'@/services/api':{errorMessage:e=>e.message},'@/components/notification-bell':{NotificationBell:'Bell'}});
- activityHost.render(activity.default);await flush();
- const list=nodes(activityHost.render(activity.default)).find(n=>n.type==='FlatList');
+ const activityView=()=>activityHost.render(activity.default);
+ const activityList=()=>nodes(activityView()).find(n=>n.type==='FlatList');
+ const filters=()=>nodes(activityList().props.ListHeaderComponent).filter(n=>n.type==='Pressable'&&texts(n)!==''&&!texts(n).includes('Tap to retry.'));
+ const chooseFilter=async label=>{filters().find(n=>texts(n)===label).props.onPress();activityView();await flush();};
+ assert.equal(activityList().props.ListEmptyComponent.type,'TabSkeleton');await flush();
+ const list=activityList();
  assert.equal(list.props.showsVerticalScrollIndicator,false);
- let finishRefresh;activityAuth.donationHistory=()=>new Promise(resolve=>{finishRefresh=resolve;});
- activityHost.render(activity.default);
- const refreshingList=nodes(activityHost.render(activity.default)).find(n=>n.type==='FlatList');
- assert.equal(refreshingList.props.ListEmptyComponent.type,'Text','An already loaded empty tab must not return to a skeleton');
- finishRefresh({data:[],total:0,current_page:1,last_page:1});await flush();
- assert.ok(texts(list.props.ListHeaderComponent).includes('Needs Revision'));
+ assert.ok(!texts(list.props.ListHeaderComponent).includes('Your donation activities'));
+ assert.ok(nodes(activityView()).some(n=>n.type==='Bell'));
+ assert.deepEqual(filters().map(texts),['All','Pending','For Verification','Needs Revision','Completed','Rejected','Cancelled']);
+ let scrollResets=0;list.props.ref.current={scrollToOffset:options=>{assert.equal(options.offset,0);assert.equal(options.animated,false);scrollResets++;}};
+ const refreshHistory=async()=>{activityHost.blur();activityView();await flush();};
+ const refreshWait=deferred();historyResult=()=>refreshWait.promise;await refreshHistory();
+ const refreshingList=activityList();
+ assert.notEqual(refreshingList.props.ListEmptyComponent?.type,'TabSkeleton','An already loaded empty tab must not return to a skeleton');
+ refreshWait.resolve(emptyHistory);await flush();historyResult=async()=>emptyHistory;
+ assert.ok(scrollResets>0);
+ const statusPalette=load('src/constants/theme.ts',{'react-native':{Platform:{select:options=>options.default}}}).DonationStatusColors;
  for(const [status,label] of Object.entries(donations.DONATION_STATUS)){
-  const card=list.props.renderItem({item:{id:88,status,opportunity:{...admin,title:'A long bloodletting activity title that needs several lines'}}});
-  const children=card.props.children;assert.equal(children[0].type,'Text');assert.equal(children[0].props.children,'A long bloodletting activity title that needs several lines');
-  const footer=children.at(-1),[statusBlock,view]=footer.props.children;
+  const title='A long bloodletting activity title that needs several lines';
+  const record={id:88,status,opportunity:{...admin,title,event_date:status==='pending'?null:admin.event_date}};
+  const card=activityList().props.renderItem({item:record});
+  assert.equal(card.type,'Pressable');assert.equal(card.props.accessibilityRole,'button');assert.equal(card.props.accessibilityLabel,`View activity: ${title}. ${label}`);
+  assert.equal(nodes(card).filter(n=>n.type==='Pressable').length,1,'No nested View button or chevron tap target');
+  assert.ok(!nodes(card).some(n=>n.type==='Text'&&n.props.children==='View'));
+  assert.ok(card.props.style({pressed:true}).some(style=>style?.opacity<1));
+  const [heading,,footer]=card.props.children,[headingText,chevron]=heading.props.children;
+  assert.equal(headingText.props.children,title);assert.equal(headingText.props.numberOfLines,undefined);
+  assert.equal(headingText.props.style[1].flex,1);assert.equal(headingText.props.style[1].minWidth,0);
+  assert.equal(chevron.type,'Icon');assert.equal(chevron.props.name,'chevron-right');assert.equal(chevron.props.accessible,false);assert.equal(chevron.props.style.flexShrink,0);
+  assert.ok(texts(card).includes(record.opportunity.event_date||'Confirm arrangements with the chapter'));assert.ok(texts(card).includes(admin.location));
+  const statusBlock=footer.props.children;
   assert.ok(texts(statusBlock).includes(label));assert.ok(texts(statusBlock).includes(donations.DONATION_STATUS_DESCRIPTION[status]));
-  assert.equal(statusBlock.props.style.flex,1);assert.equal(statusBlock.props.style.minWidth,0);assert.equal(view.props.style.flexShrink,0);
-  assert.equal(view.type,'Pressable');view.props.onPress();assert.equal(routes.pop().params.id,'88');
+  const badge=statusBlock.props.children[0];assert.equal(badge.props.style[1].backgroundColor,statusPalette[status].surface);
+  assert.equal(badge.props.children.props.style[1].color,statusPalette[status].text);assert.equal(badge.props.style[0].maxWidth,'100%');
+  assert.equal(statusBlock.props.style.flex,1);assert.equal(statusBlock.props.style.minWidth,0);
+  const routesBefore=routes.length;card.props.onPress();card.props.onPress();assert.equal(routes.length,routesBefore+1,'Rapid taps push one detail screen');
+  const destination=routes.pop();assert.equal(destination.pathname,'/activity/[id]');assert.equal(destination.params.id,'88','Participation ID differs from opportunity ID');
+  assert.equal(activityList().props.keyExtractor(record),'88');await refreshHistory();
  }
+ for(const [status,label] of Object.entries(donations.DONATION_STATUS)){
+  await chooseFilter(label);assert.deepEqual(historyCalls.at(-1),{page:1,status});
+  const selected=filters().find(n=>texts(n)===label);assert.ok(selected.props.style[1]);
+ }
+ await chooseFilter('All');assert.deepEqual(historyCalls.at(-1),{page:1,status:undefined});
+ const participation={id:88,status:'pending',opportunity:admin},second={...participation,id:89},third={...participation,id:90};
+ let nextPage=deferred();historyResult=async page=>page===1?{data:[participation],total:43,current_page:1,last_page:3}:nextPage.promise;
+ await refreshHistory();assert.ok(texts(activityList().props.ListHeaderComponent).includes('Joined activities (43)'),'Count comes from backend total');
+ const moreButton=activityList().props.ListFooterComponent,callCount=historyCalls.length;
+ moreButton.props.onPress();moreButton.props.onPress();assert.equal(historyCalls.length,callCount+1,'Pagination coalesces duplicate taps');
+ assert.deepEqual(historyCalls.at(-1),{page:2,status:undefined});assert.equal(activityList().props.ListFooterComponent.props.disabled,true);
+ nextPage.resolve({data:[second],total:43,current_page:2,last_page:3});await flush();assert.deepEqual(Array.from(activityList().props.data,row=>row.id),[88,89]);
+ nextPage=deferred();activityList().props.ListFooterComponent.props.onPress();nextPage.reject(new Error('Page unavailable'));await flush();
+ assert.ok(texts(activityList().props.ListHeaderComponent).includes('Page unavailable'));assert.equal(activityList().props.data.length,2);
+ nextPage=deferred();const retryPage=button(activityList().props.ListHeaderComponent,'Retry'),beforeRetryPage=historyCalls.length;
+ retryPage.props.onPress();retryPage.props.onPress();assert.equal(historyCalls.length,beforeRetryPage+1);assert.equal(historyCalls.at(-1).page,3,'Retry repeats the failed page without replacing loaded rows');
+ nextPage.resolve({data:[third],total:43,current_page:3,last_page:3});await flush();assert.equal(activityList().props.data.length,3);assert.equal(activityList().props.ListFooterComponent,null);
+ const stalePending=deferred(),currentCompleted=deferred();
+ historyResult=(_,status)=>status==='pending'?stalePending.promise:currentCompleted.promise;
+ await chooseFilter('Pending');await chooseFilter('Completed');
+ currentCompleted.resolve({data:[{...third,status:'completed'}],total:1,current_page:1,last_page:1});await flush();
+ stalePending.resolve({data:[participation],total:50,current_page:1,last_page:4});await flush();assert.deepEqual(Array.from(activityList().props.data,row=>row.id),[90],'Old filter responses cannot overwrite the current filter');
+ historyResult=async()=>{throw new Error('History offline');};await chooseFilter('Rejected');
+ assert.ok(texts(activityList().props.ListHeaderComponent).includes('Connection Problem'));assert.equal(activityList().props.ListEmptyComponent,null);
+ historyResult=async()=>emptyHistory;button(activityList().props.ListHeaderComponent,'Retry').props.onPress();activityView();await flush();
+ assert.ok(texts(activityList().props.ListEmptyComponent).includes('No matching activities'));assert.ok(!texts(activityList().props.ListHeaderComponent).includes('Connection Problem'));
  activityHost.unmount();
+ console.log('Phase C Activity checks passed: subtitle/View removal, accessible whole-card participation routes, duplicate-tap guard/reset, chevrons/wrapping, all six statuses and seven filters, backend total, pagination/lock/error/retry, stale-filter protection, empty states and unchanged skeleton behavior. Native layout boundaries mocked.');
  class ApiError extends Error { constructor(message,status=409,fields={},data){super(message);this.status=status;this.data=data;} }
  for(const source of ['red-cross-dagupan','9']){
   for(const scenario of ['pending','for_verification','needs_revision','none','expired','not_eligible','eligible','cancel','race_active','race_evaluation','race_not_eligible','offline','donation_cooldown','race_donation_cooldown','rejected','cancelled','donation_cooldown_expired']){
@@ -178,7 +346,7 @@ function host(){
    const restModal=()=>nodes(view()).find(n=>n.type==='ConfirmationModal');
    const confirmation=()=>restModal().props;
    assert.ok(texts(view()).includes('Final donation eligibility is determined by the facility.'));
-   if(source==='9'){assert.ok(nodes(view()).some(n=>n.type==='Image' && n.props.source?.uri===admin.image_url));assert.ok(texts(view()).includes('September 14, 2026'));assert.equal(nodes(view()).find(n=>n.type==='Text'&&n.props.children===admin.description).props.numberOfLines,undefined);}
+   if(source==='9'){assert.ok(nodes(view()).some(n=>n.type==='AnnouncementImage' && n.props.uri===admin.image_url));assert.ok(texts(view()).includes('September 14, 2026'));assert.equal(nodes(view()).find(n=>n.type==='Text'&&n.props.children===admin.description).props.numberOfLines,undefined);}
    button(view(),'Evaluate').props.onPress();assert.equal(routes.pop(),'/evaluation','Evaluate keeps the existing self-assessment route');
    const go=button(view(),'Go Donate');go.props.onPress();go.props.onPress();await flush();
    assert.equal(joins,0,'No creation before confirmation');
@@ -233,31 +401,30 @@ function host(){
  }
  // Task 03 exercises the actual details screen through its native boundary.
  async function detailsScenario({id='9',result={opportunity:admin},error,width=375,fontScale=1}={}){
-  const h=host(),routes=[],calls=[];let response=result,failure=error;
+  const h=host(),routes=[],calls=[];let response=result,failure=error,currentId=id;
   const auth={opportunity:async key=>{calls.push(['load',key]);if(failure)throw failure;return response;},
    donationHistory:async()=>({data:[]}),eligibilityState:async()=>({assessment:{result:'eligible'},cooldown_active:true,remaining_seconds:100}),
    joinOpportunity:async key=>{calls.push(['join',key]);throw new ApiError('This announcement is no longer available.',404);}};
   const module=load('src/app/announcement/[id].tsx',{...shared,'@/components/confirmation-modal':{ConfirmationModal:'ConfirmationModal'},
    '@/services/eligibility':eligibility,'react-native':{...native,useWindowDimensions:()=>({width,fontScale})},react:h.react,
-   'expo-router':{Stack:{Screen:'Screen'},useFocusEffect:h.focus,useRouter:()=>({push:r=>routes.push(r),back:()=>routes.push('back'),canGoBack:()=>true,replace:r=>routes.push(r)}),useLocalSearchParams:()=>({id})},
+   'expo-router':{Stack:{Screen:'Screen'},useFocusEffect:h.focus,useRouter:()=>({push:r=>routes.push(r),back:()=>routes.push('back'),canGoBack:()=>true,replace:r=>routes.push(r)}),useLocalSearchParams:()=>({id:currentId})},
    '@/contexts/auth-context':{useAuth:()=>auth},'@/services/api':{ApiError,errorMessage:e=>e.message}});
   const view=()=>h.render(module.default);const initial=view();await flush();
-  return {h,view,initial,routes,calls,auth,setResponse:value=>{response=value;failure=undefined;}};
+  return {h,view,initial,routes,calls,auth,setId:value=>{currentId=value;},setResponse:value=>{response=value;failure=undefined;}};
  }
  const flatStyle=value=>Object.assign({},...[value].flat(Infinity).filter(Boolean));
  let d=await detailsScenario({result:{opportunity:{...admin,start_time:'09:05:00',end_time:'15:30:00',description_document:richDoc}}});
  let tree=d.view(),copy=texts(tree);
  const safe=nodes(tree).find(n=>n.type==='SafeAreaView');assert.equal(safe.props.style.backgroundColor,'#FFF9F2');
  assert.deepEqual(Array.from(safe.props.edges),['top','right','bottom','left']);
- assert.ok(nodes(d.initial).some(n=>n.props?.accessibilityLabel==='Loading announcement'));assert.equal(button(d.initial,'Go Donate'),undefined,'No actions before loading');
+ assert.ok(nodes(d.initial).some(n=>n.type==='TabSkeleton' && n.props.label==='Loading announcement'));assert.equal(button(d.initial,'Go Donate'),undefined,'No actions before loading');
  const headings=nodes(tree).filter(n=>n.type==='Text'&&n.props.accessibilityRole==='header').map(n=>texts(n));
  assert.deepEqual(headings,['Announcement Details',admin.title,'About This Event','LifeFlow Donation Rewards','Before You Donate']);
  for(const label of ['Event Date','September 14, 2026','9:05 AM – 3:30 PM','Event Location',admin.location,'Bring ID','1.','2.','Points are awarded only after an Admin verifies your donation.','300','50','500'])assert.ok(copy.includes(label),label);
  assert.doesNotMatch(copy,/09:05:00|15:30:00/);
  for(const [a,b] of [[admin.title,'Event Date'],['Event Date','Event Location'],['Event Location','About This Event'],['About This Event','LifeFlow Donation Rewards'],['LifeFlow Donation Rewards','Before You Donate'],['Before You Donate','Evaluate']])assert.ok(copy.indexOf(a)<copy.indexOf(b),`${a} before ${b}`);
- assert.equal(nodes(tree).find(n=>n.type==='Image').props.resizeMode,'cover');
- assert.equal(nodes(tree).find(n=>n.type==='Image').props.source.uri,admin.image_url);
- assert.ok(nodes(tree).some(n=>n.props?.style?.aspectRatio===16/9),'Banner retains proportional sizing');
+ assert.equal(nodes(tree).find(n=>n.type==='AnnouncementImage').props.uri,admin.image_url);
+ assert.equal(nodes(tree).find(n=>n.type==='AnnouncementImage').props.preview,undefined,'Detail image keeps the full-image default');
  assert.ok(!nodes(tree).some(n=>n.type==='Text'&&n.props.children==='Bloodletting'),'No fabricated category');
  const scroll=nodes(tree).find(n=>n.type==='ScrollView');assert.equal(scroll.props.style.flex,1);
  assert.ok(!nodes(scroll).includes(button(tree,'Evaluate'))&&!nodes(scroll).includes(button(tree,'Go Donate')),'CTA is a layout sibling below scroll content');
@@ -265,7 +432,7 @@ function host(){
  assert.ok(button(tree,'Evaluate').props.style({pressed:false}).some(s=>s?.borderWidth===1));
  assert.ok(button(tree,'Go Donate').props.style({pressed:false}).some(s=>s?.backgroundColor==='#9B1238'));
  nodes(tree).find(n=>n.props?.accessibilityLabel==='Go back').props.onPress();assert.equal(d.routes.pop(),'back');
- const brokenImage=nodes(tree).find(n=>n.type==='Image');brokenImage.props.onError();assert.ok(texts(d.view()).includes('No event image available'));assert.equal(nodes(d.view()).find(n=>n.type==='Image'),undefined);d.h.unmount();
+ d.h.unmount();
  for(const [width,fontScale,stacked] of [[320,1,true],[375,1,false],[375,2,true],[768,1,false]]){
   d=await detailsScenario({width,fontScale,result:{opportunity:{...admin,title:'A very long event title '.repeat(12),description:'Complete event description. '.repeat(100)}}});tree=d.view();
   const row=nodes(tree).find(n=>n.type==='View'&&Array.isArray(n.props.style)&&n.props.style.some(s=>s?.maxWidth===620&&s?.gap===10));
@@ -294,6 +461,25 @@ function host(){
  d=await detailsScenario();button(d.view(),'Go Donate').props.onPress();await flush();nodes(d.view()).find(n=>n.type==='ConfirmationModal').props.onPrimary();await flush();
  assert.match(texts(d.view()),/This announcement is no longer available/);assert.equal(d.routes.length,0);assert.equal(d.calls.filter(c=>c[0]==='join').length,1);d.h.unmount();
  const late=deferred();d=await detailsScenario({result:late.promise});d.h.unmount();late.resolve({opportunity:admin});await flush();assert.equal(button(d.view(),'Go Donate'),undefined,'Late detail response cannot restore a departed screen');
+ const oldDetail=deferred(),newDetail=deferred();
+ d=await detailsScenario({result:oldDetail.promise});d.setResponse(newDetail.promise);d.setId('10');d.view();
+ newDetail.resolve({opportunity:{...admin,id:10,title:'New announcement'}});await flush();assert.ok(texts(d.view()).includes('New announcement'));
+ oldDetail.resolve({opportunity:admin});await flush();assert.ok(!texts(d.view()).includes(admin.title),'Late previous-route response is discarded');d.h.unmount();
+ d=await detailsScenario();const nextDetail=deferred();d.setResponse(nextDetail.promise);d.setId('10');
+ const changedRoute=d.view();assert.ok(!texts(changedRoute).includes(admin.title));assert.equal(button(changedRoute,'Go Donate'),undefined);
+ nextDetail.reject(new Error('Connection failed'));await flush();assert.ok(button(d.view(),'Retry donation details'));
+ assert.ok(!nodes(d.view()).some(n=>n.type==='TabSkeleton'),'Failure resolves the loading skeleton');
+ d.setResponse({opportunity:{...admin,id:10,title:'Recovered announcement'}});button(d.view(),'Retry donation details').props.onPress();await flush();assert.ok(texts(d.view()).includes('Recovered announcement'));
+ d.setId(undefined);d.view();await flush();assert.ok(texts(d.view()).includes('This announcement is unavailable.'));assert.equal(button(d.view(),'Go Donate'),undefined);d.h.unmount();
+ d=await detailsScenario();const pendingJoin=deferred();d.auth.joinOpportunity=()=>pendingJoin.promise;
+ button(d.view(),'Go Donate').props.onPress();await flush();nodes(d.view()).find(n=>n.type==='ConfirmationModal').props.onPrimary();await flush();
+ d.setResponse({opportunity:{...admin,id:10,title:'Next event'}});d.setId('10');d.view();await flush();
+ button(d.view(),'Go Donate').props.onPress();await flush();assert.equal(button(d.view(),'Joining donation activity').props.disabled,true);
+ pendingJoin.resolve({participation:{id:222}});await flush();
+ assert.equal(d.routes.length,0,'Previous-route join completion must not navigate from the new event');
+ assert.equal(button(d.view(),'Joining donation activity').props.disabled,true,'Previous-route cleanup must not unlock the new confirmation');
+ nodes(d.view()).find(n=>n.type==='ConfirmationModal').props.onSecondary();assert.equal(button(d.view(),'Go Donate').props.disabled,false);d.h.unmount();
+ console.log('Phase A detail checks passed: structured loading, missing IDs, out-of-order route responses, retry recovery and route-scoped join locks.');
  console.log('Task 03 details UI checks passed: cream theme, screenshot hierarchy, real banner/failure fallback, dates/times/nulls, full safe rich text/plain text, truthful guidance, footer/320/375dp/large-font configuration, Back/Evaluate, invalid/empty/expired/network/retry states and server-rejected join. Native boundaries mocked.');
  console.log('Red Cross / Go Donate checks passed: both sources, ordered validation, popup routes, expiry, cancel, duplicate taps, changed-server-state recovery, offline safety and shared Activity navigation.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

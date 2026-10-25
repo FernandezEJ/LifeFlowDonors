@@ -7,8 +7,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const ts = require('typescript');
-const jsx = (type, props) => ({ type, props });
+const jsx = (type, props) => typeof type === 'function' && ['LoadError', 'EmptyState'].includes(type.name) ? type(props) : ({ type, props });
 function load(path, imports, globals = {}) {
+  if (!imports['@/components/load-state'] && path !== 'src/components/load-state.tsx' && imports['react/jsx-runtime'] && imports['@expo/vector-icons/MaterialIcons'] && imports.react) imports = { ...imports, '@/components/load-state': load('src/components/load-state.tsx', imports, globals) };
   const module = { exports: {} };
   const code = ts.transpileModule(fs.readFileSync(path, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
@@ -23,7 +24,10 @@ function load(path, imports, globals = {}) {
 const nodes = tree => !tree || typeof tree !== 'object' ? [] : Array.isArray(tree) ? tree.flatMap(nodes) : [tree, ...nodes(tree.props?.children)];
 const text = tree => nodes(tree).filter(n => n.type === 'Text').map(n => Array.isArray(n.props.children) ? n.props.children.join('') : n.props.children).join(' ');
 const button = (tree, label) => nodes(tree).find(n => n.type === 'Pressable' && text(n) === label);
+const rewardCard = (tree, name) => nodes(tree).find(n => n.type === 'Pressable' && n.props.accessibilityLabel?.startsWith('View reward details: ' + name + ','));
+const rewardModal = screen => nodes(screen.render()).find(n => n.type === 'RewardDetailsModal').props;
 const flush = () => new Promise(resolve => setImmediate(resolve));
+const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b; }); return { promise, resolve, reject }; };
 class ApiError extends Error { constructor(message, status = 0) { super(message); this.status = status; } }
 let sent;
 const service = load('src/services/rewards.ts', { './api': { apiRequest: async (path, options) => { sent = { path, ...options }; return {}; } } });
@@ -39,7 +43,7 @@ const claimed = () => record({ status: 'redeemed', claim_status: 'claimed', clai
 // Preserves hook identity/dependencies so focus, effects and stale responses run.
 // ========================================
 function harness(path, auth, extra = {}, props = {}, componentName = 'default', params = { id: '1' }) {
-  const slots = []; let cursor = 0; const pending = []; const alerts = [], routes = [], intervals = new Set();
+  const slots = []; let cursor = 0; const pending = []; const alerts = [], routes = [], intervals = new Set(), focusSlots = new Set();
   let clock = Date.parse('2026-09-11T12:00:00Z'), foreground;
   class Clock extends Date { static now() { return clock; } }
   const memo = (fn, deps) => {
@@ -58,19 +62,20 @@ function harness(path, auth, extra = {}, props = {}, componentName = 'default', 
     useState: initial => { const i = cursor++; if (!(i in slots)) slots[i] = typeof initial === 'function' ? initial() : initial;
       return [slots[i], v => { slots[i] = typeof v === 'function' ? v(slots[i]) : v; }]; },
     useRef: initial => { const i = cursor++; return slots[i] ||= { current: initial }; },
-    useCallback: memo, useEffect: effect,
+    useCallback: memo, useEffect: effect, useLayoutEffect: effect,
   };
   const router = { navigate: route => routes.push(route), push: route => routes.push(route), canGoBack: () => true, back: () => routes.push('back'), replace: route => routes.push(route), dismissTo: route => routes.push(route) };
   const imports = {
     react, 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
-    'expo-router': { Stack: { Screen: 'Screen' }, useFocusEffect: fn => effect(fn, [fn]), useRouter: () => router, useLocalSearchParams: () => params },
+    'expo-router': { Stack: { Screen: 'Screen' }, useFocusEffect: fn => { focusSlots.add(cursor); effect(fn, [fn]); }, useRouter: () => router, useLocalSearchParams: () => params },
     '@expo/vector-icons/MaterialIcons': { __esModule: true, default: 'Icon' },
     'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
     'react-native': { Alert: { alert: (...args) => alerts.push(args) }, AppState: { addEventListener: (_, fn) => { foreground = fn; return { remove() { foreground = null; } }; } },
-      Pressable: 'Pressable', Text: 'Text', View: 'View', RefreshControl: 'RefreshControl', ScrollView: 'ScrollView', FlatList: 'FlatList', Image: 'Image', StyleSheet: { create: value => value } },
+      ActivityIndicator: 'Spinner', Pressable: 'Pressable', Text: 'Text', View: 'View', Modal: 'Modal', RefreshControl: 'RefreshControl', ScrollView: 'ScrollView', FlatList: 'FlatList', Image: 'Image', StyleSheet: { create: value => value }, useWindowDimensions: () => ({ width: 360, height: 720, fontScale: 1 }) },
     '@/contexts/auth-context': { useAuth: () => auth },
     '@/components/notification-bell': { NotificationBell: 'Bell' },
     '@/components/confirmation-modal': { ConfirmationModal: 'ConfirmationModal' },
+    '@/components/reward-details-modal': { RewardDetailsModal: 'RewardDetailsModal', RewardImage: 'RewardImage' },
     '@/services/api': { ApiError, errorMessage: error => error.message },
     '@/services/rewards': service,
     '@/services/announcement-presentation': presentation,
@@ -80,6 +85,7 @@ function harness(path, auth, extra = {}, props = {}, componentName = 'default', 
   const render = () => { cursor = 0; return component(props); };
   const settle = async () => { for (let i = 0; i < 5; i++) { render(); pending.splice(0).forEach(fn => fn()); await flush(); } return render(); };
   return { render, settle, alerts, routes, tick: milliseconds => { clock += milliseconds; intervals.forEach(fn => fn()); },
+    blur: () => focusSlots.forEach(i => { slots[i].cleanup?.(); slots[i].cleanup=undefined; slots[i].deps=[]; }),
     intervalCount: () => intervals.size, foreground: state => foreground?.(state), close: () => slots.forEach(s => { if (s && typeof s === 'object') s.cleanup?.(); }) };
 }
 
@@ -130,42 +136,41 @@ async function catalogueChecks() {
   const make = () => harness('src/components/reward-catalogue.tsx', auth, { '@/services/redemption-storage': { redemptionStorage: storage } },
     { showBalance: true, onBalance: value => balances.push(value) }, 'RewardCatalogue');
   let screen = make(); let tree = await screen.settle();
-  assert.match(text(tree), /No rewards are available right now/);
+  assert.match(text(tree), /No rewards available right now/);
   assert.ok(button(tree, 'My Rewards'));
   screen.close(); inventory = [reward]; screen = make(); tree = await screen.settle();
-  const redeem = button(tree, 'Redeem'); redeem.props.onPress(); redeem.props.onPress();
-  const modal = () => nodes(screen.render()).find(n => n.type === 'ConfirmationModal').props;
+  const redeem = rewardCard(tree, reward.name); redeem.props.onPress(); redeem.props.onPress();
+  const modal = () => rewardModal(screen);
   assert.equal(screen.alerts.length, 0);
-  assert.equal(modal().visible, true);
-  assert.match(modal().message, /Test reward.*100.00/);
-  assert.match(modal().message, /300 points/);
-  assert.match(modal().message, /claim code/); assert.doesNotMatch(modal().message, /QR|5-minute|cashier\/counter/);
-  modal().onSecondary(); assert.equal(calls.length, 0); assert.equal(modal().visible, false);
-  button(screen.render(), 'Redeem').props.onPress();
+  assert.equal(modal().reward.name, reward.name); assert.equal(modal().reward.voucher_value, '100.00');
+  assert.equal(modal().reward.points_cost,300); assert.equal(modal().reason,'');
+  modal().onClose(); assert.equal(calls.length, 0); assert.equal(modal().reward, null);
+  rewardCard(screen.render(), reward.name).props.onPress();
   fail = true;
-  const confirm = modal().onPrimary; confirm(); confirm();
+  const confirm = modal().onRedeem; confirm(); confirm();
   await screen.settle(); assert.equal(calls.length, 1); assert.equal(balances.at(-1), 650); assert.ok(pending);
   screen.close();
   // Reopening retains the exact request key; a retry can finish after stock is exhausted.
   inventory = [{ ...reward, stock_quantity: 0 }]; screen = make(); tree = await screen.settle();
-  assert.ok(button(tree, 'Out of Stock').props.disabled);
-  button(tree, 'Out of Stock').props.onPress(); assert.equal(calls.length, 1);
+  assert.equal(rewardCard(tree, reward.name).props.disabled,false);
+  rewardCard(tree, reward.name).props.onPress();assert.match(modal().reason,/pending redemption/);
+  modal().onRedeem();assert.equal(calls.length,1);modal().onClose();
   fail = false; button(tree, 'Retry pending redemption').props.onPress(); await screen.settle();
   assert.equal(calls.length, 2); assert.deepEqual(calls[0], calls[1]);
   assert.equal(pending, null); assert.equal(balances.at(-1), 350); assert.equal(screen.routes[0], '/my-vouchers');
   screen.close();
   inventory = [{ ...reward, points_cost: 900 }]; screen = make(); tree = await screen.settle();
-  assert.ok(button(tree, 'Insufficient points').props.disabled);
-  button(tree, 'Insufficient points').props.onPress(); assert.equal(calls.length, 2);
+  rewardCard(tree,reward.name).props.onPress();assert.match(modal().reason,/insufficient/);
+  modal().onRedeem();assert.equal(calls.length,2);
   screen.close();
   inventory = [{ ...reward, stock_quantity: 0 }]; screen = make(); tree = await screen.settle();
-  assert.match(text(tree), /100.00/); assert.ok(button(tree, 'Out of Stock').props.disabled);
+  assert.match(text(tree), /100.00/);rewardCard(tree,reward.name).props.onPress();assert.match(modal().reason,/out of stock/);
   assert.equal(button(tree, 'Refresh rewards'), undefined);
   inventory = [reward]; const currentRewards = auth.rewards; auth.rewards = () => currentRewards(); tree = await screen.settle();
-  assert.equal(button(tree, 'Redeem').props.disabled, false, 'Replenished active stock is redeemable after refresh');
+  assert.equal(modal().reason,'','Replenished active stock is redeemable after refresh');modal().onClose();
   const original = auth.rewards;
   auth.rewards = async () => { throw new ApiError('Offline'); };
-  tree = await screen.settle(); assert.match(text(tree), /Test reward/); assert.match(text(tree), /Offline/); assert.ok(button(tree, 'Retry'));
+  tree = await screen.settle(); assert.match(text(tree), /Test reward/); assert.match(text(tree), /Connection Problem/); assert.ok(button(tree, 'Retry'));
   auth.rewards = original; button(tree, 'Retry').props.onPress(); tree = await screen.settle(); assert.doesNotMatch(text(tree), /Offline/);
   screen.close();
 }
@@ -185,18 +190,17 @@ async function apparelChecks() {
   const storage = { read: async () => pending, save: async (_, value) => { pending = value; }, clear: async () => { pending = null; } };
   const make = () => harness('src/components/reward-catalogue.tsx', auth, { '@/services/redemption-storage': { redemptionStorage: storage } }, {}, 'RewardCatalogue');
   let screen = make(), tree = await screen.settle();
-  const size = label => nodes(screen.render()).find(node => node.props?.accessibilityLabel?.startsWith('Size ' + label + ','));
-  assert.equal(size('2XL'), undefined);
-  assert.equal(size('XL').props.disabled, true);
-  assert.equal(button(tree, 'Redeem').props.disabled, true);
-  size('S').props.onPress();
+  assert.ok(!nodes(tree).some(node=>node.props?.accessibilityLabel?.startsWith('Size ')),'Sizes are not on catalogue cards');
+  rewardCard(tree,apparel.name).props.onPress();
+  const modal = () => rewardModal(screen);
+  assert.match(modal().reason,/Choose an available size/);
+  modal().onSelectVariant(34);assert.equal(modal().variantId,undefined,'Sold-out sizes cannot be selected');
+  modal().onSelectVariant(35);assert.equal(modal().variantId,undefined,'Disabled sizes cannot be selected');
+  modal().onSelectVariant(999);assert.equal(modal().variantId,undefined,'Foreign variant IDs cannot be selected');
+  modal().onSelectVariant(31);
   tree = screen.render();
-  assert.equal(button(tree, 'Redeem').props.disabled, false);
-  button(tree, 'Redeem').props.onPress();
-  const modal = () => nodes(screen.render()).find(n => n.type === 'ConfirmationModal').props;
-  assert.match(modal().message, /Size S/);
-  assert.doesNotMatch(modal().message, /voucher value|denomination/i);
-  const confirm = modal().onPrimary; confirm(); confirm(); await screen.settle();
+  assert.equal(modal().reason,'');assert.equal(modal().variantId,31);
+  const confirm = modal().onRedeem; confirm(); confirm(); await screen.settle();
   assert.equal(calls.length, 1); assert.equal(pending.variantId, 31);
   screen.close(); screen = make(); tree = await screen.settle();
   fail = false; button(tree, 'Retry pending redemption').props.onPress(); await screen.settle();
@@ -261,20 +265,21 @@ async function polishChecks() {
   const auth = { user: { id: 1 }, rewards: () => new Promise(resolve => { finish = resolve; }), pointsSummary: async () => ({ current_balance: 800 }), redeemReward: async () => { throw Error('Unexpected redemption'); } };
   const storage = { read: async () => null };
   const catalogue = harness('src/components/reward-catalogue.tsx', auth, { '@/services/redemption-storage': { redemptionStorage: storage } }, { showBalance: true }, 'RewardCatalogue');
-  let tree = await catalogue.settle(); assert.equal(tree.type, 'TabSkeleton'); assert.doesNotMatch(text(tree), /Loading|Refreshing|--/);
+  let tree = await catalogue.settle(); assert.ok(nodes(tree).some(n=>n.type==='TabSkeleton'&&n.props.variant==='rewards')); assert.match(text(tree),/Available Rewards/);assert.doesNotMatch(text(tree), /Loading|Refreshing|--/);
+  assert.equal(nodes(tree).filter(n => n.type === 'Spinner').length, 0, 'Initial reward skeletons must not share their fetch with a header spinner');
   const reward = { id: 1, name: 'Image reward', image_url: 'http://localhost/storage/rewards/test.png', voucher_value: '250.00', points_cost: 100, stock_quantity: 8 };
   finish({ data: [reward], request_key: 'image-request' }); tree = await catalogue.settle();
-  const image = nodes(tree).find(n => n.type === 'Image'); assert.equal(image.props.source.uri, 'http://device.test:8000/storage/rewards/test.png'); assert.equal(image.props.resizeMode, 'contain');
+  const image = nodes(tree).find(n => n.type === 'RewardImage'); assert.equal(image.props.reward.image_url, reward.image_url);
   assert.match(text(tree), /Redeem for 100 Blood Points/); assert.match(text(tree), /8 remaining/); assert.equal(button(tree, 'Refresh rewards'), undefined);
   auth.rewards = () => new Promise(resolve => { finish = resolve; }); tree = await catalogue.settle();
   assert.match(text(tree), /Image reward/); assert.ok(!nodes(tree).some(n => n.type === 'TabSkeleton')); assert.doesNotMatch(text(tree), /Refreshing/);
-  finish({ data: [], request_key: 'empty-request' }); tree = await catalogue.settle(); assert.match(text(tree), /No rewards are available/); catalogue.close();
+  finish({ data: [], request_key: 'empty-request' }); tree = await catalogue.settle(); assert.match(text(tree), /No rewards available/); catalogue.close();
 
   const calls = []; let finishHistory;
   const rows = Array.from({ length: 7 }, (_, i) => ({ id: i + 1, amount: 100, description: 'Donation ' + i, created_at: '2026-09-28T00:00:00Z' }));
   const pointsAuth = { pointsSummary: async () => ({ current_balance: 800 }), pointTransactions: async (page, type) => { calls.push({ page, type }); return { data: rows, current_page: page, last_page: 2 }; } };
   const points = harness('src/app/(tabs)/points.tsx', pointsAuth);
-  assert.equal(nodes(points.render()).filter(n => n.type === 'TabSkeleton').length, 1);
+  assert.equal(nodes(points.render()).filter(n => n.type === 'TabSkeleton').length, 2,'Balance and history load independently with their own matching placeholders');
   tree = await points.settle();
   const history = () => nodes(points.render()).find(n => n.props?.accessibilityLabel === 'Points history');
   for (const [label, type] of [['All', undefined], ['Earned', 'donation_reward'], ['Redeemed', 'reward_redemption']]) {
@@ -286,13 +291,81 @@ async function polishChecks() {
   pointsAuth.pointTransactions = () => new Promise(resolve => { finishHistory = resolve; }); tree = await points.settle();
   assert.match(text(tree), /Donation/); assert.doesNotMatch(text(tree), /Refreshing|Loading\.\.\./); assert.ok(!nodes(tree).some(n => n.type === 'TabSkeleton'));
   finishHistory({ data: rows.slice(0, 5), current_page: 1, last_page: 1 }); tree = await points.settle(); assert.equal(history().props.scrollEnabled, false);
-  pointsAuth.pointTransactions = async () => ({ data: [], current_page: 1, last_page: 1 }); tree = await points.settle(); assert.match(text(tree), /No transactions yet/); points.close();
+  pointsAuth.pointTransactions = async () => ({ data: [], current_page: 1, last_page: 1 }); tree = await points.settle(); assert.match(text(tree), /No matching transactions/); points.close();
 }
 
 // ========================================
 // VOUCHER FILTERS AND HISTORY NAVIGATION
 // Raw redeemed includes legacy history; only confirmed claims appear in Claimed.
 // ========================================
+async function loadingExclusionChecks() {
+  const skeletons = tree => nodes(tree).filter(n => n.type === 'TabSkeleton');
+  const spinners = tree => nodes(tree).filter(n => n.type === 'Spinner');
+  const circle = tree => nodes(tree).find(n => n.props?.accessibilityLabel === '800 Blood Points');
+  // Balance and ledger can resolve in either order. A focus refresh can overlap a new history filter.
+  for (const balanceFirst of [true, false]) {
+    let balance = deferred(), history = deferred(), reads = 0;
+    const auth = { pointsSummary: () => balance.promise, pointTransactions: () => { reads++; return history.promise; } };
+    const points = harness('src/app/(tabs)/points.tsx', auth);
+    let tree = await points.settle();assert.equal(skeletons(tree).length, 2);assert.equal(spinners(tree).length, 0);
+    if (balanceFirst) balance.resolve({ current_balance: 800 });
+    else history.resolve({ data: [], current_page: 1, last_page: 1 });
+    tree = await points.settle();assert.equal(skeletons(tree).length, 1);assert.equal(spinners(tree).length, 0);
+    assert.equal(!!circle(tree), balanceFirst, 'Only a confirmed balance displays the normal points circle');
+    if (balanceFirst) history.resolve({ data: [], current_page: 1, last_page: 1 });
+    else balance.resolve({ current_balance: 800 });
+    tree = await points.settle();assert.equal(skeletons(tree).length, 0);assert.ok(circle(tree));assert.match(text(tree), /No transactions yet/);
+    points.blur();balance = deferred();history = deferred();tree = await points.settle();
+    assert.ok(circle(tree));assert.equal(skeletons(tree).length, 0);assert.equal(spinners(tree).length, 0, 'Points refresh retains loaded content without circular loaders');
+    button(tree, 'Earned').props.onPress();tree = await points.settle();
+    assert.equal(skeletons(tree).length, 1);assert.equal(spinners(tree).length, 0, 'A cached balance refresh must not add a circular indicator beside history skeletons');
+    balance.resolve({ current_balance: 800 });history.reject(new ApiError('Offline'));tree = await points.settle();
+    assert.ok(circle(tree));assert.equal(skeletons(tree).length, 0);assert.match(text(tree), /Connection Problem/);assert.doesNotMatch(text(tree), /No matching transactions/);
+    history = deferred();const before = reads, retry = button(tree, 'Retry').props.onPress;
+    const request = retry();retry();assert.equal(reads, before + 1);
+    tree = await points.settle();assert.equal(skeletons(tree).length, 1);assert.equal(spinners(tree).length, 0);
+    history.resolve({ data: [], current_page: 1, last_page: 1 });await request;tree = await points.settle();assert.match(text(tree), /No matching transactions/);points.close();
+  }
+  const failed = harness('src/app/(tabs)/points.tsx', { pointsSummary: async () => { throw new ApiError('Offline'); }, pointTransactions: async () => { throw new ApiError('Offline'); } });
+  const failedTree = await failed.settle();assert.equal(skeletons(failedTree).length, 0);assert.equal(spinners(failedTree).length, 0);
+  assert.ok(button(failedTree, 'Retry balance'));assert.ok(button(failedTree, 'Retry'));assert.doesNotMatch(text(failedTree), /--|No transactions yet/);failed.close();
+  // A failed next page must keep its rows, loading label and exact-page Retry without a spinner.
+  let nextPage = deferred();const pageReads = [];
+  const firstRow = { id: 1, amount: 300, description: 'Verified donation', created_at: '2026-10-25T00:00:00Z' };
+  const paginated = harness('src/app/(tabs)/points.tsx', {
+    pointsSummary: async () => ({ current_balance: 800 }),
+    pointTransactions: number => { pageReads.push(number);return number === 1 ? Promise.resolve({ data: [firstRow], current_page: 1, last_page: 2 }) : nextPage.promise; },
+  });
+  let pageTree = await paginated.settle();const loadMore = button(pageTree, 'Load more transactions').props.onPress;
+  loadMore();loadMore();pageTree = await paginated.settle();assert.deepEqual(pageReads, [1, 2]);
+  assert.ok(button(pageTree, 'Loading more...').props.disabled);assert.equal(spinners(pageTree).length, 0);assert.equal(skeletons(pageTree).length, 0);assert.match(text(pageTree), /Verified donation/);
+  nextPage.reject(new ApiError('Offline'));pageTree = await paginated.settle();assert.match(text(pageTree), /Verified donation/);assert.match(text(pageTree), /Connection Problem/);
+  nextPage = deferred();const retryPage = button(pageTree, 'Retry').props.onPress, retrying = retryPage();retryPage();
+  pageTree = await paginated.settle();assert.deepEqual(pageReads, [1, 2, 2]);assert.equal(spinners(pageTree).length, 0);assert.ok(button(pageTree, 'Loading more...').props.disabled);
+  nextPage.resolve({ data: [{ ...firstRow, id: 2, description: 'Another donation' }], current_page: 2, last_page: 2 });await retrying;
+  pageTree = await paginated.settle();assert.match(text(pageTree), /Verified donation/);assert.match(text(pageTree), /Another donation/);assert.equal(button(pageTree, 'Load more transactions'), undefined);paginated.close();
+  // Catalogue and balance are committed together; either dependency can be the slow one.
+  for (const catalogueFirst of [true, false]) {
+    let balance = deferred(), rewards = deferred(), reads = 0;
+    const auth = { user: { id: 1 }, rewards: () => { reads++; return rewards.promise; }, pointsSummary: () => balance.promise };
+    const catalogue = harness('src/components/reward-catalogue.tsx', auth, { '@/services/redemption-storage': { redemptionStorage: { read: async () => null } } }, { showBalance: true }, 'RewardCatalogue');
+    let tree = await catalogue.settle();assert.equal(skeletons(tree).length, 2);assert.equal(spinners(tree).length, 0);
+    if (catalogueFirst) rewards.resolve({ data: [], request_key: 'unused' });else balance.resolve({ current_balance: 800 });
+    tree = await catalogue.settle();assert.equal(skeletons(tree).length, 2);assert.equal(spinners(tree).length, 0);assert.doesNotMatch(text(tree), /No rewards available/);
+    if (catalogueFirst) balance.reject(new ApiError('Offline'));else rewards.reject(new ApiError('Offline'));
+    tree = await catalogue.settle();assert.equal(skeletons(tree).length, 0);assert.equal(spinners(tree).length, 0);assert.match(text(tree), /Connection Problem/);assert.doesNotMatch(text(tree), /--|No rewards available/);
+    rewards = deferred();balance = deferred();const retry = button(tree, 'Retry').props.onPress, before = reads;
+    const request = retry();retry();assert.equal(reads, before + 1);tree = await catalogue.settle();assert.equal(spinners(tree).length, 0);
+    rewards.resolve({ data: [], request_key: 'fresh' });balance.resolve({ current_balance: 800 });await request;
+    tree = await catalogue.settle();assert.equal(skeletons(tree).length, 0);assert.match(text(tree), /800/);assert.match(text(tree), /No rewards available/);
+    catalogue.blur();rewards = deferred();balance = deferred();tree = await catalogue.settle();
+    assert.equal(skeletons(tree).length, 0);assert.equal(spinners(tree).length, 1);assert.match(text(tree), /800/);
+    rewards.reject(new ApiError('Offline'));balance.resolve({ current_balance: 800 });tree = await catalogue.settle();
+    assert.equal(spinners(tree).length, 0);assert.match(text(tree), /800/);assert.match(text(tree), /Connection Problem/);catalogue.close();
+  }
+  console.log('Loading hotfix checks passed: staggered balance/history/catalogue requests, skeleton/spinner exclusion, loaded balance circles, guarded Retry, filter/focus refresh retention and initial failures.');
+}
+
 async function historyChecks() {
   const legacy = record({ id: 4, status: 'redeemed', claim_status: 'legacy', is_legacy: true, legacy_status: 'redeemed', redeemed_at: '2026-09-11T12:00:00Z' });
   const records = [record(), { ...pendingClaim(), id: 2 }, { ...claimed(), id: 3 }, legacy];
@@ -322,7 +395,7 @@ async function historyChecks() {
   }
   screen.foreground('background'); assert.equal(list().data.length, 0);
   const before = requests.length; screen.foreground('active'); await screen.settle(); assert.equal(requests.length, before + 1);
-  offline = true; list().onRefresh(); await screen.settle(); assert.equal(list().data.length, 0); assert.match(text(list().ListHeaderComponent), /Offline/);
+  offline = true; list().onRefresh(); await screen.settle(); assert.equal(list().data.length, 1,'Refresh failures preserve owned reward history'); assert.match(text(list().ListHeaderComponent), /Connection Problem/);
   offline = false; button(list().ListHeaderComponent, 'Retry').props.onPress(); await screen.settle(); assert.equal(list().data.length, 1);
   // Empty visible pages (legacy records) must still allow paging to real claims.
   auth.vouchers = async page => ({ data: page === 1 ? [legacy] : [claimed()], current_page: page, last_page: 2 });
@@ -424,6 +497,109 @@ async function voucherChecks() {
   finishRead(response()); await flush(); assert.doesNotMatch(text(unmounted.render()), /LFW-/);
 }
 
+async function phaseDChecks() {
+  const voucher={id:71,name:'LifeFlow voucher with a long name',category:'vouchers',points_cost:100,stock_quantity:3,voucher_value:'250.00',image_url:'http://localhost/storage/rewards/voucher.png',description:'Reward description. '.repeat(80)};
+  const apparel={...voucher,id:72,name:'LifeFlow shirt',category:'apparel',voucher_value:null,variants:[
+    {id:721,size:'S',enabled:true,stock_quantity:2},{id:722,size:'XL',enabled:true,stock_quantity:0},{id:723,size:'2XL',enabled:false,stock_quantity:4}]};
+  const savedByUser=new Map(),events=[],calls=[];let inventory=[voucher,apparel],balance=500,key='phase-d-key',saveWait,replyWait;
+  const auth={user:{id:1},rewards:async()=>({data:inventory,request_key:key}),pointsSummary:async()=>({current_balance:balance}),
+    redeemReward:async(...args)=>{events.push('request');calls.push(args);return replyWait?.promise??{summary:{current_balance:400},reward:{...voucher,stock_quantity:2}};}};
+  const storage={read:async id=>savedByUser.get(id)??null,save:async(id,attempt)=>{events.push('save');if(saveWait)await saveWait.promise;savedByUser.set(id,attempt);},clear:async id=>{events.push('clear');savedByUser.delete(id);}};
+  const make=()=>harness('src/components/reward-catalogue.tsx',auth,{'@/services/redemption-storage':{redemptionStorage:storage}},{showBalance:true},'RewardCatalogue');
+  let screen=make(),tree=await screen.settle();
+  for(const reward of inventory){
+    const card=rewardCard(tree,reward.name);assert.equal(card.props.accessibilityRole,'button');assert.equal(nodes(card).filter(n=>n.type==='Pressable').length,1);
+    assert.ok(nodes(card).some(n=>n.type==='Icon'&&n.props.name==='chevron-right'&&n.props.accessible===false));
+    assert.ok(card.props.style({pressed:true}).some(style=>style?.opacity<1));assert.equal(button(card,'Redeem'),undefined);
+    const title=nodes(card).find(n=>n.type==='Text'&&n.props.children===reward.name);assert.equal(title.props.style.minWidth,0);assert.equal(title.props.numberOfLines,undefined);
+  }
+  rewardCard(tree,apparel.name).props.onPress();assert.match(rewardModal(screen).reason,/Choose an available size/);
+  rewardModal(screen).onSelectVariant(721);assert.equal(rewardModal(screen).variantId,721);
+  const staleConfirmation=rewardModal(screen).onRedeem;rewardModal(screen).onClose();staleConfirmation();assert.equal(calls.length,0,'A closed confirmation cannot spend');
+  rewardCard(screen.render(),voucher.name).props.onPress();assert.equal(rewardModal(screen).reward.id,71);assert.equal(rewardModal(screen).variantId,undefined);
+  staleConfirmation();assert.equal(calls.length,0,'A prior reward callback cannot confirm the newly opened reward');
+  rewardModal(screen).onClose();rewardCard(screen.render(),apparel.name).props.onPress();assert.equal(rewardModal(screen).variantId,undefined,'Size resets when reopening apparel');
+  rewardModal(screen).onSelectVariant(721);
+  inventory=[voucher,{...apparel,variants:apparel.variants.map(v=>({...v,stock_quantity:0}))}];screen.blur();await screen.settle();
+  assert.equal(rewardModal(screen).variantId,undefined);assert.match(rewardModal(screen).reason,/No sizes are currently available/);rewardModal(screen).onRedeem();assert.equal(calls.length,0);
+  inventory=[voucher];screen.blur();await screen.settle();assert.match(rewardModal(screen).reason,/no longer available/);assert.equal(rewardModal(screen).reward.id,72);rewardModal(screen).onClose();
+  // Persist before HTTP; even old Cancel/X handlers cannot dismiss an in-flight request.
+  rewardCard(screen.render(),voucher.name).props.onPress();const beforeSubmit=rewardModal(screen);saveWait=deferred();replyWait=deferred();
+  beforeSubmit.onRedeem();beforeSubmit.onRedeem();await flush();assert.deepEqual(events,['save']);assert.equal(calls.length,0);
+  beforeSubmit.onClose();assert.equal(rewardModal(screen).reward.id,71);assert.equal(rewardModal(screen).busy,true);
+  saveWait.resolve();await flush();assert.equal(calls.length,1);assert.deepEqual(calls[0],[71,key,undefined]);assert.ok(savedByUser.get(1));
+  assert.equal(screen.routes.length,0,'No premature success navigation');assert.equal(rewardModal(screen).balance,500,'No optimistic point deduction');
+  replyWait.resolve({summary:{current_balance:400},reward:{...voucher,stock_quantity:2}});await screen.settle();
+  assert.deepEqual(screen.routes,['/my-vouchers']);assert.equal(rewardModal(screen).reward,null);assert.match(text(screen.render()),/400/);assert.equal(savedByUser.size,0);
+  assert.deepEqual(events,['save','request','clear']);screen.close();saveWait=undefined;replyWait=undefined;
+  // Missing/malformed data, insufficient balance and zero stock remain inspectable but cannot spend.
+  const beforeBlocked=calls.length;
+  for(const scenario of ['balance','cost','stock','key','insufficient','sold-out']){
+    inventory=[{...voucher,...(scenario==='cost'?{points_cost:undefined}:scenario==='stock'?{stock_quantity:undefined}:scenario==='sold-out'?{stock_quantity:0}:{})}];
+    balance=scenario==='balance'?undefined:scenario==='insufficient'?10:500;key=scenario==='key'?'':'phase-d-key';
+    screen=make();await screen.settle();rewardCard(screen.render(),voucher.name).props.onPress();assert.ok(rewardModal(screen).reward);assert.ok(rewardModal(screen).reason);
+    rewardModal(screen).onRedeem();await screen.settle();assert.equal(calls.length,beforeBlocked);screen.close();
+  }
+  balance=500;key='phase-d-key';inventory=[voucher];
+  // Definitive failures clear pending; uncertain failures keep the original key across restart/retry.
+  for(const status of [404,422,0,500,401]){
+    savedByUser.clear();let fail=true;const failures=[];
+    const failedAuth={...auth,redeemReward:async(...args)=>{failures.push(args);if(fail)throw new ApiError(status?'Server rejected reward':'Request timed out',status);return {summary:{current_balance:400},reward:voucher};}};
+    const failedMake=()=>harness('src/components/reward-catalogue.tsx',failedAuth,{'@/services/redemption-storage':{redemptionStorage:storage}},{},'RewardCatalogue');
+    screen=failedMake();await screen.settle();rewardCard(screen.render(),voucher.name).props.onPress();rewardModal(screen).onRedeem();await screen.settle();
+    assert.equal(screen.routes.length,0);assert.match(text(screen.render()),/Server rejected reward|Request timed out/);
+    assert.equal(savedByUser.has(1),![404,422].includes(status));
+    if(![404,422].includes(status)){
+      screen.close();screen=failedMake();await screen.settle();rewardCard(screen.render(),voucher.name).props.onPress();assert.match(rewardModal(screen).reason,/pending redemption/);
+      rewardModal(screen).onRedeem();assert.equal(failures.length,1);rewardModal(screen).onClose();fail=false;
+      button(screen.render(),'Retry pending redemption').props.onPress();await screen.settle();assert.equal(failures.length,2);assert.deepEqual(failures[0],failures[1]);assert.equal(savedByUser.has(1),false);
+      assert.deepEqual(screen.routes,['/my-vouchers']);
+    }
+    screen.close();
+  }
+  // A focus refresh during persistence must keep the saved attempt reachable even if HTTP is skipped.
+  savedByUser.clear();calls.length=0;auth.user={id:1};saveWait=deferred();screen=make();await screen.settle();
+  rewardCard(screen.render(),voucher.name).props.onPress();rewardModal(screen).onRedeem();await flush();screen.blur();await screen.settle();
+  saveWait.resolve();await screen.settle();assert.equal(calls.length,0);assert.ok(button(screen.render(),'Retry pending redemption'));screen.close();saveWait=undefined;
+  // Switching accounts during persistence must not send the old attempt using the new account.
+  savedByUser.clear();calls.length=0;auth.user={id:1};saveWait=deferred();screen=make();await screen.settle();
+  rewardCard(screen.render(),voucher.name).props.onPress();rewardModal(screen).onRedeem();await flush();
+  auth.user={id:2};inventory=[{...voucher,name:'Second account reward'}];tree=screen.render();assert.doesNotMatch(text(tree),/LifeFlow voucher with a long name/);
+  await screen.settle();saveWait.resolve();await screen.settle();assert.equal(calls.length,0);assert.ok(savedByUser.has(1));assert.equal(savedByUser.has(2),false);assert.equal(screen.routes.length,0);screen.close();saveWait=undefined;
+  // Late server success likewise cannot update the next account or navigate it away.
+  savedByUser.clear();auth.user={id:1};inventory=[voucher];replyWait=deferred();screen=make();await screen.settle();rewardCard(screen.render(),voucher.name).props.onPress();rewardModal(screen).onRedeem();await flush();
+  auth.user={id:2};balance=900;await screen.settle();replyWait.resolve({summary:{current_balance:400},reward:voucher});await screen.settle();assert.match(text(screen.render()),/900/);assert.equal(screen.routes.length,0);screen.close();replyWait=undefined;
+  // Real modal rendering: centered/scrollable, dynamic sizes, accessible dismissal and busy guards.
+  const base={reward:voucher,balance:500,busy:false,reason:'',selectionDisabled:false,onSelectVariant:()=>{},onClose:()=>{},onRedeem:()=>{}};
+  for(const dimensions of [{width:320,height:640,fontScale:1},{width:375,height:720,fontScale:2},{width:720,height:320,fontScale:1}]){
+    let closes=0,confirms=0,selections=[];const props={...base,onClose:()=>closes++,onRedeem:()=>confirms++,onSelectVariant:id=>selections.push(id)};
+    const native={View:'View',Text:'Text',Pressable:'Pressable',Image:'Image',Modal:'Modal',ScrollView:'ScrollView',StyleSheet:{create:v=>v},useWindowDimensions:()=>dimensions};
+    const modal=harness('src/components/reward-details-modal.tsx',{}, {'react-native':native},props,'RewardDetailsModal');
+    let ui=modal.render();assert.equal(ui.type,'Modal');assert.equal(ui.props.transparent,true);assert.equal(ui.props.visible,true);
+    const overlay=ui.props.children,dialog=overlay.props.children;assert.equal(overlay.props.style.justifyContent,'center');assert.equal(dialog.props.style.maxHeight,'100%');assert.equal(dialog.props.accessibilityViewIsModal,true);
+    assert.ok(nodes(ui).some(n=>n.type==='ScrollView'));assert.match(text(ui),/Reward Details/);assert.match(text(ui),/250.00/);assert.match(text(ui),/100 Blood Points/);assert.doesNotMatch(text(ui),/Choose your size/);
+    assert.equal(nodes(ui).filter(n=>n.type==='ConfirmationModal').length,0,'No second confirmation dialog');
+    assert.ok(nodes(ui).some(n=>n.type?.name==='RewardImage'&&n.props.large));
+    ui.props.onRequestClose();button(ui,'Cancel').props.onPress();nodes(ui).find(n=>n.props?.accessibilityLabel==='Close reward details').props.onPress();assert.equal(closes,3);
+    button(ui,'Redeem').props.onPress();assert.equal(confirms,1);
+    props.reward=apparel;props.reason='Choose an available size';ui=modal.render();assert.equal(button(ui,'Redeem').props.disabled,true);button(ui,'Redeem').props.onPress();assert.equal(confirms,1);
+    const sizeChips=nodes(ui).filter(n=>n.props?.accessibilityRole==='radio');assert.equal(sizeChips.length,2);assert.equal(sizeChips[1].props.disabled,true);sizeChips[1].props.onPress();assert.deepEqual(selections,[]);
+    sizeChips[0].props.onPress();assert.deepEqual(selections,[721]);assert.equal(sizeChips[0].props.style[0].minHeight,44);
+    props.variantId=721;props.reason='';ui=modal.render();assert.equal(nodes(ui).find(n=>n.props?.accessibilityRole==='radio').props.accessibilityState.selected,true);
+    assert.doesNotMatch(text(ui),/Voucher Value/);
+    props.busy=true;props.selectionDisabled=true;ui=modal.render();ui.props.onRequestClose();button(ui,'Cancel').props.onPress();nodes(ui).find(n=>n.props?.accessibilityLabel==='Close reward details').props.onPress();assert.equal(closes,3);
+    assert.equal(button(ui,'Redeeming...').props.disabled,true);assert.match(text(ui),/Redeeming/);assert.ok(nodes(ui).filter(n=>n.props?.accessibilityRole==='radio').every(n=>n.props.disabled));
+    for(const label of ['Cancel','Redeeming...'])assert.ok(button(ui,label).props.style[0].minHeight>=48);
+    props.reward=null;assert.equal(modal.render().props.visible,false);modal.close();
+  }
+  const imageProps={reward:voucher,large:true};const image=harness('src/components/reward-details-modal.tsx',{}, {},imageProps,'RewardImage');
+  let imageTree=image.render(),imageNode=nodes(imageTree).find(n=>n.type==='Image');assert.equal(imageNode.props.source.uri,'http://device.test:8000/storage/rewards/voucher.png');assert.equal(imageNode.props.resizeMode,'contain');
+  imageNode.props.onError();assert.ok(nodes(image.render()).some(n=>n.type==='Icon'&&n.props.name==='card-giftcard'));
+  imageProps.reward={...voucher,image_url:'https://cdn.test/replacement.png'};assert.ok(nodes(image.render()).some(n=>n.type==='Image'));
+  imageProps.reward={...voucher,image_url:null};assert.ok(nodes(image.render()).some(n=>n.type==='Icon'));image.close();
+  console.log('Phase D checks passed: whole cards/chevrons, one centered scrollable popup, image fallback, Cancel/X/back and busy guards, live apparel selection/reset, balance/stock/key validation, persist-before-request, idempotent retries, account races, server-confirmed My Rewards navigation, and narrow/landscape/font accessibility configuration (mocked native boundaries).');
+}
+
 async function categoryFilterChecks() {
   const rows = [
     { id: 1, name: 'Merchandise pin', category: 'merchandise' },
@@ -478,13 +654,13 @@ async function categoryFilterChecks() {
     }
   }
   select('Apparel'); auth.rewards = async () => { catalogueCalls++; return { data: [rows[0], rows[3]], request_key: 'empty-category' }; };
-  tree = await host.settle(); assert.deepEqual(selected(), ['Apparel']); assertChoices(); assert.match(text(tree), /No rewards are available/);
+  tree = await host.settle(); assert.deepEqual(selected(), ['Apparel']); assertChoices(); assert.match(text(tree), /No matching rewards/);
   auth.rewards = async () => { catalogueCalls++; throw new ApiError('Catalogue unavailable'); };
   tree = await host.settle(); assert.deepEqual(selected(), ['Apparel']); assertChoices(); assert.match(text(tree), /Catalogue unavailable/);
   auth.rewards = async () => { catalogueCalls++; return { data: rows, request_key: 'retry-category' }; };
   button(tree, 'Retry').props.onPress(); tree = await host.settle(); assert.deepEqual(selected(), ['Apparel']); assert.match(text(tree), /Apparel shirt/);
-  select('Merchandise'); tree = host.render(); button(tree, 'Redeem').props.onPress();
-  const confirmation = nodes(host.render()).find(n => n.type === 'ConfirmationModal').props; confirmation.onPrimary(); confirmation.onPrimary(); await flush();
+  select('Merchandise'); tree = host.render(); rewardCard(tree,rows[0].name).props.onPress();
+  const confirmation = rewardModal(host); confirmation.onRedeem(); confirmation.onRedeem(); await flush();
   assert.ok(choices().every(n => n.props.disabled && n.props.accessibilityState.disabled), 'Filter stays disabled during purchase');
   finishPurchase({ summary: { current_balance: 400 }, reward: { ...rows[0], stock_quantity: 1 } }); tree = await host.settle();
   assert.equal(host.routes.pop(), '/my-vouchers'); assert.match(text(tree), /400/); assert.deepEqual(selected(), ['Merchandise']); assertChoices();
@@ -495,6 +671,8 @@ async function categoryFilterChecks() {
 (async () => {
   await serviceChecks(); await catalogueChecks(); await apparelChecks(); await pointsNavigationChecks(); await polishChecks(); await historyChecks(); await voucherChecks();
   await categoryFilterChecks();
+  await phaseDChecks();
+  await loadingExclusionChecks();
   assert.equal(fs.existsSync('src/services/mock-voucher-store.ts'), false);
   console.log('Points/rewards/voucher client checks passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

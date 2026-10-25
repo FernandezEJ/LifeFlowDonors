@@ -2,9 +2,9 @@
   "expo": {
     "name": "LifeFlow",
     "slug": "LifeFlow",
-    "version": "1.0.0",
+    "version": "3.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/LogoMascot.png",
     "scheme": "lifeflow",
     "userInterfaceStyle": "automatic",
     "ios": {
@@ -13,24 +13,23 @@
     "android": {
       "package": "com.lifeflow.capstone",
       "googleServicesFile": "./google-services.json",
+      "versionCode": 3,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "foregroundImage": "./assets/images/LogoMascot.png"
       },
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/LogoMascot.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/LogoMascot.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
@@ -49,11 +48,25 @@
         {
           "defaultChannel": "important"
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "3f9d6b18-2943-43ef-be81-d9aa7d09d0aa"
+      }
+    },
+    "owner": "flowies-team",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/3f9d6b18-2943-43ef-be81-d9aa7d09d0aa"
     }
   }
 }

@@ -121,7 +121,9 @@ function providerHarness(initialToken = null) {
       end: (...args)=>backend.endFlowie(...args), remove: (...args)=>backend.deleteFlowie(...args), restore: (...args)=>backend.restoreFlowie(...args),
     } },
     '@/services/rewards': { rewardsApi: {} },
-    '@/services/notifications': { notificationApi: {} },
+    '@/services/notifications': { notificationApi: {
+      register:(...args)=>backend.pushRegister(...args),unregister:(...args)=>backend.pushUnregister(...args),
+    } },
     '@/services/donations': { donationApi: {join:(...args)=>backend.join(...args)} },
     '@/services/eligibility': { eligibilityApi: {} },
     react, 'react/jsx-runtime': { jsx: (_, props) => props },
@@ -203,6 +205,32 @@ async function providerChecks() {
   resolveOldChat({conversation:{id:3},messages:{data:[{content:'First donor private text'}]}}); await discarded;
   assert.equal(h.render().user.id,8); assert.equal(h.saved(),'second-only');
   await h.render().logout(); await assert.rejects(h.render().flowieHistory(),{status:401});
+  h=providerHarness();await h.render().login(fixture.email,fixture.password);
+  const pushCalls=[];let completeRegistration,completeLogout;
+  h.backend.pushRegister=(bearer,deviceToken)=>{pushCalls.push([bearer,deviceToken]);return new Promise(resolve=>{completeRegistration=resolve;});};
+  h.backend.pushUnregister=async(bearer,deviceToken)=>{pushCalls.push([bearer,deviceToken]);return {removed:true};};
+  const captured=h.render().captureDeviceTokenSession();assert.equal(captured.isCurrent(),true);
+  const oldRegistration=captured.register('old-device-test-token');
+  const discardedRegistration=assert.rejects(oldRegistration,{status:401});
+  h.backend.logout=()=>new Promise(resolve=>{completeLogout=resolve;});
+  const pendingLogout=h.render().logout();
+  assert.equal(captured.isCurrent(),false,'Push work stops as soon as logout begins');
+  await assert.rejects(captured.register('late-test-token'),{status:401});
+  await assert.rejects(captured.unregister('late-test-token'),{status:401});
+  assert.equal(pushCalls.length,1);completeLogout();await pendingLogout;h.backend.logout=async()=>{};
+  h.backend.login=async()=>({user:{id:8},token:'new-session-test'});
+  await h.render().login('second@example.test','unused');
+  completeRegistration({registered:true});await discardedRegistration;
+  await assert.rejects(captured.register('wrong-owner-test-token'),{status:401});
+  const current=h.render().captureDeviceTokenSession();
+  h.backend.pushRegister=async(bearer,deviceToken)=>{pushCalls.push([bearer,deviceToken]);return {registered:true};};
+  await current.register('new-device-test-token');
+  assert.deepEqual(pushCalls,[['test-only','old-device-test-token'],['new-session-test','new-device-test-token']]);
+  await h.render().logout();
+  h.backend.login=async()=>({user:{id:8},token:'new-session-test'});
+  await h.render().login('second@example.test','unused');
+  assert.equal(current.isCurrent(),false,'A new login invalidates capabilities even if a mocked bearer is reused');
+  console.log('PASS: session-bound push registration/unregister, immediate logout invalidation, late responses and account switches');
   console.log('PASS: token persistence, restore/revocation/offline retry, profile state, logout/cleanup failures, duplicate submission lock, protected Flowie lifecycle and discarded cross-session messages');
 }
 

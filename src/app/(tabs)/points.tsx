@@ -1,10 +1,10 @@
 import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
+import { EmptyState, LoadError } from '@/components/load-state';
 import { useAuth } from '@/contexts/auth-context';
 import { errorMessage } from '@/services/api';
 import type { Page, PointTransaction } from '@/services/rewards';
 import { NotificationBell } from '@/components/notification-bell';
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -52,8 +52,11 @@ export default function PointsScreen() {
   const [balanceLoading, setBalanceLoading] = useState(true);
   const [balanceError, setBalanceError] = useState('');
   const balanceGeneration = useRef(0);
+  const balanceRequest = useRef<number | null>(null);
   const loadBalance = useCallback(async () => {
+    if (balanceRequest.current === balanceGeneration.current) return;
     const current = ++balanceGeneration.current;
+    balanceRequest.current = current;
     setBalanceLoading(true); setBalanceError('');
     try {
       const summary = await pointsSummary();
@@ -61,6 +64,7 @@ export default function PointsScreen() {
     } catch (cause) {
       if (current === balanceGeneration.current) setBalanceError(errorMessage(cause));
     } finally {
+      if (balanceRequest.current === current) balanceRequest.current = null;
       if (current === balanceGeneration.current) setBalanceLoading(false);
     }
   }, [pointsSummary]);
@@ -72,13 +76,18 @@ export default function PointsScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const generation = useRef(0);
+  const historyRequest = useRef<number | null>(null);
+  const retryPage = useRef(1);
   const load = useCallback(async (number = 1) => {
+    if (historyRequest.current === generation.current) return;
     const current = ++generation.current; setLoading(true); setError('');
+    historyRequest.current = current;
+    retryPage.current = number;
     try {
       const result = await pointTransactions(number, selectedFilter === 'all' ? undefined : selectedFilter === 'earned' ? 'donation_reward' : 'reward_redemption');
       if (current === generation.current) setPage(previous => number === 1 ? result : { ...result, data: [...(previous?.data ?? []), ...result.data] });
     } catch (cause) { if (current === generation.current) setError(errorMessage(cause)); }
-    finally { if (current === generation.current) setLoading(false); }
+    finally { if (historyRequest.current === current) historyRequest.current = null; if (current === generation.current) setLoading(false); }
   }, [pointTransactions, selectedFilter]);
   useFocusEffect(useCallback(() => { void load(); return () => { generation.current++; }; }, [load]));
   const filteredTransactions = page?.data ?? [];
@@ -94,9 +103,9 @@ export default function PointsScreen() {
 
       <ScrollView ref={scrollRef} contentContainerStyle={styles.scrollContent} nestedScrollEnabled showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
-          {balance === null && balanceLoading ? <TabSkeleton variant="summary" /> : <>
           <View style={styles.balanceSection}>
             <Text style={styles.balanceHeading}>Your Blood Points</Text>
+            {balance === null && balanceLoading ? <TabSkeleton variant="points" label="Loading points balance" /> : balance !== null ? <>
             <View
               accessibilityLabel={`${(balance ?? '--')} Blood Points`}
               accessibilityRole="text"
@@ -119,8 +128,9 @@ export default function PointsScreen() {
               <Text style={styles.vouchersText}>My Rewards</Text>
             </Pressable>
             </View>
+            </> : null}
           </View>
-          {balanceError ? <View><Text style={{color:PALETTE.danger}} accessibilityRole="alert">{balanceError}</Text><Pressable accessibilityRole="button" disabled={balanceLoading} onPress={() => void loadBalance()} style={styles.retry}><Text style={styles.vouchersText}>Retry balance</Text></Pressable></View> : null}
+          {balanceError ? <LoadError message={balanceError} subject="points balance" retryLabel="Retry balance" loading={balanceLoading} onRetry={loadBalance} /> : null}
           <View style={styles.transactionsSection}>
             <Text style={styles.historyHeading}>Points History</Text>
             <View style={styles.filterBar}>
@@ -145,8 +155,8 @@ export default function PointsScreen() {
               })}
             </View>
 
-            {loading && !page ? <TabSkeleton /> : null}
-            {error ? <View><Text accessibilityRole="alert" style={{color:PALETTE.danger}}>{error}</Text><Pressable onPress={() => void load()}><Text style={{color:PALETTE.text}}>Retry</Text></Pressable></View> : null}
+            {loading && !page ? <TabSkeleton variant="transactions" label="Loading points history" /> : null}
+            {error ? <LoadError message={error} subject="points history" loading={loading} onRetry={() => load(retryPage.current)} /> : null}
             {page || !loading ? <ScrollView ref={historyScrollRef} key={selectedFilter} accessibilityLabel="Points history" nestedScrollEnabled
               showsVerticalScrollIndicator={false} scrollEnabled={filteredTransactions.length > 5} bounces={false}
               style={[styles.historyViewport, filteredTransactions.length > 5 && styles.historyLimited]}
@@ -173,15 +183,11 @@ export default function PointsScreen() {
                   );
                 })
               ) : (
-                <View style={styles.emptyState}>
-                  <MaterialIcons name="receipt-long" color={COLORS.muted} size={28} />
-                  <Text style={styles.emptyText}>{error ? 'History unavailable.' : 'No transactions yet.'}</Text>
-                </View>
+                !error && page ? <EmptyState icon="receipt-long" title={selectedFilter === 'all' ? 'No transactions yet' : 'No matching transactions'} description={selectedFilter === 'all' ? 'Your earned and spent points will appear here.' : 'Try another points history filter.'} /> : null
               )}
             {page && page.current_page < page.last_page ? <Pressable style={styles.retry} disabled={loading} onPress={() => void load(page.current_page + 1)}><Text style={{color:PALETTE.text}}>{loading ? 'Loading more...' : 'Load more transactions'}</Text></Pressable> : null}
             </ScrollView> : null}
           </View>
-          </>}
         </View>
       </ScrollView>
     </SafeAreaView>

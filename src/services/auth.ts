@@ -19,6 +19,7 @@ export type ProfileForm = {
   mobileNumber: string; birthDate: string; gender: string; bloodType: string;
 };
 export type RegisterForm = ProfileForm & { acceptedTerms: boolean; acknowledgedPrivacy: boolean; acknowledgedPrescreening: boolean };
+export const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] as const;
 export type LoginCodeResponse = { message: string; resend_after: number; expires_in: number };
 export const FIELD_MAPPING = {
   firstName: 'first_name', middleName: 'middle_name', lastName: 'last_name', email: 'email',
@@ -64,9 +65,34 @@ export function toProfileForm(user: User, profile: DonorProfile): ProfileForm {
   const [year, month, day] = profile.birth_date.slice(0, 10).split('-');
   return {
     firstName: profile.first_name, middleName: middleInitial(profile.middle_name), lastName: profile.last_name,
-    email: user.email, mobileNumber: profile.mobile_number, birthDate: `${month}/${day}/${year}`,
+    email: user.email, mobileNumber: profileMobileNumber(profile.mobile_number), birthDate: `${month}/${day}/${year}`,
     gender: profile.gender, bloodType: profile.blood_type,
   };
+}
+
+// Profile presentation accepts historical formats without rewriting stored values.
+export function profileMobileNumber(value: string | null | undefined): string {
+  const cleaned = (value ?? '').replace(/[\s()-]/g, '');
+  return /^\+?639[0-9]{9}$/.test(cleaned) ? '0' + cleaned.replace(/^\+?63/, '') : cleaned;
+}
+export function cleanProfileMobileInput(value: string): string {
+  return value.replace(/[^0-9]/g, '').slice(0, 11);
+}
+// Keep local-only editing validation separate from registration/login's existing contracts.
+export function profileEditErrors(form: ProfileForm): Partial<Record<keyof ProfileForm, string>> {
+  const errors: Partial<Record<keyof ProfileForm, string>> = {};
+  if (form.mobileNumber.length !== 11 || !/^09[0-9]{9}$/.test(form.mobileNumber)) errors.mobileNumber = 'Enter an 11-digit mobile number starting with 09.';
+  if (!BLOOD_TYPES.some(type => type === form.bloodType)) errors.bloodType = 'Select your blood type.';
+  return errors;
+}
+export function profileBirthDate(value: string | null | undefined): string {
+  if (!value) return '';
+  try {
+    const [year, month, day] = toApiDate(value).split('-').map(Number);
+    const date = new Date(0);
+    date.setUTCFullYear(year, month - 1, day);
+    return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  } catch { return ''; }
 }
 // Historical full middle names are displayed as initials without rewriting stored history.
 export function middleInitial(value: string | null | undefined): string {

@@ -1,12 +1,14 @@
 import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { announcementImageUrl, formatDonationDate } from '@/services/announcement-presentation';
+import { AnnouncementImage } from '@/components/announcement-image';
+import { TabSkeleton } from '@/components/tab-skeleton';
 import { AnnouncementBody } from '@/components/announcement-body';
 import { ConfirmationModal } from '@/components/confirmation-modal';
 import { formatDonationRestDate } from '@/services/eligibility';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import {Stack,useFocusEffect,useLocalSearchParams,useRouter} from 'expo-router';
 import {useCallback,useRef,useState,type ComponentProps} from 'react';
-import {Image,Pressable,ScrollView,StyleSheet,Text,View,useWindowDimensions} from 'react-native';
+import {Pressable,ScrollView,StyleSheet,Text,View,useWindowDimensions} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useAuth} from '@/contexts/auth-context';
 import {ApiError,errorMessage} from '@/services/api';
@@ -41,20 +43,31 @@ export default function AnnouncementScreen(){
  const generation=useRef(0);
  const [rest,setRest]=useState<{date?:string|null}|null>(null);
  const [dialog,setDialog]=useState<Omit<ComponentProps<typeof ConfirmationModal>,'visible'>|null>(null);
- const [item,setItem]=useState<DonationOpportunity|null>(null);const [error,setError]=useState('');const [busy,setBusy]=useState(false);const lock=useRef(false);
- const [failedImage,setFailedImage]=useState<string|null>(null);
+ const [content,setContent]=useState<{id:string;item:DonationOpportunity}|null>(null);
+ // Route-tagged content is hidden immediately, before the next focus effect runs.
+ const item=content && content.id===id?content.item:null;
+ const [requestId,setRequestId]=useState(id);
+ const [loading,setLoading]=useState(true);
+ const [error,setError]=useState('');const [busy,setBusy]=useState(false);const lock=useRef(false);
+ const scrollRef=useRef<ScrollView>(null);const previousId=useRef(id);
  const load=useCallback(async()=>{
-   const version=++generation.current;setItem(null);setError('');setFailedImage(null);
-   if(typeof id!=='string' || (id!=='red-cross-dagupan' && !/^[1-9]\d*$/.test(id))){setError('This announcement is unavailable.');return;}
+   const version=++generation.current;setRequestId(id);setLoading(true);setError('');
+   setContent(previous=>previous?.id===id?previous:null);
+   setDialog(null);setRest(null);lock.current=false;setBusy(false);
+   if(previousId.current!==id){scrollRef.current?.scrollTo({y:0,animated:false});previousId.current=id;}
+   if(typeof id!=='string' || (id!=='red-cross-dagupan' && !/^[1-9]\d*$/.test(id))){setError('This announcement is unavailable.');setLoading(false);return;}
    try{
      const r=await opportunity(id);
      if(version===generation.current){
-       if(r?.opportunity)setItem(r.opportunity);else setError('This announcement is unavailable.');
+       if(r?.opportunity)setContent({id,item:r.opportunity});else{setContent(null);setError('This announcement is unavailable.');}
      }
-   }catch(e){if(version===generation.current)setError(e instanceof ApiError && e.status===404?'This announcement is unavailable or has expired.':errorMessage(e));}
+   }catch(e){if(version===generation.current){
+     if(e instanceof ApiError && (e.status===404 || e.status===410)){setContent(null);setError('This announcement is unavailable or has expired.');}
+     else setError(errorMessage(e));
+   }}finally{if(version===generation.current)setLoading(false);}
  },[id,opportunity]);
  useFocusEffect(useCallback(()=>{void load();return()=>{generation.current++;};},[load]));
- const release=()=>{lock.current=false;setBusy(false);};
+ const release=(version:number)=>{if(version===generation.current){lock.current=false;setBusy(false);}};
  const blocked=(reason:string, participationId?:number, remaining?:number, nextDate?:string|null)=>{
    if(reason==='active_participation_exists' && typeof participationId==='number' && Number.isSafeInteger(participationId) && participationId>0){
      setDialog({title:'You already have an active donation activity',message:'Complete or cancel your current activity before joining another donation opportunity.',icon:'event-note',secondaryLabel:'Close',primaryLabel:'View Activity',dismissible:false,onSecondary:()=>{},onPrimary:()=>router.push({pathname:'/activity/[id]',params:{id:String(participationId)}})});
@@ -80,35 +93,35 @@ export default function AnnouncementScreen(){
    try{
      // Filter on the server so active records cannot hide behind paginated history.
      const [pending,verifying,revising]=await Promise.all([donationHistory(1,'pending'),donationHistory(1,'for_verification'),donationHistory(1,'needs_revision')]);
-     if(version!==generation.current){release();return;}
+     if(version!==generation.current){release(version);return;}
      const active=[...pending.data,...verifying.data,...revising.data].sort((a,b)=>b.id-a.id)[0];
-     if(active){blocked('active_participation_exists',active.id);release();return;}
+     if(active){blocked('active_participation_exists',active.id);release(version);return;}
      const state=await eligibilityState();
-     if(version!==generation.current){release();return;}
+     if(version!==generation.current){release(version);return;}
      if(state.is_on_donation_cooldown){
-       blocked('donation_cooldown_active',undefined,undefined,state.next_eligible_donation_at);release();return;
+       blocked('donation_cooldown_active',undefined,undefined,state.next_eligible_donation_at);release(version);return;
      }
      if(!state.assessment || !state.cooldown_active || state.remaining_seconds<=0){
-       blocked('evaluation_required');release();return;
+       blocked('evaluation_required');release(version);return;
      }
      if(state.assessment.result!=='eligible'){
-       blocked('evaluation_not_eligible',undefined,state.remaining_seconds);release();return;
+       blocked('evaluation_not_eligible',undefined,state.remaining_seconds);release(version);return;
      }
      // Keep the lock through the dialog; consume callbacks once, including Cancel.
      let consumed=false;
-     const cancel=()=>{if(!consumed){consumed=true;release();}};
+     const cancel=()=>{if(!consumed){consumed=true;release(version);}};
      setDialog({title:'Confirm Donation',message:item.title,icon:'favorite-border',secondaryLabel:'Cancel',primaryLabel:'Confirm',dismissOnBackdrop:true,onSecondary:cancel,onPrimary:()=>{
          if(consumed)return;consumed=true;
-         if(version!==generation.current){release();return;}
+         if(version!==generation.current){release(version);return;}
          void (async()=>{
            try{
              const r=await joinOpportunity(id);
              if(version===generation.current)router.push({pathname:'/activity/[id]',params:{id:String(r.participation.id)}});
            }catch(e){if(version===generation.current)failure(e);}
-           finally{release();}
+           finally{release(version);}
          })();
        }});
-   }catch(e){if(version===generation.current)failure(e);release();}
+   }catch(e){if(version===generation.current)failure(e);release(version);}
  };
  const confirmation=dialog ?? {title:'Donation Rest Period',icon:'hourglass-empty' as const,message:'You recently completed a donation and are still within the 3-month rest period. You can donate again starting '+formatDonationRestDate(rest?.date)+'.',secondaryLabel:'Close',primaryLabel:'View Status',onSecondary:()=>setRest(null),onPrimary:()=>{setRest(null);router.push('/(tabs)/status');}};
  const imageUrl=announcementImageUrl(item?.image_url);
@@ -116,6 +129,7 @@ export default function AnnouncementScreen(){
  const timeRange=start && end ? start+' – '+end : start || (end ? 'Until '+end : '');
  const isChapter=id==='red-cross-dagupan';
  const stackedActions=width<350 || fontScale>1.3;
+ const visibleError=requestId===id?error:'';
  return <>
    <Stack.Screen options={{headerShown:false}}/>
    <SafeAreaView edges={['top','right','bottom','left']} style={styles.safeArea}>
@@ -128,25 +142,17 @@ export default function AnnouncementScreen(){
        <Text accessibilityRole="header" style={styles.headerTitle}>{isChapter?'Donation Option':'Announcement Details'}</Text>
        <View style={styles.headerSpacer}/>
      </View>
-     <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+     <ScrollView ref={scrollRef} style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
        <View style={styles.content}>
-         {error && <View style={styles.errorCard}>
-           <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={[styles.description,{color:PALETTE.danger}]}>{error}</Text>
+         {visibleError && <View style={styles.errorCard}>
+           <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={[styles.description,{color:PALETTE.danger}]}>{visibleError}</Text>
            {!item && <Pressable accessibilityRole="button" accessibilityLabel="Retry announcement details" onPress={()=>void load()}
              style={({pressed})=>[styles.retryButton,pressed && styles.pressed]}>
              <Text style={styles.retryText}>Retry donation details</Text>
            </Pressable>}
          </View>}
          {item ? <>
-           <View style={styles.banner}>
-             {imageUrl && failedImage!==imageUrl ?
-               <Image source={{uri:imageUrl}} accessibilityLabel={item.title ? item.title+' event banner' : 'Announcement event banner'}
-                 resizeMode="cover" style={styles.bannerImage} onError={()=>setFailedImage(imageUrl)}/> :
-               <View style={styles.bannerFallback}>
-                 <MaterialIcons name="image-not-supported" size={36} color={COLORS.muted} accessible={false}/>
-                 <Text style={styles.fallbackText}>No event image available</Text>
-               </View>}
-           </View>
+           <AnnouncementImage uri={imageUrl} title={item.title?.trim() || 'Announcement'} />
            <Text accessibilityRole="header" style={styles.title}>{item.title?.trim() || 'Announcement'}</Text>
            <View style={styles.eventDetails}>
              <View style={styles.detailRow}>
@@ -184,9 +190,7 @@ export default function AnnouncementScreen(){
              </View>
              <Text style={styles.description}>Final donation eligibility is determined by the facility. Use the existing self-assessment to prepare, and bring the required identification or documents.</Text>
            </View>
-         </> : !error && <View accessibilityRole="progressbar" accessibilityLabel="Loading announcement" accessibilityState={{busy:true}} style={styles.loading}>
-           <Text style={styles.description}>Loading announcement…</Text>
-         </View>}
+         </> : !visibleError && (loading || requestId!==id) ? <TabSkeleton variant="detail" label="Loading announcement" /> : null}
        </View>
      </ScrollView>
      {item && <View style={styles.footer}>
@@ -203,7 +207,7 @@ export default function AnnouncementScreen(){
        </View>
      </View>}
    </SafeAreaView>
-   <ConfirmationModal {...confirmation} visible={!!dialog || !!rest} onSecondary={()=>{setDialog(null);confirmation.onSecondary();}} onPrimary={()=>{setDialog(null);return confirmation.onPrimary();}} />
+   <ConfirmationModal {...confirmation} visible={requestId===id && (!!dialog || !!rest)} onSecondary={()=>{setDialog(null);confirmation.onSecondary();}} onPrimary={()=>{setDialog(null);return confirmation.onPrimary();}} />
  </>;
 }
 const styles = StyleSheet.create({
@@ -217,11 +221,6 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 24 },
   content: { width: '100%', maxWidth: 620, alignSelf: 'center', gap: 20 },
-  banner: { width: '100%', aspectRatio: 16/9, overflow: 'hidden', borderRadius: 16, backgroundColor: COLORS.white },
-  bannerImage: { width: '100%', height: '100%' },
-  bannerFallback: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 10, padding: 16,
-    borderWidth: 1, borderColor: COLORS.border, borderRadius: 16, backgroundColor: COLORS.white },
-  fallbackText: { color: COLORS.muted, fontSize: 13, lineHeight: 19, textAlign: 'center', flexShrink: 1 },
   title: { color: COLORS.text, fontSize: 25, fontWeight: '800', lineHeight: 32, letterSpacing: -0.5 },
   eventDetails: { gap: 16 },
   detailRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
@@ -250,7 +249,6 @@ const styles = StyleSheet.create({
   secondaryPressed: { backgroundColor: COLORS.softRed },
   secondaryText: { color: COLORS.brand, fontSize: 15, lineHeight: 22, fontWeight: '700', textAlign: 'center' },
   disabled: { opacity: 0.55 },
-  loading: { paddingVertical: 24 },
   errorCard: { padding: 16, borderWidth: 1, borderColor: COLORS.border, borderRadius: 16, backgroundColor: COLORS.white },
   retryButton: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingVertical: 10 },
   retryText: { color: COLORS.brand, fontSize: 14, lineHeight: 21, fontWeight: '600' },

@@ -8,17 +8,19 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const ts = require('typescript');
 function load(path, imports, globals = {}) {
+  if (!imports['@/components/load-state'] && path !== 'src/components/load-state.tsx' && imports['react/jsx-runtime'] && imports['@expo/vector-icons/MaterialIcons'] && imports.react) imports = { ...imports, '@/components/load-state': load('src/components/load-state.tsx', imports, globals) };
   const module = { exports: {} };
   const code = ts.transpileModule(fs.readFileSync(path, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   vm.runInNewContext(code, { module, exports: module.exports, require: name => {if (name === '@/constants/theme') return load('src/constants/theme.ts', {'react-native': {Platform: {select: options => options.default}}});
+    if (name === '@/components/tab-skeleton') return { TabSkeleton: 'TabSkeleton' };
     if (!(name in imports)) throw new Error('Unexpected import: '+name);
     return imports[name];
   }, ...globals });
   return module.exports;
 }
-const jsx = (type, props) => ({ type, props });
+const jsx = (type, props) => typeof type === 'function' ? type(props) : ({ type, props });
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function nodes(tree) {
   if (!tree || typeof tree !== 'object') return [];
@@ -85,6 +87,9 @@ async function permissionChecks() {
   assert.equal((await push.getPushRegistration(true)).token,'test-device-token');
   assert.equal(prompts,1);
   await push.getPushRegistration(); assert.equal(prompts,1);
+  const beforeRefresh = tokenReads;
+  assert.equal((await push.getPushRegistration(false, {type:'android',data:'event-supplied-token'})).token,'event-supplied-token');
+  assert.equal(tokenReads,beforeRefresh,'A refresh event must never fetch another native token');
   permission = { granted:false,canAskAgain:false,status:'denied' };
   await push.getPushRegistration(true); assert.equal(prompts,1);
   for (const os of ['ios','web']) { platform.OS=os; assert.equal((await push.getPushRegistration(true)).status,'unavailable'); }
@@ -101,60 +106,104 @@ async function permissionChecks() {
  * a filter without clearing the inbox. No React test dependency is installed.
  * ======================================== */
 async function screenChecks() {
-  const slots=[]; let cursor=0, focused=false, focus; let countRefreshes=0, reads=0, readAll=0, failRead=false;
-  const routes=[];
-  let records=[
-    { id:2,type:'donation_needs_revision',title:'Donation proof needs revision',message:'Please upload a clearer proof.',data:{participation_id:12},read_at:null,created_at:'2026-09-11T00:00:00Z' },
-    { id:1,type:'admin_announcement',title:'Announcement',message:'Important',data:{opportunity_id:8},read_at:null,created_at:'2026-09-10T00:00:00Z' },
-  ];
-  const inbox={
-    listNotifications:async (page,unread) => ({data:records.filter(row=>!unread||!row.read_at).slice(page-1,page),current_page:page,last_page:2,total:2}),
-    readNotification:async id => {
-      reads++; if(failRead)throw new Error('Offline');
-      records=records.map(row=>row.id===id?{...row,read_at:'2026-09-11T12:00:00Z'}:row);
-      return {notification:records.find(row=>row.id===id)};
-    },
-    readAllNotifications:async()=>{readAll++;records=records.map(row=>({...row,read_at:'2026-09-11T12:00:00Z'}));return {unread_count:0};},
+  const { host } = require('./flowie-test-boundaries.cjs');
+  const create = (initial={}) => {
+    const life=host(),routes=[],calls=[];
+    const control={reads:0,all:0,failRead:false,failAll:false,failList:false,listGate:null,readGate:null,...initial};
+    let records=[
+      {id:2,type:'donation_needs_revision',title:'Donation proof needs revision',message:'Please upload a clearer proof.',data:{participation_id:12},read_at:null,created_at:'2026-09-11T00:00:00Z'},
+      {id:1,type:'admin_announcement',title:'Announcement',message:'Important',data:{opportunity_id:8},read_at:null,created_at:'2026-09-10T00:00:00Z'},
+    ];
+    const shared={unreadCount:2,refreshCount:async()=>{shared.unreadCount=records.filter(row=>!row.read_at).length;}};
+    const auth={
+      listNotifications:async(page,unread)=>{
+        calls.push([page,unread]);const data=records.filter(row=>!unread||!row.read_at);
+        const result={data:data.slice(page-1,page),current_page:page,last_page:Math.max(1,data.length),total:data.length};
+        if(control.listGate)await control.listGate;
+        if(control.failList)throw Error('Offline');return result;
+      },
+      readNotification:async id=>{
+        control.reads++;if(control.readGate)await control.readGate;if(control.failRead)throw Error('Read failed');
+        records=records.map(row=>row.id===id?{...row,read_at:'2026-09-11T12:00:00Z'}:row);
+        return {notification:records.find(row=>row.id===id)};
+      },
+      readAllNotifications:async()=>{
+        control.all++;await Promise.resolve();if(control.failAll)throw Error('Read all failed');
+        records=records.map(row=>({...row,read_at:'2026-09-11T12:00:00Z'}));return {unread_count:0};
+      },
+    };
+    const imports={
+      '@expo/vector-icons/MaterialIcons':{default:'Icon'},
+      'expo-router':{Stack:{Screen:'Screen'},useRouter:()=>({push:route=>routes.push(route),back:()=>routes.push('back'),canGoBack:()=>true}),useFocusEffect:life.focus},
+      react:life.react,'react/jsx-runtime':{jsx,jsxs:jsx,Fragment:'Fragment'},
+      'react-native':{FlatList:'FlatList',Modal:'Modal',ScrollView:'ScrollView',Pressable:'Pressable',Text:'Text',View:'View',StyleSheet:{create:x=>x}},
+      'react-native-safe-area-context':{SafeAreaView:'SafeAreaView'},
+      '@/contexts/auth-context':{useAuth:()=>auth},'@/contexts/notification-context':{useNotifications:()=>shared},
+      '@/services/api':{errorMessage:e=>e.message},'@/services/notifications':service,
+    };
+    const screen=load('src/app/notifications.tsx',imports);
+    const render=()=>life.render(()=>screen.default());const list=()=>nodes(render()).find(n=>n.type==='FlatList').props;
+    const action=label=>nodes(render()).concat(nodes(list().ListHeaderComponent)).find(n=>n.props?.accessibilityLabel===label);
+    render();
+    return {control,routes,calls,shared,imports,render,list,action,life,setRecords:value=>{records=value;}};
   };
-  const shared={ unreadCount:2,refreshCount:async()=>{countRefreshes++;},enablePush:async()=>{},pushStatus:'' };
-  const react={
-    useCallback:fn=>fn,
-    useState:initial=>{const i=cursor++;if(!(i in slots))slots[i]=initial;return [slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];},
-    useRef:initial=>{const i=cursor++;return slots[i]||=( {current:initial} );},
-  };
-  const imports={
-    '@expo/vector-icons/MaterialIcons':{default:'Icon'},
-    'expo-router':{Stack:{Screen:'Screen'},useRouter:()=>({push:route=>routes.push(route),back(){}}),useFocusEffect:fn=>{if(!focused){focused=true;focus=fn;}}},
-    react,'react/jsx-runtime':{jsx,jsxs:jsx,Fragment:'Fragment'},
-    'react-native':{FlatList:'FlatList',Pressable:'Pressable',Text:'Text',View:'View',StyleSheet:{create:x=>x}},
-    'react-native-safe-area-context':{SafeAreaView:'SafeAreaView'},
-    '@/contexts/auth-context':{useAuth:()=>inbox},
-    '@/contexts/notification-context':{useNotifications:()=>shared},
-    '@/services/api':{errorMessage:e=>e.message},
-    '@/services/notifications':service,
-  };
-  const screen=load('src/app/notifications.tsx',imports);
-  const render=()=>{cursor=0;return screen.default();};
-  const list=()=>nodes(render()).find(n=>n.type==='FlatList').props;
-  render();focus();await flush();
-  assert.equal(list().data.length,1);
-  button(list().ListHeaderComponent,'All').props.onPress();
-  assert.equal(list().data.length,1);
-  button(list().ListFooterComponent,'Load more').props.onPress();await flush();
-  assert.equal(list().data.length,2);
-  let row=list().renderItem({item:list().data[0]});
-  failRead=true;row.props.onPress();await flush();
-  assert.equal(list().data[0].read_at,null);assert.equal(routes.length,0);
-  failRead=false;row.props.onPress();row.props.onPress();await flush();
-  assert.equal(reads,2);assert.ok(list().data[0].read_at);
-  assert.equal(routes[0].pathname,'/activity/[id]');
-  button(render(),'Mark all read').props.onPress();await flush();
-  assert.equal(readAll,1);assert.ok(list().data.every(item=>item.read_at));
-  assert.ok(countRefreshes>=3);
-  const bell=load('src/components/notification-bell.tsx',imports);
-  assert.equal(bell.NotificationBell().props.accessibilityLabel,'Open notifications, 2 unread');
-  shared.unreadCount=0;
-  assert.equal(nodes(bell.NotificationBell()).filter(n=>n.type==='Text').length,0);
+  let ui=create();await flush();assert.equal(ui.list().data.length,1);
+  button(ui.list().ListHeaderComponent,'All').props.onPress();assert.equal(ui.list().data.length,1);
+  ui.control.failList=true;const more=button(ui.list().ListFooterComponent,'Load more');more.props.onPress();more.props.onPress();await flush();
+  assert.equal(ui.list().data.length,1,'A failed next page keeps existing notifications');
+  ui.control.failList=false;const retryPage=ui.action('Retry notifications');retryPage.props.onPress();retryPage.props.onPress();await flush();
+  assert.equal(ui.calls.at(-1)[0],2,'Retry repeats the failed next page');
+  assert.equal(ui.list().data.length,2);assert.equal(ui.calls.length,3,'Repeated fetch/retry presses never duplicate a page');
+  assert.equal(ui.list().keyExtractor(ui.list().data[0]),'2');
+  let row=ui.list().renderItem({item:ui.list().data[0]});assert.equal(row.props.accessibilityRole,'button');
+  assert.equal(nodes(row).filter(n=>n.type==='Pressable').length,1);assert.ok(nodes(row).some(n=>n.props?.numberOfLines===2));
+  assert.match(row.props.accessibilityLabel,/Unread/);assert.ok(nodes(row).some(n=>n.props?.name==='chevron-right'));
+  ui.control.failRead=true;row.props.onPress();await flush();assert.equal(ui.list().data[0].read_at,null);assert.equal(ui.routes.length,0);
+  ui.control.failRead=false;row.props.onPress();row.props.onPress();await flush();
+  assert.equal(ui.control.reads,2);assert.ok(ui.list().data[0].read_at);assert.equal(ui.routes.length,1);assert.equal(ui.routes[0].pathname,'/activity/[id]');
+  ui.control.failAll=true;ui.action('Mark all read').props.onPress();await flush();assert.equal(ui.shared.unreadCount,1);assert.equal(ui.list().data[1].read_at,null);
+  assert.ok(nodes(ui.list().ListHeaderComponent).some(n=>n.props?.accessibilityRole==='alert'));
+  ui.control.failAll=false;ui.control.failList=true;const all=ui.action('Mark all read');all.props.onPress();all.props.onPress();await flush();
+  assert.equal(ui.control.all,2);assert.equal(ui.shared.unreadCount,0,'Confirmed read-all updates the server count even when the subsequent list fetch fails');
+  assert.ok(nodes(ui.list().ListHeaderComponent).some(n=>n.props?.accessibilityRole==='alert'));
+  ui.control.failList=false;ui.action('Retry notifications').props.onPress();await flush();
+  assert.ok(ui.list().data.every(item=>item.read_at));assert.equal(ui.action('Mark all read').props.disabled,true);
+  assert.ok(!JSON.stringify(ui.list().ListHeaderComponent).includes('Enable important notifications'));
+  ui.action('Notification Settings').props.onPress();assert.equal(ui.routes.at(-1),'/notification-settings');
+  ui.action('Go back').props.onPress();assert.equal(ui.routes.at(-1),'back');
+  const bellHost=host();const bell=load('src/components/notification-bell.tsx',{...ui.imports,react:bellHost.react,'expo-router':{...ui.imports['expo-router'],useFocusEffect:bellHost.focus}});
+  const bellView=()=>bellHost.render(bell.NotificationBell);assert.equal(bellView().props.accessibilityLabel,'Open notifications, 0 unread');
+  assert.equal(nodes(bellView()).filter(n=>n.type==='Text').length,0);bellHost.unmount();ui.life.unmount();
+
+  ui=create({failList:true});await flush();assert.equal(ui.list().data.length,0);
+  assert.equal(ui.list().ListEmptyComponent,null,'An initial failure is an error, never an empty inbox');
+  ui.control.failList=false;ui.action('Retry notifications').props.onPress();await flush();assert.equal(ui.list().data.length,1);
+  ui.setRecords([{id:9,type:'admin_announcement',title:'Full message',message:'Complete notification text. '.repeat(90),data:null,read_at:null,created_at:'invalid'}]);
+  ui.list().onRefresh();await flush();row=ui.list().renderItem({item:ui.list().data[0]});assert.ok(!nodes(row).some(n=>n.props?.name==='chevron-right'));
+  row.props.onPress();await flush();assert.equal(ui.routes.length,0);
+  const modal=()=>nodes(ui.render()).find(n=>n.type==='Modal');assert.equal(modal().props.visible,true);
+  assert.ok(nodes(modal()).some(n=>n.type==='Text'&&n.props.selectable&&n.props.children.length>2000));
+  modal().props.onRequestClose();assert.equal(modal().props.visible,false);
+  button(ui.list().ListHeaderComponent,'Unread (0)').props.onPress();ui.render();await flush();assert.equal(ui.calls.at(-1)[1],true);assert.equal(ui.list().data.length,0);
+  assert.match(JSON.stringify(ui.list().ListEmptyComponent),/caught up/);ui.life.unmount();
+
+  ui=create();await flush();let finish;
+  const oldMore=button(ui.list().ListFooterComponent,'Load more');
+  ui.control.listGate=new Promise(resolve=>{finish=resolve;});ui.list().onRefresh();
+  ui.setRecords([{id:9,type:'admin_announcement',title:'Unread only',message:'Full text',data:null,read_at:null,created_at:null}]);
+  button(ui.list().ListHeaderComponent,'Unread (2)').props.onPress();ui.control.listGate=null;ui.render();await flush();
+  assert.equal(ui.list().data[0].id,9);
+  const before=ui.calls.length;oldMore.props.onPress();assert.equal(ui.calls.length,before,'Old filter handlers cannot fetch pages for a new filter');
+  finish();await flush();assert.equal(ui.list().data[0].id,9,'A late All response cannot replace the new Unread list');
+  ui.list().renderItem({item:ui.list().data[0]}).props.onPress();await flush();
+  assert.equal(ui.list().data.length,0);assert.equal(ui.calls.at(-1)[0],1,'Read-on-tap restarts Unread pagination without skipping records');
+  assert.equal(nodes(ui.render()).find(n=>n.type==='Modal').props.visible,true,'Full message stays accessible after the row leaves Unread');
+  assert.match(JSON.stringify(ui.list().ListEmptyComponent),/caught up/);
+  ui.life.unmount();
+  ui=create();await flush();ui.control.readGate=new Promise(resolve=>{finish=resolve;});
+  ui.list().renderItem({item:ui.list().data[0]}).props.onPress();ui.life.unmount();finish();await flush();assert.equal(ui.routes.length,0,'A response after leaving the inbox cannot navigate');
+  const layout=fs.readFileSync('src/app/_layout.tsx','utf8');assert.match(layout,/NotificationProvider key={user\?\.id/);
+  assert.ok(layout.slice(layout.indexOf('<Stack.Protected guard={!!user}>')).includes('name="notification-settings"'));
 }
 
 /* ========================================
@@ -162,53 +211,109 @@ async function screenChecks() {
  * Verifies badge coalescing, passive registration, explicit opt-in, listener
  * cleanup, and owned API resolution before a cold-start or foreground tap.
  * ======================================== */
-async function contextChecks() {
-  const slots=[];let cursor=0,first=true;const effects=[],listeners={};let countCalls=0,registrations=0;
-  let permission=false,prompts=0,reads=0;const routes=[];let foreground;let currentUser={id:7};
-  const notification={id:2,type:'donation_completed',data:{participation_id:12}};
+function notificationHarness(granted = false, owner = 7) {
+  const slots=[],effects=[],listeners={},routes=[],registrations=[],removals=[];
+  let cursor=0,first=true,foreground,session=1,now=100000000;
+  const control={granted,token:'initial-test-token',lookup:null,register:null,tokenReads:0,prompts:0,countCalls:0,reads:0};
   const native={
-    setNotificationHandler(){},
+    setNotificationHandler(){}, AndroidImportance:{DEFAULT:3},
+    getPermissionsAsync:async()=>({granted:control.granted,canAskAgain:true,status:control.granted?'granted':'denied'}),
+    requestPermissionsAsync:async()=>{control.prompts++;control.granted=true;return {granted:true};},
+    setNotificationChannelAsync:async()=>{},
+    getDevicePushTokenAsync:async()=>{
+      control.tokenReads++;
+      const token=control.lookup?await control.lookup:{type:'android',data:control.token};
+      // Match the installed Android SDK: native token lookup emits a refresh event.
+      listeners.token?.(token);
+      return token;
+    },
     addNotificationReceivedListener:fn=>{listeners.received=fn;return {remove(){delete listeners.received;}};},
     addPushTokenListener:fn=>{listeners.token=fn;return {remove(){delete listeners.token;}};},
     addNotificationResponseReceivedListener:fn=>{listeners.tap=fn;return {remove(){delete listeners.tap;}};},
-    getLastNotificationResponseAsync:async()=>null,
-    clearLastNotificationResponseAsync:async()=>{},
+    getLastNotificationResponseAsync:async()=>null,clearLastNotificationResponseAsync:async()=>{},
   };
-  const auth={
-    notificationCount:async()=>{countCalls++;return {unread_count:3};},
-    readNotification:async id=>{reads++;if(id!==2)throw new Error('Not found');return {notification};},
-    registerDeviceToken:async()=>{registrations++;},unregisterDeviceToken:async()=>{},
+  const push=load('src/services/push-notifications.ts',{
+    'expo-constants':{__esModule:true,default:{executionEnvironment:'bare'}},'expo-device':{isDevice:true},
+    'react-native':{Platform:{OS:'android'}},'expo-notifications':native,
+  });
+  const auth={user:{id:owner},
+    notificationCount:async()=>{control.countCalls++;return {unread_count:3};},
+    readNotification:async id=>{control.reads++;if(id!==2)throw new Error('Not found');return {notification:{id:2,type:'donation_completed',data:{participation_id:12}}};},
+    captureDeviceTokenSession:()=>{
+      const captured=session;
+      return {isCurrent:()=>captured===session,
+        register:async token=>{assert.equal(captured,session);registrations.push([owner,token]);if(control.register)await control.register;return {registered:true};},
+        unregister:async token=>{assert.equal(captured,session);removals.push(token);return {removed:true};},
+      };
+    },
   };
   const module=load('src/contexts/notification-context.tsx',{
-    react:{
-      createContext:()=>({Provider:'Provider'}),useCallback:fn=>fn,
+    react:{createContext:()=>({Provider:'Provider'}),useCallback:fn=>fn,
       useState:initial=>{const i=cursor++;if(!(i in slots))slots[i]=initial;return [slots[i],v=>{slots[i]=typeof v==='function'?v(slots[i]):v;}];},
-      useRef:initial=>{const i=cursor++;return slots[i]||={current:initial};},
-      useEffect:fn=>{if(first)effects.push(fn);},
-    },
+      useRef:initial=>{const i=cursor++;return slots[i]||={current:initial};},useEffect:fn=>{if(first)effects.push(fn);}},
     'react/jsx-runtime':{jsx,jsxs:jsx},
     'react-native':{AppState:{addEventListener:(_,fn)=>{foreground=fn;return {remove(){foreground=null;}};}}},
-    'expo-router':{useRouter:()=>({push:route=>routes.push(route)})},
-    './auth-context':{useAuth:()=>({...auth,user:currentUser})},
-    '@/services/notifications':service,
-    '@/services/push-notifications':{
-      nativeNotifications:async()=>native,
-      getPushRegistration:async prompt=>{if(prompt){prompts++;permission=true;}return permission?{status:'enabled',token:'test-token'}:{status:'denied'};},
-    },
-  });
+    'expo-router':{useRouter:()=>({push:route=>routes.push(route)})},'./auth-context':{useAuth:()=>auth},
+    '@/services/notifications':service,'@/services/push-notifications':push,
+  },{Date:class extends Date {static now(){return now;}}});
   const render=()=>{cursor=0;const tree=module.NotificationProvider({children:null});first=false;return tree.props.value;};
-  render();const cleanups=effects.map(effect=>effect());await flush();
-  assert.equal(render().unreadCount,3);
-  await render().refreshCount();await render().refreshCount();assert.equal(countCalls,1);
-  assert.equal(prompts,0);assert.equal(registrations,0);
-  await render().enablePush();assert.equal(prompts,1);assert.equal(registrations,1);
-  foreground('active');await flush();assert.equal(prompts,1);
+  render();const cleanups=effects.map(effect=>effect());
+  return {control,listeners,routes,registrations,removals,render,
+    foreground:()=>foreground?.('active'),advance:ms=>{now+=ms;},invalidate:()=>{session++;},
+    dispose:()=>cleanups.forEach(cleanup=>cleanup?.())};
+}
+
+async function contextChecks() {
+  let h=notificationHarness();await flush();
+  assert.equal(h.render().unreadCount,3);
+  await h.render().refreshCount();await h.render().refreshCount();assert.equal(h.control.countCalls,1);
+  assert.equal(h.control.prompts,0);assert.equal(h.registrations.length,0);
+  await h.render().enablePush();await flush();assert.equal(h.control.prompts,1);assert.equal(h.registrations.length,1);
+  h.foreground();h.foreground();await flush();assert.equal(h.control.prompts,1);assert.equal(h.registrations.length,1);
+  const tokenReads=h.control.tokenReads;
+  h.listeners.token({type:'android',data:'rotated-test-token'});h.listeners.token({type:'android',data:'rotated-test-token'});
+  await flush();assert.equal(h.control.tokenReads,tokenReads,'Refresh event must not read another native token');
+  assert.equal(h.registrations.length,2);assert.equal(h.registrations[1][1],'rotated-test-token');
+  h.control.token='rotated-test-token';h.advance(24*60*60*1000);h.foreground();await flush();
+  assert.equal(h.registrations.length,3,'Daily heartbeat refreshes server last_seen_at');
   const tap=id=>({notification:{request:{identifier:'push-'+id,content:{data:{notification_id:String(id)}}}}});
-  listeners.tap(tap(999));await flush();assert.equal(routes.length,0);
-  listeners.tap(tap(2));await flush();assert.equal(routes[0].params.id,'12');
-  listeners.tap(tap(2));await flush();assert.equal(reads,2);
-  cleanups.forEach(cleanup=>cleanup?.());assert.equal(foreground,null);assert.equal(listeners.tap,undefined);
-  currentUser=null;
+  h.listeners.tap(tap(999));await flush();assert.equal(h.routes.length,0);
+  h.listeners.tap(tap(2));await flush();assert.equal(h.routes[0].params.id,'12');
+  h.listeners.tap(tap(2));await flush();assert.equal(h.control.reads,2);
+  h.control.granted=false;h.foreground();await flush();assert.equal(h.removals[0],'rotated-test-token');
+  h.listeners.token({type:'android',data:'denied-test-token'});await flush();
+  assert.equal(h.registrations.length,3);assert.equal(h.control.prompts,1,'Revocation never prompts automatically');
+  const stale=h.listeners.token;h.dispose();stale({type:'android',data:'stale-test-token'});await flush();
+  assert.equal(h.listeners.token,undefined);assert.equal(h.registrations.length,3);
+
+  // A rotated token arriving while another POST is in flight is serialized, never lost.
+  h=notificationHarness(true);await flush();let finish;
+  h.control.register=new Promise(resolve=>{finish=resolve;});
+  h.listeners.token({type:'android',data:'first-rotation'});await flush();
+  h.listeners.token({type:'android',data:'superseded-rotation'});h.listeners.token({type:'android',data:'latest-rotation'});
+  await flush();assert.equal(h.registrations.length,2);
+  finish();await flush();assert.deepEqual(h.registrations.map(row=>row[1]),['initial-test-token','first-rotation','latest-rotation']);
+  h.dispose();
+
+  // Native lookup resolving after logout/account switch or unmount must not POST.
+  for(const end of ['logout','unmount']) {
+    h=notificationHarness();await flush();let finishLookup;
+    h.control.lookup=new Promise(resolve=>{finishLookup=resolve;});
+    const pending=h.render().enablePush();await flush();const oldListener=h.listeners.token;
+    if(end==='logout')h.invalidate();else h.dispose();
+    finishLookup({type:'android',data:'old-account-test-token'});await pending;await flush();
+    oldListener({type:'android',data:'late-test-token'});await flush();assert.equal(h.registrations.length,0);h.dispose();
+  }
+  h=notificationHarness(true);await flush();let finishOld;
+  h.control.register=new Promise(resolve=>{finishOld=resolve;});
+  h.listeners.token({type:'android',data:'in-flight-old-token'});await flush();
+  h.listeners.token({type:'android',data:'queued-old-token'});h.invalidate();h.dispose();
+  const next=notificationHarness(true,8);await flush();finishOld();await flush();
+  assert.equal(h.registrations.length,2,'Old session cannot drain its queued rotation into the next login');
+  assert.deepEqual(next.registrations,[[8,'initial-test-token']]);next.dispose();
+  h=notificationHarness(false);await flush();
+  assert.equal(h.control.tokenReads,0);assert.equal(h.control.prompts,0);assert.equal(h.removals.length,0);
+  h.dispose();
 }
 
 async function reminderChecks() {
@@ -250,10 +355,74 @@ async function reminderChecks() {
   await service.notificationApi.reminders('session');assert.equal(sent.path,'/notifications/reminders');
 }
 
+async function phaseFSettingsChecks() {
+  const constants={executionEnvironment:'bare',expoConfig:{android:{package:'com.lifeflow.capstone'}}};
+  const platform={OS:'android'},device={isDevice:true},intents=[];
+  let permission={granted:false,canAskAgain:true},channel={importance:3},fallback=0,failChannel=false,failIntent=false,failFallback=false,writes=0;
+  const native={getPermissionsAsync:async()=>permission,getNotificationChannelAsync:async id=>{assert.equal(id,'important');return channel;},
+    AndroidImportance:{NONE:0,DEFAULT:3},setNotificationChannelAsync:async()=>{writes++;}};
+  const push=load('src/services/push-notifications.ts',{
+    'expo-constants':{__esModule:true,default:constants},'expo-device':device,'expo-notifications':native,
+    'react-native':{Platform:platform,Linking:{sendIntent:async(action,extras)=>{intents.push({action,extras});if(failIntent||(failChannel&&action.includes('CHANNEL')))throw Error('Unsupported');},
+      openSettings:async()=>{fallback++;if(failFallback)throw Error('Unsupported');}}},
+  });
+  assert.equal((await push.phoneNotificationPermission()).granted,false);assert.equal((await push.phoneNotificationPermission()).canAskAgain,true);
+  channel={importance:0};assert.equal((await push.phoneNotificationPermission()).channelBlocked,true);
+  assert.equal(await push.openPhoneNotificationSettings(true),true);assert.equal(intents.at(-1).action,'android.settings.CHANNEL_NOTIFICATION_SETTINGS');
+  assert.deepEqual(JSON.parse(JSON.stringify(intents.at(-1).extras)),[{key:'android.provider.extra.APP_PACKAGE',value:'com.lifeflow.capstone'},{key:'android.provider.extra.CHANNEL_ID',value:'important'}]);
+  failChannel=true;await push.openPhoneNotificationSettings(true);assert.equal(intents.at(-1).action,'android.settings.APP_NOTIFICATION_SETTINGS');
+  failChannel=false;channel=null;await push.openPhoneNotificationSettings(true);assert.equal(intents.at(-1).action,'android.settings.APP_NOTIFICATION_SETTINGS');
+  failIntent=true;assert.equal(await push.openPhoneNotificationSettings(),true);assert.equal(fallback,1);
+  failFallback=true;assert.equal(await push.openPhoneNotificationSettings(),false);assert.equal(writes,0,'System settings paths never rewrite channel preferences');
+  for(const os of ['ios','web']){platform.OS=os;assert.equal(await push.phoneNotificationPermission(),null);assert.equal(await push.openPhoneNotificationSettings(true),false);}
+  platform.OS='android';constants.executionEnvironment='storeClient';assert.equal(await push.phoneNotificationPermission(),null);assert.equal(await push.openPhoneNotificationSettings(),false);
+
+  const {host}=require('./flowie-test-boundaries.cjs');const life=host();let foreground,enabled=0,permissionReads=0,opened=[],openWorks=true;
+  permission={granted:false,canAskAgain:true,channelBlocked:false};
+  const shared={enablePush:async()=>{enabled++;await Promise.resolve();permission={...permission,granted:true};},pushStatus:''};
+  const screen=load('src/app/notification-settings.tsx',{
+    react:life.react,'react/jsx-runtime':{jsx,jsxs:jsx},'expo-router':{useFocusEffect:life.focus},
+    '@expo/vector-icons/MaterialIcons':{default:'Icon'},'@/components/profile-settings-page':{ProfileSettingsPage:'SettingsPage'},
+    '@/contexts/notification-context':{useNotifications:()=>shared},
+    '@/services/push-notifications':{phoneNotificationPermission:async()=>{permissionReads++;return permission;},openPhoneNotificationSettings:async channel=>{opened.push(channel);return openWorks;}},
+    'react-native':{View:'View',Text:'Text',Pressable:'Pressable',StyleSheet:{create:x=>x},AppState:{addEventListener:(_,fn)=>{foreground=fn;return {remove:()=>{foreground=null;}};}}},
+  });
+  const render=()=>life.render(()=>screen.default());
+  const rows=()=>nodes(render()).filter(n=>n.type==='Pressable');
+  render();await flush();assert.equal(rows().length,2);assert.deepEqual(rows().map(n=>n.props.accessibilityLabel),['Phone Notifications','Sound & Vibration']);
+  assert.equal(render().props.fallback,'/notifications');assert.equal(render().props.title,'Notification Settings');
+  assert.ok(!JSON.stringify(render()).includes('About Notifications'));assert.ok(!nodes(render()).some(n=>n.type==='Switch'||n.type==='Modal'));
+  const phone=rows()[0];phone.props.onPress();phone.props.onPress();await flush();assert.equal(enabled,1);assert.equal(opened.length,0,'The initial grant uses the existing prompt without opening a second settings screen');
+  assert.match(JSON.stringify(render()),/Android permission allowed/);assert.equal(rows()[0].props.disabled,false);
+  rows()[0].props.onPress();await flush();assert.equal(enabled,2);assert.deepEqual(opened,[false],'Already allowed permission retains registration and reaches app controls');
+  permission={granted:false,canAskAgain:false,channelBlocked:false};const before=permissionReads;foreground('active');await flush();assert.ok(permissionReads>before);assert.match(JSON.stringify(render()),/Android permission not allowed/);
+  rows()[0].props.onPress();await flush();assert.equal(enabled,2,'Permanently denied permission is never re-prompted');assert.equal(opened.at(-1),false);
+  rows()[1].props.onPress();await flush();assert.equal(enabled,2);assert.equal(opened.at(-1),true,'Sound & Vibration requests existing channel controls only');
+  permission={granted:true,canAskAgain:true,channelBlocked:true};rows()[0].props.onPress();await flush();assert.equal(opened.at(-1),true);assert.match(JSON.stringify(render()),/channel is off/);
+  openWorks=false;rows()[1].props.onPress();await flush();assert.match(JSON.stringify(render()),/settings could not be opened/);
+  permission=null;const openCount=opened.length,enableCount=enabled;rows()[0].props.onPress();await flush();assert.equal(opened.length,openCount);assert.equal(enabled,enableCount);assert.match(JSON.stringify(render()),/Android device build/);
+  life.blur();assert.equal(foreground,null);life.refocus();await flush();assert.equal(rows().length,2);life.unmount();assert.equal(foreground,null);
+}
+
+function timestampChecks() {
+  const now=new Date(2026,9,25,12,30).getTime();
+  for(const invalid of [undefined,null,'','invalid',42])assert.equal(service.notificationTimeLabel(invalid,now),'Date unavailable');
+  assert.equal(service.notificationTimeLabel(new Date(now-30000).toISOString(),now),'Just now');
+  assert.equal(service.notificationTimeLabel(new Date(now-60000).toISOString(),now),'1 minute ago');
+  assert.equal(service.notificationTimeLabel(new Date(now-600000).toISOString(),now),'10 minutes ago');
+  assert.equal(service.notificationTimeLabel(new Date(now-3600000).toISOString(),now),'1 hour ago');
+  assert.equal(service.notificationTimeLabel(new Date(2026,9,24,15).toISOString(),now),'Yesterday');
+  assert.equal(service.notificationTimeLabel(new Date(2026,9,22,15).toISOString(),now),'3 days ago');
+  assert.equal(service.notificationTimeLabel(new Date(2025,0,1).toISOString(),now),'Jan 1, 2025');
+  assert.equal(service.notificationTimeLabel(new Date(2026,10,1).toISOString(),now),'Nov 1, 2026');
+}
+
 (async()=>{
   await reminderChecks();console.log('PASS: reminder popup dismiss/navigation, session suppression, expiry, foreground and server revalidation');
   await serviceChecks();console.log('PASS: notification API payloads and safe navigation');
   await permissionChecks();console.log('PASS: passive denial, explicit permission, token refresh, Expo Go/web/iOS/device guards');
   await contextChecks();console.log('PASS: badge lifecycle/coalescing, opt-in registration, owned push taps and listener cleanup');
   await screenChecks();console.log('PASS: inbox pagination, confirmed reads/read-all, failure handling, duplicate lock, shared unread badge');
+  timestampChecks();console.log('PASS: relative timestamps, calendar days, old/future/malformed dates');
+  await phaseFSettingsChecks();console.log('PASS: exactly two settings rows, permission grant/denial/resume, native channel/app/fallback navigation, Expo Go and unsupported devices');
 })().catch(error=>{console.error(error);process.exitCode=1;});

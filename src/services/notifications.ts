@@ -35,3 +35,20 @@ export function notificationDestination(item: ImportantNotification) {
   if (item.type === 'donation_completed' || item.type === 'donation_rejected' || item.type === 'donation_needs_revision' || item.type === 'donation_reminder') return { pathname: '/activity/[id]' as const, params: { id: String(id) } };
   return null;
 }
+
+// Presentation only; server timestamps and read state remain authoritative.
+export function notificationTimeLabel(value: unknown, now = Date.now()): string {
+  const time = typeof value === 'string' && value.trim() ? Date.parse(value) : NaN;
+  if (!Number.isFinite(time) || !Number.isFinite(now)) return 'Date unavailable';
+  const date = new Date(time), today = new Date(now);
+  const age = Math.max(0, now - time);
+  if (time <= now + 60000) {
+    if (age < 60000) return 'Just now';
+    if (age < 3600000) { const minutes = Math.floor(age / 60000); return `${minutes} minute${minutes === 1 ? '' : 's'} ago`; }
+    const days = Math.round((Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()) - Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())) / 86400000);
+    if (days === 0) { const hours = Math.floor(age / 3600000); return `${hours} hour${hours === 1 ? '' : 's'} ago`; }
+    if (days === 1) return 'Yesterday';
+    if (days > 1 && days < 7) return `${days} days ago`;
+  }
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}

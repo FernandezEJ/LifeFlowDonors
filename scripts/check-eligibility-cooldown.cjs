@@ -1,6 +1,7 @@
 /* Actual service/hook/screen handlers; native and React boundaries are mocked. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
 function load(path,imports={},globals={}){
+ if(!imports['@/components/load-state'] && path!=='src/components/load-state.tsx' && imports['react/jsx-runtime'] && imports['@expo/vector-icons/MaterialIcons'] && imports.react)imports={...imports,'@/components/load-state':load('src/components/load-state.tsx',imports,globals)};
  const module={exports:{}};const code=ts.transpileModule(fs.readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
  vm.runInNewContext(code,{module,exports:module.exports,require:n=>{if (n === '@/constants/theme') return load('src/constants/theme.ts', {'react-native': {Platform: {select: options => options.default}}}); if(n.endsWith('.png')){assert.ok(fs.existsSync(require('node:path').resolve(require('node:path').dirname(path),n)));return n;}if(!(n in imports))throw Error('Unexpected import '+n);return imports[n];},...globals});return module.exports;
 }
@@ -75,6 +76,21 @@ function host(){
  '@/services/api':api,'@/services/eligibility':eligibility,
  '@/hooks/use-eligibility-cooldown':{useEligibilityCooldown:()=>ui,formatEligibilityWait:hook.formatEligibilityWait}};
  const screen=load('src/app/evaluation.tsx',imports),view=()=>e.render(screen.default);
+ // Initial availability is an exclusive gate, including failed requests and rapid Retry taps.
+ ui.state=null;ui.loading=true;
+ let initial=view();assert.equal(nodes(initial).filter(n=>n.type==='TabSkeleton').length,1);
+ assert.equal(nodes(initial).find(n=>n.type==='TabSkeleton').props.variant,'summary');
+ assert.match(texts(initial),/Self-Assessment/);assert.ok(nodes(initial).some(n=>n.props?.accessibilityLabel==='Go back'));
+ assert.doesNotMatch(texts(initial),/Donation Readiness|Start Assessment|Not Yet Available|Assessment Complete|Question \d|Review Answers/);
+ ui.loading=false;ui.error='Cannot reach the server';initial=view();
+ assert.equal(nodes(initial).filter(n=>n.type==='TabSkeleton').length,0);assert.match(texts(initial),/Connection Problem/);
+ assert.doesNotMatch(texts(initial),/Donation Readiness|Start Assessment|Not Yet Available/);
+ const retryLookup=deferred(),originalReload=ui.reload;
+ ui.reload=async()=>{reloads++;ui.loading=true;ui.error='';await retryLookup.promise;ui.state=active;ui.loading=false;};
+ const retryButton=button(view(),'Retry availability check');const retrying=retryButton.props.onPress();retryButton.props.onPress();assert.equal(reloads,1);
+ assert.ok(nodes(view()).some(n=>n.type==='TabSkeleton'));assert.equal(button(view(),'Start Assessment'),undefined);
+ retryLookup.resolve();await retrying;assert.equal(nodes(view()).filter(n=>n.type==='TabSkeleton').length,0);
+ ui.reload=originalReload;reloads=0;
  assert.match(texts(view()),/Self-Assessment Not Yet Available/);assert.match(texts(view()),/Available again:/);assert.doesNotMatch(texts(view()),/Your Pre-Screening Result/);
  button(view(),'Close').props.onPress();assert.equal(backs,1);
  ui.state={...inactive,assessment:null};ui.canSubmit=true;button(view(),'Start Assessment').props.onPress();
@@ -88,12 +104,21 @@ function host(){
    choices.find(n=>n.props.accessibilityLabel===(i<5?'Yes':'No')).props.onPress();button(tree(),'Next').props.onPress();
  }};
  assert.equal(button(view(),'Next').props.disabled,true);fill(view);assert.equal(submissions,0);assert.match(texts(view()),/Review Answers/);
+ ui.loading=true;ui.canSubmit=false;assert.match(texts(view()),/Review Answers/);assert.ok(!nodes(view()).some(n=>n.type==='TabSkeleton'));
+ assert.equal(button(view(),'Submit Assessment').props.disabled,true);
+ ui.loading=false;ui.error='Offline';assert.match(texts(view()),/Review Answers/);assert.ok(button(view(),'Retry availability check'));assert.ok(!nodes(view()).some(n=>n.type==='TabSkeleton'));
+ ui.error='';ui.canSubmit=true;
  button(view(),'Edit Answers').props.onPress();assert.equal(nodes(view()).find(n=>n.props?.accessibilityRole==='radio'&&n.props.accessibilityLabel==='Yes').props.accessibilityState.checked,true);fill(view);
  const saving=deferred();let payload;submit=answers=>{submissions++;payload=answers;return saving.promise;};
  const press=button(view(),'Submit Assessment').props.onPress;press();press();assert.equal(submissions,1);assert.equal(button(view(),'Submitting Assessment...').props.disabled,true);
+ ui.state=null;ui.loading=true;assert.match(texts(view()),/Review Answers/);assert.ok(!nodes(view()).some(n=>n.type==='TabSkeleton'),'Submission uses button busy feedback, never hydration placeholders');
+ ui.state={...inactive,assessment:null};ui.loading=false;
  assert.deepEqual(Object.keys(payload),keys);for(let i=0;i<10;i++)assert.equal(payload[keys[i]],i<5?'YES':'NO');
  const newAssessment={...assessment,id:2,answers:payload};ui.reload=async()=>{reloads++;ui.accept({...active,assessment:newAssessment});};saving.resolve(newAssessment);await flush();assert.equal(reloads,1);
  assert.match(texts(view()),/Assessment Complete/);assert.match(texts(view()),/Ready to proceed/);assert.doesNotMatch(texts(view()),/already completed|Available again:|Evaluate again|Not Yet Available/);
+ ui.loading=true;ui.canSubmit=false;assert.match(texts(view()),/Assessment Complete/);assert.ok(!nodes(view()).some(n=>n.type==='TabSkeleton'));
+ ui.state=null;assert.match(texts(view()),/Assessment Complete/);assert.ok(!nodes(view()).some(n=>n.type==='TabSkeleton'),'Saved result takes precedence during reconciliation');
+ ui.state={...active,assessment:newAssessment};ui.loading=false;
  assert.ok(texts(view()).indexOf('Important Reminder')>texts(view()).indexOf('Your Pre-Screening Result'));assert.match(texts(view()),/Recent tattoos or body piercings/);assert.match(texts(view()),/Final eligibility will still be confirmed by the donation facility/);
  button(view(),'View Status').props.onPress();assert.equal(routes.pop(),'/(tabs)/status');button(view(),'Back to Flowie').props.onPress();assert.equal(routes.pop(),'/flowie');
  for(const result of ['not_eligible','temporarily_ineligible','needs_further_screening']){newAssessment.result=result;assert.match(texts(view()),/Not Eligible for Now/);assert.match(texts(view()),/Important Reminder/);}newAssessment.result='eligible';
@@ -186,7 +211,7 @@ function host(){
  assert.equal(summaryValue(statusView(),'Assessed'),'Not recorded');
  assert.equal(summaryValue(statusView(),'1. Weight'),'Not recorded');
  ui.error='Offline';ui.canSubmit=false;
- assert.equal(mascot(statusView()),'../../../assets/images/HappyMascot.png');
+ assert.equal(mascot(statusView()),'../../../assets/images/SadMascot.png','Refresh failure preserves the previously loaded status mascot');
  assert.equal(button(statusView(),'Update Status with Flowie').props.disabled,true);
  ui.error='';ui.state=active;
  let tree=statusView();assert.match(texts(tree),/Ready to proceed/);assert.match(texts(tree),/Available again in 2m/);

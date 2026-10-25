@@ -1,4 +1,6 @@
 import { LifeFlowColors as PALETTE } from '@/constants/theme';
+import { TabSkeleton } from '@/components/tab-skeleton';
+import { EmptyState, LoadError } from '@/components/load-state';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
@@ -39,16 +41,20 @@ export default function MyVouchersScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const generation = useRef(0);
+  const pendingRequest = useRef<number | null>(null);
+  const retryPage = useRef(1);
   const load = useCallback(async (number = 1) => {
+    if (pendingRequest.current === generation.current) return;
     const current = ++generation.current; setLoading(true); setError('');
     if (!accountId) { setPage(null); setLoading(false); return; }
-    if (number === 1) setPage(null);
+    pendingRequest.current = current;
+    retryPage.current = number;
     try {
       const result = await vouchers(number, STATUS_FILTERS[selected]);
       const data = result.data.map(item => ({ ...item, claim_code: null }));
       if (current === generation.current) setPage(previous => ({ ...result, accountId, data: number === 1 ? data : [...(previous?.accountId === accountId ? previous.data : []), ...data] }));
     } catch (cause) { if (current === generation.current) setError(errorMessage(cause)); }
-    finally { if (current === generation.current) setLoading(false); }
+    finally { if (pendingRequest.current === current) pendingRequest.current = null; if (current === generation.current) setLoading(false); }
   }, [vouchers, selected, accountId]);
   useFocusEffect(useCallback(() => {
     void load();
@@ -58,7 +64,7 @@ export default function MyVouchersScreen() {
     });
     return () => { generation.current++; setPage(null); subscription.remove(); };
   }, [load]));
-  const currentPage = accountId && page?.accountId === accountId && !error ? page : null;
+  const currentPage = accountId && page?.accountId === accountId ? page : null;
   const records = currentPage?.data.filter(item => selected === 'All' || voucherStatusLabel(item) === selected) ?? [];
 
   // ========================================
@@ -76,11 +82,11 @@ export default function MyVouchersScreen() {
         ListHeaderComponent={<View style={styles.listHeader}>
           <Text style={styles.introTitle}>Your rewards</Text><Text style={styles.introText}>Activate a claim code when you are ready to collect your reward.</Text>
           <View style={styles.filterBar}>{FILTERS.map(filter => <Pressable key={filter} accessibilityRole="button" accessibilityState={{ selected: selected === filter }}
-            onPress={() => { if (selected !== filter) { setPage(null); setSelected(filter); } }} style={[styles.filterChip, selected === filter && styles.filterChipSelected]}>
+            onPress={() => { if (selected !== filter) { generation.current++; setPage(null); setSelected(filter); } }} style={[styles.filterChip, selected === filter && styles.filterChipSelected]}>
             <Text style={[styles.filterText, selected === filter && styles.filterTextSelected]}>{filter}</Text></Pressable>)}</View>
-          {error ? <View><Text accessibilityRole="alert" style={{color:PALETTE.danger}}>{error}</Text><Pressable onPress={() => void load()}><Text style={{color:PALETTE.text}}>Retry</Text></Pressable></View> : null}
+          {error ? <LoadError message={error} subject="owned rewards" loading={loading} onRetry={() => load(retryPage.current)} /> : null}
         </View>}
-        ListEmptyComponent={<View style={styles.emptyState}><Text style={styles.emptyText}>{loading ? 'Loading rewards...' : error ? 'Rewards unavailable.' : 'No rewards found.'}</Text></View>}
+        ListEmptyComponent={loading && !currentPage ? <TabSkeleton variant="my-rewards" label="Loading owned rewards" /> : !error && currentPage && !loading ? <EmptyState icon="redeem" title={selected === 'All' ? 'No rewards yet' : 'No matching rewards'} description={selected === 'All' ? 'Rewards you redeem will appear here.' : 'Try another reward status filter.'} /> : null}
         ListFooterComponent={currentPage && currentPage.current_page < currentPage.last_page ? <Pressable accessibilityRole="button" disabled={loading} onPress={() => void load(currentPage.current_page + 1)}><Text style={{color:PALETTE.text}}>Load more</Text></Pressable> : null}
         renderItem={({ item }) => <View style={styles.voucherCard}>
           <View style={styles.cardTopRow}><View style={styles.voucherIcon}><MaterialIcons name="confirmation-number" color={COLORS.brand} size={25} /></View>

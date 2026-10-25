@@ -1,5 +1,6 @@
 import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
+import { LoadError } from '@/components/load-state';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Stack, useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
@@ -70,6 +71,8 @@ export default function EvaluationScreen() {
   const result = saved && (!latest || saved.id >= latest.id) ? saved : latest;
   const showResult = !!result && (!!saved || (step === QUESTIONS.length && !conflict && !!cooldown.state?.cooldown_active));
   const showCooldown = !!cooldown.state?.cooldown_active && !showResult;
+  // Initial availability owns the body; a submission or saved result keeps its current UI.
+  const needsInitialAvailability = !cooldown.state && !saved && !loading;
   const question = QUESTIONS[step];
   const go = (next: number) => {
     if (blocked) return;
@@ -114,11 +117,13 @@ export default function EvaluationScreen() {
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView ref={scroll} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.scroll}>
           <View style={styles.content}>
-            {cooldown.loading && !cooldown.state && !saved ? <TabSkeleton /> : null}
-            {cooldown.error ? <View style={styles.notice}>
-              <Text accessibilityRole="alert" style={[styles.body,{color:PALETTE.danger}]}>{cooldown.error}</Text>
-              {<AssessmentButton label={'Retry availability check'} onPress={() => void cooldown.reload()} disabled={loading} busy={loading} />}
-            </View> : null}
+            {needsInitialAvailability ? (
+              cooldown.error && !cooldown.loading
+                ? <LoadError message={cooldown.error} subject="assessment availability" retryLabel="Retry availability check" onRetry={cooldown.reload} />
+                : <TabSkeleton variant="summary" label="Checking assessment availability" />
+            ) : <>
+            {cooldown.error ? <LoadError message={cooldown.error} subject="assessment availability" retryLabel="Retry availability check" loading={loading || cooldown.loading} onRetry={cooldown.reload} /> : null}
+            {cooldown.loading && !loading ? <Text style={styles.hint} accessibilityLiveRegion="polite">Checking assessment availability...</Text> : null}
             {error && !showResult ? <Text accessibilityRole="alert" style={styles.body}>{error}</Text> : null}
             {showCooldown ? <View style={[styles.notice,{backgroundColor:PALETTE.pendingSurface}]}>
               <MaterialIcons name="schedule" size={28} color={PALETTE.primary} />
@@ -183,6 +188,7 @@ export default function EvaluationScreen() {
               {<AssessmentButton label={loading ? 'Submitting Assessment...' : 'Submit Assessment'} onPress={() => void submit()} disabled={blocked} busy={loading} />}
               <Text style={styles.hint}>{SCREENING_NOTICE}</Text>
             </View>}
+            </>}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

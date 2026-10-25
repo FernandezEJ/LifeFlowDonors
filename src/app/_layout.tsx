@@ -61,6 +61,7 @@ function SessionNavigator() {
           <Stack.Screen name="profile-settings" options={{ headerShown: false }} />
           <Stack.Screen name="profile-settings/[setting]" options={{ headerShown: false }} />
           <Stack.Screen name="notifications" options={{ title: 'Notifications' }} />
+          <Stack.Screen name="notification-settings" options={{ headerShown: false }} />
           <Stack.Screen name="redeem" options={{ title: 'Redeem Points' }} />
           <Stack.Screen name="voucher" options={{ title: 'Voucher' }} />
           <Stack.Screen name="my-vouchers" />

@@ -1,6 +1,11 @@
 // Small deterministic React/native boundaries. These checks execute production handlers without a device or Groq calls.
 const fs = require('node:fs'), vm = require('node:vm'), ts = require('typescript');
 const jsx = (type, props) => ({ type, props });
+const animationFrames = new Map(); let nextFrame = 0;
+const flushFrames = () => { const queued = [...animationFrames.values()]; animationFrames.clear(); queued.forEach(fn => fn(0)); };
+const keyboardListeners = new Map();
+const emitKeyboard = event => keyboardListeners.get(event)?.forEach(fn => fn({}));
+const keyboardListenerCount = () => [...keyboardListeners.values()].reduce((sum, callbacks) => sum + callbacks.size, 0);
 function load(file, imports = {}, globals = {}) {
   const module = { exports: {} };
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
@@ -8,12 +13,14 @@ function load(file, imports = {}, globals = {}) {
     if (name.endsWith('.png')) return name;
     if (!(name in imports)) throw Error('Unexpected import: ' + name);
     return imports[name];
-  }, setInterval: () => 0, clearInterval() {}, ...globals }, { filename: file });
+  }, setInterval: () => 0, clearInterval() {}, requestAnimationFrame: fn => { const id = ++nextFrame; animationFrames.set(id, fn); return id; },
+    cancelAnimationFrame: id => animationFrames.delete(id), ...globals }, { filename: file });
   return module.exports;
 }
 const nodes = value => !value || typeof value !== 'object' ? [] : Array.isArray(value) ? value.flatMap(nodes) : [value, ...nodes(value.props?.children)];
 const texts = tree => nodes(tree).filter(n => n.type === 'Text').flatMap(n => n.props.children);
 const native = { View: 'View', Text: 'Text', Image: 'Image', Pressable: 'Pressable', TextInput: 'TextInput', FlatList: 'FlatList', Modal: 'Modal',
+  Keyboard: { dismiss() {}, addListener: (event, callback) => { if (!keyboardListeners.has(event)) keyboardListeners.set(event, new Set()); keyboardListeners.get(event).add(callback); return { remove: () => keyboardListeners.get(event)?.delete(callback) }; } },
   ActivityIndicator: 'Spinner', ScrollView: 'ScrollView', KeyboardAvoidingView: 'KeyboardAvoidingView', Platform: { OS: 'android' }, StyleSheet: { create: x => x }, useWindowDimensions: () => ({ width: 360 }) };
 const shared = { 'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' }, 'react-native': native,
   '@expo/vector-icons/MaterialIcons': { __esModule: true, default: 'Icon' }, 'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
@@ -31,7 +38,7 @@ function host() {
     useState: initial => { const i = cursor++; if (!(i in slots)) slots[i] = typeof initial === 'function' ? initial() : initial; return [slots[i], v => { slots[i] = typeof v === 'function' ? v(slots[i]) : v; }]; },
     useRef: initial => { const i = cursor++; return slots[i] ||= { current: initial }; },
     useCallback: (fn, deps) => { const i = cursor++, old = slots[i]; if (!old || deps.some((d, j) => d !== old.deps[j])) slots[i] = { deps, fn }; return slots[i].fn; },
-    useEffect: effect,
+    useEffect: effect, useLayoutEffect: effect,
   };
   const focus = fn => effect(() => { const entry = { fn, cleanup: focused ? fn() : null }; focuses.add(entry); return () => { entry.cleanup?.(); focuses.delete(entry); }; }, [fn]);
   return { react, focus, render: fn => { cursor = 0; const result = fn(); while (queued.length) queued.shift()(); return result; },
@@ -39,4 +46,4 @@ function host() {
     refocus: () => { focused = true; for (const item of focuses) item.cleanup = item.fn(); },
     unmount: () => slots.forEach(s => s?.cleanup?.()) };
 }
-module.exports = { load, nodes, texts, native, shared, host, flush };
+module.exports = { load, nodes, texts, native, shared, host, flush, flushFrames, animationFrames, emitKeyboard, keyboardListenerCount };

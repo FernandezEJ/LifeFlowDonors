@@ -1,6 +1,7 @@
 /* Actual service/hook/screen handlers; native and React boundaries are mocked. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
 function load(path,imports={},globals={}){
+ if(!imports['@/components/load-state'] && path!=='src/components/load-state.tsx' && imports['react/jsx-runtime'] && imports['@expo/vector-icons/MaterialIcons'] && imports.react)imports={...imports,'@/components/load-state':load('src/components/load-state.tsx',imports,globals)};
  const module={exports:{}};const code=ts.transpileModule(fs.readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
  vm.runInNewContext(code,{module,exports:module.exports,require:n=>{if (n === '@/constants/theme') return load('src/constants/theme.ts', {'react-native': {Platform: {select: options => options.default}}}); if(n.endsWith('.png')){assert.ok(fs.existsSync(require('node:path').resolve(require('node:path').dirname(path),n)));return n;}if(!(n in imports))throw Error('Unexpected import '+n);return imports[n];},...globals});return module.exports;
 }
@@ -33,6 +34,21 @@ function host(){
    assert.equal(service.formatDonorName(service.formatDonorName(source)),expected);
  }
  const form={firstName:'Juan',middleName:'',lastName:'Cruz',email:'juan@example.com',mobileNumber:'09171234567',birthDate:'09/17/2004',gender:'Male',bloodType:'O+'};
+ assert.deepEqual(Array.from(service.BLOOD_TYPES),['A+','A-','B+','B-','AB+','AB-','O+','O-']);
+ for(const mobile of ['09171234567','+639171234567','639171234567','+63 (917) 123-4567']){
+   const profile={...form,first_name:'Juan',middle_name:null,last_name:'Cruz',mobile_number:mobile,birth_date:'2002-10-19',gender:'Male',blood_type:'O+'};
+   const original=JSON.stringify(profile),draft=service.toProfileForm({email:form.email},profile);
+   assert.equal(draft.mobileNumber,'09171234567');assert.equal(service.toProfileUpdatePayload(draft).mobile_number,'09171234567');
+   assert.equal(JSON.stringify(profile),original,'Displaying a legacy phone number never mutates saved data');
+ }
+ assert.equal(service.profileMobileNumber(null),'');assert.equal(service.profileMobileNumber(undefined),'');
+ assert.equal(service.cleanProfileMobileInput(' (0917) 123-4567 '),'09171234567');
+ for(const [value,expected] of [['091712345678999','09171234567'],['09abc17 123-4567','09171234567'],['letters +()-',''],['0917','0917'],['08171234567','08171234567']])assert.equal(service.cleanProfileMobileInput(value),expected);
+ for(const mobile of ['','08171234567','02171234567','0917123456','091712345678','09171234x67','+639171234567','639171234567','09171234567\n'])assert.ok(service.profileEditErrors({...form,mobileNumber:mobile}).mobileNumber,mobile);
+ for(const bloodType of ['','Unknown','A','o+',null])assert.ok(service.profileEditErrors({...form,bloodType}).bloodType);
+ for(const bloodType of service.BLOOD_TYPES)assert.equal(Object.keys(service.profileEditErrors({...form,bloodType})).length,0);
+ assert.equal(service.toProfilePayload({...form,mobileNumber:'+639171234567'}).mobile_number,'+639171234567','Registration serialization remains compatible with international input');
+ for(const [value,expected] of [['10/19/2002','October 19, 2002'],['01/01/2000','January 1, 2000'],['02/29/2000','February 29, 2000'],['02/29/1900',''],['invalid',''],['',''],[null,'']])assert.equal(service.profileBirthDate(value),expected);
  await service.authApi.updateProfile('private',form);
  assert.deepEqual(Object.keys(requests[0].options.body).sort(),['birth_date','blood_type','first_name','gender','last_name','middle_name','mobile_number']);
  assert.equal(requests[0].options.body.birth_date,'2004-09-17');assert.equal(service.toProfilePayload(form).email,form.email);
@@ -90,9 +106,49 @@ function host(){
  view();await flush();
  assert.ok(nodes(view()).some(n=>n.type==='Text' && n.props.children===3));
  assert.ok(texts(view()).includes('Bronze Donor'));
+ for(const state of [null,undefined,false,'']){auth.user.email_verified_at=state;assert.ok(!texts(view()).includes('Verified'));}
  auth.user.email_verified_at='2026-09-14T00:00:00Z';assert.ok(texts(view()).includes('Verified'));
+ const originalEmail=auth.user.email;auth.user.email='long.donor.address.with.many.parts@example.test';
+ const email=nodes(view()).find(n=>n.type==='Text'&&n.props.accessibilityLabel===auth.user.email+', verified email');
+ assert.ok(email);assert.equal(email.props.numberOfLines,undefined);assert.equal(email.props.style[1].lineHeight,22);
+ const verified=nodes(email).find(n=>n.type==='Text'&&n.props.style?.color==='#15803D');assert.ok(verified,'Verified stays inline inside the email text flow');
+ assert.ok(nodes(verified).some(n=>n.props?.name==='check-circle'&&n.props.color==='#15803D'));auth.user.email=originalEmail;
+ const informationRow=label=>nodes(view()).find(n=>n.type==='View'&&n.props.children?.[0]?.type==='Text'&&n.props.children[0].props.children===label);
+ const priorProfile=auth.profile;auth.profile={...auth.profile,mobile_number:'+639171234567',birth_date:'2002-10-19'};
+ assert.equal(informationRow('Mobile Number').props.children[1].props.children,'09171234567');
+ assert.equal(informationRow('Birth Date').props.children[1].props.children,'October 19, 2002');
+ const radios=()=>nodes(view()).filter(n=>n.props?.accessibilityRole==='radio');
+ const input=label=>nodes(view()).find(n=>n.type==='TextInput'&&n.props.accessibilityLabel===label);
+ const beforeRestore=auth.profile;auth.profile={...auth.profile,mobile_number:'091712345678999'};
+ button(view(),'Edit Profile').props.onPress();assert.equal(input('Mobile Number').props.value,'09171234567','Restored draft is capped before the native input mounts');
+ button(view(),'Cancel').props.onPress();assert.equal(auth.profile.mobile_number,'091712345678999','Cancel never rewrites stored values');auth.profile=beforeRestore;
+ button(view(),'Edit Profile').props.onPress();assert.equal(input('Mobile Number').props.value,'09171234567');
+ assert.equal(input('Mobile Number').props.keyboardType,'phone-pad');assert.equal(input('Mobile Number').props.placeholder,'09XXXXXXXXX');
+ assert.equal(input('Mobile Number').props.maxLength,11);
+ for(const value of ['091712345678999','09abc17 123-4567']){
+   input('Mobile Number').props.onChangeText(value);assert.equal(input('Mobile Number').props.value,'09171234567');
+ }
+ let typed='';for(const digit of '091712345678999'){
+   input('Mobile Number').props.onChangeText(typed+digit);typed=input('Mobile Number').props.value;
+   assert.ok(typed.length<=11);assert.match(typed,/^[0-9]*$/);
+ }
+ assert.equal(typed,'09171234567');
+ input('Mobile Number').props.onChangeText('09');button(view(),'Save Profile').props.onPress();await flush();assert.equal(saves,0);
+ assert.ok(texts(view()).includes('Enter an 11-digit mobile number starting with 09.'));
+ input('Mobile Number').props.onChangeText('0917-123-4567'.slice(0,11));button(view(),'Save Profile').props.onPress();await flush();assert.equal(saves,0,'A formatted paste truncated by native maxLength cannot save an incomplete number');
+ assert.deepEqual(radios().map(n=>n.props.accessibilityLabel),Array.from(service.BLOOD_TYPES));assert.equal(radios().find(n=>n.props.accessibilityState.selected).props.accessibilityLabel,'O+');
+ assert.ok(radios().every(n=>n.props.style[0].minHeight>=44));assert.equal(input('Blood Type'),undefined);
+ radios().find(n=>n.props.accessibilityLabel==='AB-').props.onPress();assert.equal(auth.profile.blood_type,'O+');
+ button(view(),'Cancel').props.onPress();button(view(),'Edit Profile').props.onPress();assert.equal(radios().find(n=>n.props.accessibilityState.selected).props.accessibilityLabel,'O+');
+ input('Mobile Number').props.onChangeText('08171234567');button(view(),'Save Profile').props.onPress();await flush();assert.equal(saves,0);assert.ok(texts(view()).includes('Enter an 11-digit mobile number starting with 09.'));
+ input('Mobile Number').props.onChangeText(' (0917) 123-4567 ');assert.equal(input('Mobile Number').props.value,'09171234567');
+ radios().find(n=>n.props.accessibilityLabel==='AB-').props.onPress();button(view(),'Save Profile').props.onPress();await flush();assert.equal(auth.profile.blood_type,'AB-');assert.equal(auth.profile.mobile_number,'09171234567');
+ assert.ok(!input('Mobile Number'));auth.profile={...priorProfile,blood_type:'Unknown'};
+ button(view(),'Edit Profile').props.onPress();assert.ok(radios().every(n=>!n.props.accessibilityState.selected));
+ const beforeInvalid=saves;button(view(),'Save Profile').props.onPress();await flush();assert.equal(saves,beforeInvalid);assert.ok(texts(view()).includes('Select your blood type.'));
+ button(view(),'Cancel').props.onPress();auth.profile=priorProfile;saves=0;
  const edit=button(view(),'Edit Profile');const style=Object.assign({},...edit.props.style({pressed:false}));assert.equal(style.backgroundColor,undefined);assert.equal(style.alignItems,'flex-end');edit.props.onPress();
- assert.equal(nodes(view()).filter(n=>n.type==='TextInput').length,6);assert.ok(!nodes(view()).some(n=>n.type==='TextInput'&&n.props.accessibilityLabel==='Email'));assert.ok(texts(view()).includes('Change email in Profile Settings.'));
+ assert.equal(nodes(view()).filter(n=>n.type==='TextInput').length,5);assert.ok(!nodes(view()).some(n=>n.type==='TextInput'&&n.props.accessibilityLabel==='Email'));assert.ok(texts(view()).includes('Change email in Profile Settings.'));
  nodes(view()).find(n=>n.type==='TextInput'&&n.props.accessibilityLabel==='First Name').props.onChangeText('Ana');
  nodes(view()).find(n=>n.type==='BirthDatePicker').props.onChange('01/02/2000');
  pending=deferred();const save=button(view(),'Save Profile');save.props.onPress();save.props.onPress();assert.equal(saves,1);
@@ -185,7 +241,7 @@ function host(){
 
  // Profile Phase 2: existing Profile entry and separate Help/Logout remain.
  button(view(),'Profile Settings').props.onPress();assert.equal(routes.pop(),'/profile-settings');
- assert.ok(button(view(),'Help / About LifeFlow'));assert.ok(button(view(),'Logout'));
+ assert.ok(button(view(),'About LifeFlow'));assert.ok(button(view(),'Logout'));
  let logouts=0;auth.logout=async()=>{logouts++;};
  const logoutModal=()=>nodes(view()).find(n=>n.type==='ConfirmationModal'&&n.props.title==='Log out?').props;
  button(view(),'Logout').props.onPress();assert.equal(logouts,0);assert.equal(logoutModal().visible,true);
@@ -320,7 +376,7 @@ function host(){
 
 
  // Help/About reuses the existing legal reader in read-only mode.
- button(view(),'Help / About LifeFlow').props.onPress();assert.equal(routes.pop(),'/help-about');
+ button(view(),'About LifeFlow').props.onPress();assert.equal(routes.pop(),'/help-about');
  const legal=load('src/components/registration-legal.tsx',{...shared,'react-native':{...native,Modal:'Modal'}});
  const helpHost=host();
  const help=load('src/app/help-about.tsx',{...shared,react:helpHost.react,
@@ -335,7 +391,7 @@ function host(){
    button(helpView(),title).props.onPress();const modal=nodes(helpView()).find(n=>n.type==='Modal');
    assert.equal(modal.props.visible,true);assert.ok(texts(modal).includes(legal.LEGAL_DOCUMENTS[key].sections[0][1]));
    assert.equal(button(modal,'I Agree'),undefined);assert.equal(button(modal,'Cancel'),undefined);
-   nodes(modal).find(n=>n.props?.accessibilityLabel==='Back to Help / About LifeFlow').props.onPress();
+   nodes(modal).find(n=>n.props?.accessibilityLabel==='Back to About LifeFlow').props.onPress();
    assert.equal(nodes(helpView()).find(n=>n.type==='Modal').props.visible,false);
  }
  helpHost.unmount();
@@ -394,7 +450,7 @@ function host(){
      donationSummary: read({ total_donations: 3, achievement: { label: 'Bronze Donor' } }) };
    const cooldown = { state: null, loading: false, error: '', canSubmit: false };
    const tabModule = load(`src/app/(tabs)/${tab}.tsx`, { ...shared, react: tabHost.react,
-     'react-native': { ...native, FlatList: 'FlatList', useWindowDimensions: () => ({ width: 360, fontScale: 1 }) },
+     'react-native': { ...native, FlatList: 'FlatList', AppState: { addEventListener: () => ({ remove() {} }) }, useWindowDimensions: () => ({ width: 360, fontScale: 1 }) },
      'expo-router': { useRouter: () => profileRouter, useFocusEffect: tabHost.focus },
      '@/contexts/auth-context': { useAuth: () => stableAuth },
      '@/contexts/tab-leave-context': { useTabLeave: () => tabGuard },
@@ -402,13 +458,14 @@ function host(){
      '@/components/birth-date-picker': { __esModule: true, default: 'BirthDatePicker' },
      '@/components/notification-bell': { NotificationBell: 'Bell' },
      '@/components/home-donation-reminder': { HomeDonationReminder: 'Reminder' },
+     '@/components/announcement-image': { AnnouncementImage: 'AnnouncementImage' },
      '@/constants/profile-settings': settings, '@/constants/flowie-mascots': load('src/constants/flowie-mascots.ts'),
      '@/services/auth': service, '@/services/api': { errorMessage: error => error.message },
      '@/services/donations': { boardItems: () => [], DONATION_STATUS: {}, DONATION_STATUS_DESCRIPTION: {} },
      '@/services/announcement-presentation': {},
      '@/services/eligibility': { SCREENING_NOTICE: 'Notice' },
      '@/hooks/use-eligibility-cooldown': { useEligibilityCooldown: () => cooldown, formatEligibilityWait: () => '' },
-   }, { setInterval: () => 0, clearInterval() {} });
+   }, { setInterval: () => 0, clearInterval() {}, setTimeout: () => 0, clearTimeout() {} });
    const tabView = () => tabHost.render(tabModule.default);
    tabView(); await flush();
    const tree = tabView();
