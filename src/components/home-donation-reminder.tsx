@@ -1,100 +1,79 @@
-import { LifeFlowColors as PALETTE } from '@/constants/theme';
-import { useCallback, useRef, useState } from 'react';
-import { AppState, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { DonationPreparationModal } from '@/components/donation-preparation-modal';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/auth-context';
-import { notificationDestination, type HomeReminder } from '@/services/notifications';
+import { ApiError } from '@/services/api';
+import type { HomeReminder } from '@/services/notifications';
 
-import { reminderDismissalStorage } from '@/services/reminder-dismissal-storage';
-
-// Session-only suppression survives tab changes/unmounts and is scoped to the donor.
+// Back/blur suppression is session-only. Only Laravel acknowledgement suppresses
+// future sessions/devices, independently of notification read state.
 const shown = new Set<string>();
 export function HomeDonationReminder() {
-  const { user, homeReminders } = useAuth();
+  const { user, homeReminders, acknowledgePreparation } = useAuth();
   const router = useRouter();
-  const [reminder, setReminder] = useState<HomeReminder | null>(null);
+  const owner = useRef(user?.id);
+  useLayoutEffect(() => { owner.current = user?.id; }, [user]);
+  const [visible, setVisible] = useState<{ owner: number; reminder: HomeReminder } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const generation = useRef(0);
-  const navigating = useRef(false);
+  const generation = useRef(0), locked = useRef(false);
+  const expiry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const refreshRef = useRef<() => Promise<void>>(async () => {});
+  const reminder = visible?.owner === user?.id ? visible?.reminder : null;
   useFocusEffect(useCallback(() => {
-    let expiry: ReturnType<typeof setTimeout> | undefined;
     let active = true;
     const refresh = async () => {
       const version = ++generation.current;
-      setReminder(null);
-      setError(null);
-      clearTimeout(expiry);
+      setVisible(null); setError(null); clearTimeout(expiry.current);
       if (!user) return;
       try {
+        const requestedAt = Date.now();
         const result = await homeReminders();
-        if (!active || version !== generation.current) return;
-        let next: HomeReminder | undefined;
-        for (const item of result.reminders) {
-          if (item.remaining_seconds > 0 && !shown.has(user.id + ':' + item.notification.id)
-            && !await reminderDismissalStorage.isDismissed(user.id, item.notification.id)) {
-            next = item;
-            break;
-          }
-        }
-        if (!active || version !== generation.current) return;
+        if (!active || version !== generation.current || owner.current !== user.id) return;
+        const elapsed = Math.max(0, (Date.now() - requestedAt) / 1000);
+        const next = result.reminders.find(item => item.remaining_seconds > elapsed
+          && !shown.has(user.id + ':' + (item.notification.data?.opportunity_id ?? item.notification.data?.participation_id)));
         if (!next) return;
-        shown.add(user.id + ':' + next.notification.id);
-        setReminder(next);
-        expiry = setTimeout(() => { generation.current++; setReminder(null); }, next.remaining_seconds * 1000);
-      } catch { /* The inbox remains available; unknown due state never shows a popup. */ }
+        shown.add(user.id + ':' + (next.notification.data?.opportunity_id ?? next.notification.data?.participation_id));
+        setVisible({ owner: user.id, reminder: next });
+        expiry.current = setTimeout(() => { generation.current++; setVisible(null); }, (next.remaining_seconds - elapsed) * 1000);
+      } catch { /* Unknown due state never shows a popup; inbox remains available. */ }
     };
+    refreshRef.current = refresh;
     void refresh();
     const subscription = AppState.addEventListener('change', state => {
-      if (state === 'active') void refresh();
-      else { generation.current++; clearTimeout(expiry); setReminder(null); }
+      if (state === 'active') { if (!locked.current) void refresh(); }
+      else { generation.current++; clearTimeout(expiry.current); setVisible(null); }
     });
-    return () => { active = false; generation.current++; clearTimeout(expiry); setReminder(null); subscription.remove(); };
+    return () => {
+      active = false; generation.current++; clearTimeout(expiry.current); setVisible(null);
+      subscription.remove();
+    };
   }, [user, homeReminders]));
-  const dismiss = () => { generation.current++; setReminder(null); };
-  const acknowledge = async () => {
-    if (!reminder || !user || navigating.current) return;
-    navigating.current = true; setBusy(true); setError(null);
-    const version = generation.current;
+  const dismiss = () => { generation.current++; clearTimeout(expiry.current); setVisible(null); };
+  const complete = async (flowie: boolean) => {
+    if (locked.current) return;
+    if (!reminder || !user) return;
+    locked.current = true; setBusy(true); setError(null);
+    const version = generation.current, donorId = user.id;
     try {
-      await reminderDismissalStorage.dismiss(user.id, reminder.notification.id);
-      if (version === generation.current) dismiss();
-    } catch {
-      if (version === generation.current) setError('Could not save dismissal. Please tap Got it to retry.');
-    } finally { navigating.current = false; setBusy(false); }
-  };
-  const view = async () => {
-    if (!reminder || navigating.current) return;
-    navigating.current = true; setBusy(true);
-    const version = generation.current;
-    try {
-      // Recheck cancellation, expiry and read state before opening a previously displayed reminder.
-      const result = await homeReminders();
-      if (version !== generation.current) return;
-      const current = result.reminders.find(item => item.notification.id === reminder.notification.id && item.remaining_seconds > 0);
+      const result = await acknowledgePreparation(reminder.notification.id);
+      if (version !== generation.current || owner.current !== donorId) return;
+      if (!result.acknowledged) throw new Error('Acknowledgement unavailable');
       dismiss();
-      const destination = current && notificationDestination(current.notification);
-      if (destination) router.push(destination);
-    } catch { if (version === generation.current) dismiss(); }
-    finally { navigating.current = false; setBusy(false); }
+      if (flowie) router.push({ pathname: '/flowie', params: {
+        preparationTitle: reminder.activity_title, preparationDate: reminder.event_date,
+        preparationKey: String(reminder.notification.id),
+      } });
+      else await refreshRef.current();
+    } catch (failure) {
+      if (version === generation.current && owner.current === donorId) {
+        if (failure instanceof ApiError && [404, 409].includes(failure.status)) dismiss();
+        else setError('Could not save your acknowledgement. Check your connection and tap either button to retry.');
+      }
+    } finally { locked.current = false; if (owner.current === donorId) setBusy(false); }
   };
-  if (!reminder) return null;
-  return <Modal transparent visible animationType="fade" onRequestClose={dismiss}>
-    <View style={styles.overlay}><View style={styles.card} accessibilityViewIsModal>
-      <Text style={styles.title}>Your donation is tomorrow</Text>
-      <Text style={styles.activity}>{reminder.activity_title}</Text>
-      <Text style={{color:PALETTE.text}}>{reminder.event_date}{reminder.start_time ? ' ? ' + reminder.start_time : ''}</Text>
-      <Text style={styles.note}>Rest well, eat properly, and stay hydrated.</Text>
-      <Pressable accessibilityRole="button" disabled={busy} onPress={view} style={styles.primary}><Text style={styles.primaryText}>{busy ? 'Checking...' : 'View Activity'}</Text></Pressable>
-      {error && <Text style={{color:PALETTE.danger}} accessibilityRole="alert">{error}</Text>}
-      <Pressable accessibilityRole="button" disabled={busy} onPress={acknowledge} style={styles.dismiss}><Text style={{color:PALETTE.text}}>Got it</Text></Pressable>
-    </View></View>
-  </Modal>;
+  return <DonationPreparationModal visible={!!reminder} busy={busy} error={error}
+    onFlowie={() => void complete(true)} onAcknowledge={() => void complete(false)} onBack={dismiss} />;
 }
-const styles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: '#00000066', alignItems: 'center', justifyContent: 'center', padding: 24 },
-  card: { width: '100%', maxWidth: 420, padding: 24, borderRadius: 22, gap: 14, backgroundColor: PALETTE.cream },
-  title: { color: PALETTE.primary, fontSize: 22, fontWeight: '800' }, activity: { color: PALETTE.text, fontSize: 17, fontWeight: '600' },
-  note: { color: PALETTE.neutral, lineHeight: 22 }, primary: { minHeight: 48, padding: 14, alignItems: 'center', borderRadius: 14, backgroundColor: PALETTE.primary },
-  primaryText: { color: PALETTE.surface, fontWeight: '700' }, dismiss: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
-});

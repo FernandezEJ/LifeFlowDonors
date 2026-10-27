@@ -77,7 +77,7 @@ export default function ActivityScreen() {
     </View></View>
     <FlatList ref={scrollRef} showsVerticalScrollIndicator={false} data={page?.data || []} keyExtractor={item => String(item.id)} contentContainerStyle={styles.listContent}
       ListHeaderComponent={<View style={styles.listHeader}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>{([undefined, 'pending', 'for_verification', 'needs_revision', 'completed', 'rejected', 'cancelled'] as const).map(value => <Pressable key={value || 'all'} onPress={() => setStatus(value)} style={[styles.filterChip, value === status && styles.filterChipSelected]}><Text style={[styles.filterText, value === status && styles.filterTextSelected]}>{value ? DONATION_STATUS[value] : 'All'}</Text></Pressable>)}</ScrollView>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>{([undefined, 'pending', 'for_verification', 'needs_revision', 'completed', 'rejected', 'cancelled'] as const).map(value => <Pressable key={value || 'all'} onPress={() => { if (value !== status) { setPage(null); setLoading(true); setStatus(value); } }} style={[styles.filterChip, value === status && styles.filterChipSelected]}><Text style={[styles.filterText, value === status && styles.filterTextSelected]}>{value ? DONATION_STATUS[value] : 'All'}</Text></Pressable>)}</ScrollView>
         <Text style={styles.historyTitle}>Joined activities {page ? '(' + page.total + ')' : ''}</Text>
         {error ? <LoadError message={error} subject="activities" loading={loading} onRetry={() => { if (retryMore.current) return more(); if (!lock.current) { lock.current = true; setRefresh(n => n + 1); } }} /> : null}
       </View>}
@@ -91,9 +91,9 @@ export default function ActivityScreen() {
           <MaterialIcons name="chevron-right" size={22} color={COLORS.brand} style={styles.cardChevron} accessible={false} />
         </View>
         <View style={styles.details}>
-          <View style={styles.detailRow}><MaterialIcons name="calendar-today" size={17} color={COLORS.muted} accessible={false} />
+          <View style={styles.detailRow}><MaterialIcons name="calendar-today" size={17} color={PALETTE.primary} accessible={false} />
             <Text style={styles.detailText}>{item.opportunity.event_date || 'Confirm arrangements with the chapter'}</Text></View>
-          {item.opportunity.location ? <View style={styles.detailRow}><MaterialIcons name="place" size={17} color={COLORS.muted} accessible={false} />
+          {item.opportunity.location ? <View style={styles.detailRow}><MaterialIcons name="place" size={17} color={PALETTE.primary} accessible={false} />
             <Text style={styles.detailText}>{item.opportunity.location}</Text></View> : null}
         </View>
         <View style={styles.cardFooter}><View style={styles.statusBlock}>
@@ -111,8 +111,6 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: 'transparent' },
   fixedHeader: {
     zIndex: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
     backgroundColor: COLORS.background,
   },
   header: {
@@ -125,7 +123,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 9,
   },
-  headerTitle: { color: COLORS.brand, fontSize: 25, fontWeight: '800', letterSpacing: -0.5 },
+  headerTitle: { color: PALETTE.text, fontSize: 25, fontWeight: '800', letterSpacing: -0.5 },
   bellButton: {
     width: 44,
     height: 44,

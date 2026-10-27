@@ -26,7 +26,7 @@ const COLORS = {
   white: PALETTE.surface,
   softRed: PALETTE.selected,
   locked: PALETTE.text,
-  lockedBackground: PALETTE.neutralSurface,
+  lockedBackground: PALETTE.inactiveSurface,
 };
 
 type MaterialIconName = ComponentProps<typeof MaterialIcons>['name'];
@@ -192,7 +192,7 @@ export default function ProfileScreen() {
           <View style={styles.profileHero}>
             <View style={styles.avatarArea}>
               <View accessibilityLabel={`${fullName} profile picture`} style={styles.avatar}>
-                <Image source={profileMascotImage(profile?.profile_avatar)} resizeMode="contain" style={{ width: 92, height: 96 }} accessibilityLabel="LifeFlow profile mascot" />
+                <Image fadeDuration={0} source={profileMascotImage(profile?.profile_avatar)} resizeMode="contain" style={{ width: 92, height: 92 }} accessibilityLabel="LifeFlow profile mascot" />
               </View>
               <Pressable
                 accessibilityLabel="Change Avatar"
@@ -403,10 +403,10 @@ export default function ProfileScreen() {
                 }
                 style={({ pressed }) => [styles.accountRow, pressed && styles.accountRowPressed]}>
                 <View style={styles.accountIcon}>
-                  <MaterialIcons name="settings" color={COLORS.text} size={21} />
+                  <MaterialIcons name="settings" color={PALETTE.primary} size={21} />
                 </View>
                 <Text style={styles.accountText}>Profile Settings</Text>
-                <MaterialIcons name="chevron-right" color={COLORS.muted} size={23} />
+                <MaterialIcons name="chevron-right" color={PALETTE.primary} size={22} />
               </Pressable>
               <View style={styles.accountSeparator} />
               <Pressable
@@ -416,10 +416,10 @@ export default function ProfileScreen() {
                 }
                 style={({ pressed }) => [styles.accountRow, pressed && styles.accountRowPressed]}>
                 <View style={styles.accountIcon}>
-                  <MaterialIcons name="help-outline" color={COLORS.text} size={21} />
+                  <MaterialIcons name="help-outline" color={PALETTE.primary} size={21} />
                 </View>
                 <Text style={styles.accountText}>About LifeFlow</Text>
-                <MaterialIcons name="chevron-right" color={COLORS.muted} size={23} />
+                <MaterialIcons name="chevron-right" color={PALETTE.primary} size={22} />
               </Pressable>
               <View style={styles.accountSeparator} />
               <Pressable
@@ -449,13 +449,11 @@ export default function ProfileScreen() {
 // Adds only the input border and error color needed by existing rows.
 // ========================================
 const styles = StyleSheet.create({
-  editInput: { borderWidth: 1, borderColor: COLORS.border, borderRadius: 8, padding: 8, minHeight: 44 },
+  editInput: { borderWidth: 1, borderColor: PALETTE.controlBorder, borderRadius: 8, padding: 8, minHeight: 44 },
   feedbackError: { color: PALETTE.danger, fontSize: 13 },
   safeArea: { flex: 1, backgroundColor: 'transparent' },
   fixedHeader: {
     zIndex: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
     backgroundColor: COLORS.background,
   },
   header: {
@@ -468,7 +466,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 9,
   },
-  headerTitle: { color: COLORS.brand, fontSize: 25, fontWeight: '800', letterSpacing: -0.5 },
+  headerTitle: { color: PALETTE.text, fontSize: 25, fontWeight: '800', letterSpacing: -0.5 },
   bellButton: {
     width: 44,
     height: 44,
@@ -494,25 +492,22 @@ const styles = StyleSheet.create({
   scrollContent: { paddingHorizontal: 20, paddingTop: 22, paddingBottom: 34 },
   content: { width: '100%', maxWidth: 620, alignSelf: 'center', gap: 25 },
   profileHero: { alignItems: 'center' },
-  avatarArea: { position: 'relative' },
+  avatarArea: { position: 'relative', width: 112, height: 112 },
   avatar: {
     width: 112,
     height: 112,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 4,
-    borderColor: COLORS.white,
+    borderWidth: 2,
+    borderColor: COLORS.border,
     borderRadius: 56,
-    backgroundColor: COLORS.softRed,
-    shadowColor: PALETTE.primaryPressed,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
+    backgroundColor: COLORS.white,
+    overflow: 'hidden',
   },
   avatarInitials: { color: COLORS.brand, fontSize: 35, fontWeight: '800', letterSpacing: -1 },
   cameraButton: {
     position: 'absolute',
+    zIndex: 1,
     right: -1,
     bottom: 3,
     width: 36,
@@ -620,7 +615,7 @@ const styles = StyleSheet.create({
   emailValue: { lineHeight: 22 },
   verifiedText: { color: PALETTE.success, fontSize: 11, fontWeight: '700' },
   bloodTypeOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  bloodTypeChip: { minHeight: 46, minWidth: 68, flexGrow: 1, flexBasis: '21%', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border, borderRadius: 14, backgroundColor: COLORS.white },
+  bloodTypeChip: { minHeight: 46, minWidth: 68, flexGrow: 1, flexBasis: '21%', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: PALETTE.controlBorder, borderRadius: 14, backgroundColor: COLORS.white },
   bloodTypeSelected: { borderColor: COLORS.brand, backgroundColor: COLORS.softRed },
   selectionError: { borderColor: PALETTE.danger },
   bloodTypeTextOption: { color: COLORS.text, fontSize: 15, fontWeight: '600' },

@@ -125,6 +125,7 @@ function providerHarness(initialToken = null) {
       register:(...args)=>backend.pushRegister(...args),unregister:(...args)=>backend.pushUnregister(...args),
     } },
     '@/services/donations': { donationApi: {join:(...args)=>backend.join(...args)} },
+    '@/services/educational-articles': { educationalArticlesApi: { list: (...args) => backend.educationalArticles(...args), detail: (...args) => backend.educationalArticle(...args) } },
     '@/services/eligibility': { eligibilityApi: {} },
     react, 'react/jsx-runtime': { jsx: (_, props) => props },
     '@/services/api': api, '@/services/auth': { authApi: backend }, '@/services/token-storage': { tokenStorage: storage },
@@ -239,9 +240,22 @@ async function providerChecks() {
  * Creates one labeled test account, exercises the actual service, and revokes
  * all issued tokens. No existing account or backend files are changed.
  * ======================================== */
+async function educationalProviderChecks() {
+  const h = providerHarness('test-only');await h.render().restore();
+  const calls = [];
+  h.backend.educationalArticles = async (...args) => { calls.push(args);return { data: [] }; };
+  h.backend.educationalArticle = async (...args) => { calls.push(args);return { article: { id: 5 } }; };
+  await h.render().educationalArticles(2);await h.render().educationalArticle(5);
+  assert.deepEqual(calls, [['test-only', 2], ['test-only', 5]]);
+  let finish;h.backend.educationalArticle = () => new Promise(resolve => { finish = resolve; });
+  const pending = h.render().educationalArticle(5);await h.render().logout();finish({ article: { id: 5 } });
+  await assert.rejects(pending, /session changed/);
+  console.log('PASS: educational reads reuse protected bearer requests and discard responses after logout');
+}
+
 async function liveChecks() {
   throw new Error('Live automatic registration requires email verification. Use the app with an authorized test inbox; this script does not bypass codes or send test mail.');
 }
 
-(async () => { await requestChecks(); await providerChecks(); if (process.argv.includes('--live')) await liveChecks(); })()
+(async () => { await requestChecks(); await providerChecks(); await educationalProviderChecks(); if (process.argv.includes('--live')) await liveChecks(); })()
   .catch(error => { console.error(`FAIL: ${error.message}`); process.exitCode = 1; });

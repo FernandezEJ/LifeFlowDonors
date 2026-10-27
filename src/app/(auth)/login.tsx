@@ -2,6 +2,7 @@ import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { ApiError, errorMessage } from '@/services/api';
+import { isLoginIdentifier, LOGIN_NOTICE, normalizeLoginIdentifier } from '@/services/auth';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -12,7 +13,8 @@ const COLORS = { background: PALETTE.cream, brand: PALETTE.primary, brandPressed
 export default function LoginScreen() {
   const router = useRouter();
   const { requestLoginCode, login, busy } = useAuth();
-  const [mobile, setMobile] = useState('');
+  const [identifier, setIdentifier] = useState('');
+  const pendingIdentifier = useRef('');
   const [code, setCode] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState('');
@@ -29,6 +31,7 @@ export default function LoginScreen() {
   useFocusEffect(useCallback(() => () => {
     generation.current++; setCode(''); setVerifying(false); setError(''); setAction(null);
     expiryDeadline.current = null; setExpiresIn(null); setCodeFocused(false); setResent(false);
+    pendingIdentifier.current = ''; deadline.current = 0; setRemaining(0);
   }, []));
   useEffect(() => {
     const timer = setInterval(() => {
@@ -47,11 +50,13 @@ export default function LoginScreen() {
     } finally { lock.current = false; if (version === generation.current) setAction(null); }
   };
   const request = () => {
-    if (verifying && performance.now() < deadline.current) return;
-    if (!/^(?:0|\+?63)9\d{9}$/.test(mobile.replace(/[\s()-]/g, ''))) { setError('Enter a valid Philippine mobile number.'); return; }
+    if (pendingIdentifier.current && performance.now() < deadline.current) return;
+    const normalized = verifying ? pendingIdentifier.current : normalizeLoginIdentifier(identifier);
+    if (!isLoginIdentifier(normalized)) { setError('Enter a valid email or Philippine contact number.'); return; }
     void run('request', async active => {
-      const response = await requestLoginCode(mobile);
+      const response = await requestLoginCode(normalized);
       if (active()) {
+        pendingIdentifier.current = normalized;
         setResent(verifying); setVerifying(true); setCode(''); setActiveDigit(0);
         deadline.current = performance.now() + response.resend_after * 1000; setRemaining(response.resend_after);
         const duration = Number.isFinite(response.expires_in) && response.expires_in > 0 ? response.expires_in : null;
@@ -61,21 +66,24 @@ export default function LoginScreen() {
     });
   };
   const verify = () => {
+    if (!pendingIdentifier.current || !verifying) return;
     if (!/^\d{6}$/.test(code)) { setError('Enter the 6-digit login code.'); return; }
-    void run('verify', async () => { await login(mobile, code); });
+    const normalized = pendingIdentifier.current;
+    void run('verify', async () => { await login(normalized, code); });
   };
   const changeNumber = () => {
     if (lock.current || busy) return;
     generation.current++; setVerifying(false); setCode(''); setError('');
     expiryDeadline.current = null; setExpiresIn(null); setCodeFocused(false); setResent(false);
+    pendingIdentifier.current = ''; deadline.current = 0; setRemaining(0);
   };
   return <SafeAreaView style={styles.safeArea}>
     <View style={styles.decorativeCircleTop} /><View style={styles.decorativeCircleBottom} />
     {verifying && <View style={styles.verificationTopBar}>
-      <Pressable accessibilityRole="button" accessibilityLabel="Back to mobile number" disabled={working}
+      <Pressable accessibilityRole="button" accessibilityLabel="Back to email or contact number" disabled={working}
         accessibilityState={{ disabled: working }} onPress={changeNumber}
         style={({ pressed }) => [styles.backButton, (working || pressed) && styles.verificationControlDimmed]}>
-        <MaterialIcons name="arrow-back" size={24} color={COLORS.text} />
+        <MaterialIcons name="arrow-back" size={24} color={PALETTE.primary} />
       </Pressable>
       <Text accessibilityRole="header" style={styles.verificationTopTitle}>Account Verification</Text>
       <View style={styles.topBarSpacer} />
@@ -86,11 +94,11 @@ export default function LoginScreen() {
           <View style={styles.header}>
             <Image accessibilityLabel="LifeFlow mascot" resizeMode="contain" source={require('../../../assets/images/LogoMascot.png')} style={[styles.logo, verifying && styles.verificationLogo]} />
             <Text accessibilityRole="header" style={[styles.title, verifying && styles.verificationTitle]}>{verifying ? 'Verify Your Login' : 'Welcome to LifeFlow'}</Text>
-            <Text style={styles.subtitle}>{verifying ? 'Enter the 6-digit verification code we sent to your registered email.' : 'We’ll send a verification code to the email linked to your LifeFlow account.'}</Text>
+            <Text style={styles.subtitle}>{verifying ? LOGIN_NOTICE : 'Use your registered email or contact number. Your code goes to your verified email.'}</Text>
           </View>
           <View style={styles.form}>
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>{verifying ? 'Verification code' : 'Mobile Number'}</Text>
+              <Text style={styles.label}>{verifying ? 'Verification code' : 'Email or Contact Number'}</Text>
               {verifying ? <View style={styles.codeEntry}>
                 {/* Opaque, touch-through slots cover native text without hiding the interactive input. */}
                 <View style={styles.codeSlots} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
@@ -110,21 +118,22 @@ export default function LoginScreen() {
                   onSelectionChange={event => setActiveDigit(Math.min(event.nativeEvent.selection.start, 5))}
                   onSubmitEditing={verify} style={styles.codeInput} />
               </View>
-                : <TextInput accessibilityLabel="Mobile Number" autoComplete="tel" keyboardType="phone-pad" autoCorrect={false} editable={!working}
-                  value={mobile} onChangeText={setMobile} placeholder="09XXXXXXXXX" placeholderTextColor={COLORS.muted} onSubmitEditing={request} style={styles.input} />}
-              {verifying && <Text style={[styles.codeExpiry, expiresIn === 0 && styles.inputExpired]}>
-                {expiresIn === null ? 'Use the most recent code.' : expiresIn === 0 ? 'Code expired. Request a new code.'
-                  : `Code expires in ${String(Math.floor(expiresIn / 60)).padStart(2, '0')}:${String(expiresIn % 60).padStart(2, '0')}`}
+                : <TextInput accessibilityLabel="Email or Contact Number" autoComplete="username" keyboardType="email-address" autoCapitalize="none" autoCorrect={false} maxLength={254} editable={!working}
+                  value={identifier} onChangeText={setIdentifier} placeholder="Email or 09XXXXXXXXX" placeholderTextColor={COLORS.muted} onSubmitEditing={request} style={styles.input} />}
+              {verifying && expiresIn === 0 && <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={[styles.codeExpiry, styles.inputExpired]}>
+                Code expired. Request a new code.
               </Text>}
             </View>
           </View>
-          <View style={styles.actions}>
+          <View style={[styles.actions, verifying && styles.verificationActionGroup]}>
             {verifying && <View style={styles.verificationActions}>
-              <Text style={[styles.accountText, styles.verificationHelper]}>Didn’t receive the code?</Text>
-              <Pressable accessibilityRole="button" disabled={working || remaining > 0} onPress={request}
-                accessibilityState={{ disabled: working || remaining > 0 }} style={styles.verificationTextAction}>
-                <Text style={[styles.verificationActionText, (working || remaining > 0) && styles.verificationActionDisabled]}>{remaining > 0 ? 'Resend code in ' + remaining + 's' : 'Resend code'}</Text>
-              </Pressable>
+              <View style={styles.resendRow}>
+                <Text style={[styles.accountText, styles.resendPrompt]}>Didn’t receive the code?</Text>
+                <Pressable accessibilityRole="button" disabled={working || remaining > 0} onPress={request}
+                  accessibilityState={{ disabled: working || remaining > 0, busy: action === 'request' }} style={styles.resendAction}>
+                  <Text style={[styles.verificationActionText, (working || remaining > 0) && styles.verificationActionDisabled]}>{action === 'request' ? 'Sending…' : remaining > 0 ? 'Resend in ' + remaining + 's' : 'Resend code'}</Text>
+                </Pressable>
+              </View>
               {resent && <Text accessibilityLiveRegion="polite" style={styles.codeFeedback}>New code requested. Please check your email.</Text>}
             </View>}
             {error ? <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.errorText}>{error}</Text> : null}
@@ -133,15 +142,15 @@ export default function LoginScreen() {
               style={({ pressed }) => [styles.primaryButton, verifying && working && styles.verificationControlDimmed, verifying && pressed && styles.primaryButtonPressed]}>
               <Text style={styles.primaryButtonText}>{action === 'verify' ? 'Verifying...' : action === 'request' ? 'Sending...' : verifying ? 'Verify & Continue' : 'Continue'}</Text>
             </Pressable>
-            {verifying ? <View style={styles.verificationActions}>
-              <Text style={styles.securityNote}>Your account verification is secure</Text>
-              <Pressable accessibilityRole="button" disabled={working} onPress={changeNumber} style={styles.verificationTextAction}>
-                <Text style={[styles.verificationActionText, styles.verificationSecondaryText, working && styles.verificationActionDisabled]}>Change Number</Text>
-              </Pressable>
-            </View> : <View style={styles.registerRow}>
-              <Text style={styles.accountText}>Don’t have an account?</Text>
-              <Pressable accessibilityRole="link" disabled={working} onPress={() => router.push('/(auth)/register')} style={{ padding: 12, minHeight: 44 }}><Text style={styles.registerText}>Register</Text></Pressable>
+            {verifying ? <Text style={styles.securityNote}>Your account verification is secure</Text> : <View style={styles.registerRow}>
+              <Text style={[styles.accountText, styles.registerPrompt]}>Don’t have an account?</Text>
+              <Pressable accessibilityRole="link" accessibilityLabel="Register here" accessibilityState={{disabled:working}} disabled={working}
+                onPress={() => router.push('/(auth)/register')} style={styles.registerLink}><Text style={styles.registerText}>Register here</Text></Pressable>
             </View>}
+            {!verifying && <Pressable accessibilityRole="link" disabled={working} accessibilityState={{disabled:working}}
+              onPress={()=>{if(!lock.current && !busy)router.push('/(auth)/trouble-signing-in');}} style={styles.verificationTextAction}>
+              <Text style={[styles.verificationActionText, styles.verificationSecondaryText, working && styles.verificationActionDisabled]}>Trouble signing in?</Text>
+            </Pressable>}
           </View>
         </View>
       </ScrollView>
@@ -198,7 +207,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   title: {
-    color: COLORS.brand,
+    color: PALETTE.text,
     fontSize: 32,
     fontWeight: '800',
     letterSpacing: -0.5,
@@ -227,7 +236,7 @@ const styles = StyleSheet.create({
     minHeight: 54,
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: PALETTE.controlBorder,
     borderRadius: 16,
     backgroundColor: COLORS.inputBackground,
     color: COLORS.text,
@@ -240,7 +249,7 @@ const styles = StyleSheet.create({
     paddingLeft: 16,
     paddingRight: 14,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: PALETTE.controlBorder,
     borderRadius: 16,
     backgroundColor: COLORS.inputBackground,
   },
@@ -273,6 +282,10 @@ const styles = StyleSheet.create({
     gap: 16,
     marginTop: 28,
   },
+  verificationActionGroup: {
+    gap: 12,
+    marginTop: 16,
+  },
   primaryButton: {
     minHeight: 56,
     alignItems: 'center',
@@ -301,12 +314,36 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 5,
   },
+  registerPrompt: {
+    maxWidth: '100%',
+    textAlign: 'center',
+  },
+  registerLink: {
+    maxWidth: '100%',
+    minHeight: 48,
+    paddingVertical: 12,
+    justifyContent: 'center',
+  },
   verificationActions: {
     gap: 4,
   },
-  verificationHelper: {
+  resendRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'center',
+    columnGap: 6,
+    rowGap: 0,
+  },
+  resendPrompt: {
+    maxWidth: '100%',
     textAlign: 'center',
-    marginBottom: 4,
+  },
+  resendAction: {
+    maxWidth: '100%',
+    minHeight: 48,
+    paddingVertical: 10,
+    justifyContent: 'center',
   },
   verificationTextAction: {
     minHeight: 48,
@@ -389,7 +426,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 10,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: PALETTE.controlBorder,
     borderRadius: 12,
     backgroundColor: COLORS.inputBackground,
   },

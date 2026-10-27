@@ -1,9 +1,13 @@
 import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { useState } from 'react';
 import Constants from 'expo-constants';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ProfileSettingsPage } from '@/components/profile-settings-page';
 import { RegistrationLegal, PRESCREENING_ACKNOWLEDGEMENT } from '@/components/registration-legal';
+
+// Replace each "Name" below with a developer's name.
+const DEVELOPER_NAMES = ['Name', 'Name', 'Name'] as const;
 
 const FAQS = [
   ['What is LifeFlow?', 'LifeFlow helps donors manage their profile, donation readiness, activities and rewards in one place.'],
@@ -47,6 +51,17 @@ export default function HelpAboutScreen() {
         <Text style={styles.body}>Support contact details are not yet available in the app. For donation-specific questions, contact the donation facility.</Text>
       </View>
       <View style={styles.section}>
+        <View style={styles.developerHeading}>
+          <View style={styles.developerIcon}><MaterialIcons name="groups" size={22} color={PALETTE.primary} accessible={false} importantForAccessibility="no" /></View>
+          <Text accessibilityRole="header" style={[styles.heading, styles.developerHeadingText]}>Meet the Developers</Text>
+        </View>
+        <Text style={styles.body}>LifeFlow is a capstone project supporting blood donation awareness and donor engagement.</Text>
+        <View style={styles.developerCard}>
+          <Text accessibilityRole="header" style={styles.teamTitle}>LifeFlow Development Team</Text>
+          {DEVELOPER_NAMES.map((name, index) => <Text key={index} style={styles.developerName}>{name}</Text>)}
+        </View>
+      </View>
+      <View style={styles.section}>
         <Text accessibilityRole="header" style={styles.heading}>App Version</Text>
         <Text style={styles.body}>{Constants.expoConfig?.version ?? 'Not available'}</Text>
       </View>
@@ -62,4 +77,10 @@ const styles = StyleSheet.create({
   questionTitle: { color: PALETTE.text, fontSize: 15, fontWeight: '700' },
   link: { minHeight: 54, justifyContent: 'center', gap: 5, paddingVertical: 8 },
   linkText: { color: PALETTE.primary, fontSize: 17, fontWeight: '700' },
+  developerHeading: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  developerHeadingText: { flex: 1, minWidth: 0 },
+  developerIcon: { width: 36, height: 36, borderRadius: 12, backgroundColor: PALETTE.pastelPink, alignItems: 'center', justifyContent: 'center' },
+  developerCard: { padding: 16, gap: 10, borderWidth: 1, borderColor: PALETTE.pastelPink, borderRadius: 18, backgroundColor: PALETTE.surface },
+  teamTitle: { color: PALETTE.text, fontSize: 15, lineHeight: 23, fontWeight: '700' },
+  developerName: { color: PALETTE.text, fontSize: 15, lineHeight: 23 },
 });

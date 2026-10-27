@@ -546,5 +546,29 @@ await check('all Flowie routes registered behind donor session guard; ID validat
   assert.equal(find(module.default(), 'Chat').props.conversationId, 3);
   for (id of ['-1', 'bad', '1.5', '999999999999999999999', ['3']]) assert.ok(!find(module.default(), 'Chat'));
 });
+await check('preparation entry prefills once without sending, preserves donor drafts/history, and uses the existing composer', async () => {
+  const notificationService=load('src/services/notifications.ts',{'./api':{apiRequest:()=>{throw Error('No preparation API calls from the chat entry');}}});
+  const params={preparationTitle:'Community drive',preparationDate:'2026-11-01',preparationKey:'19'};
+  const route=load('src/app/flowie.tsx',{...shared,'expo-router':{useLocalSearchParams:()=>params},
+    '@/services/notifications':notificationService,'@/components/flowie-conversation-screen':{FlowieConversationScreen:'Chat'}});
+  const entry=find(route.default(),'Chat').props.preparation;assert.equal(entry.key,'19');assert.match(entry.prompt,/November 1, 2026/);
+  assert.match(entry.prompt,/healthcare staff decide final eligibility/);
+  const uiHost=host();let sends=0,starts=0,state={...fakeChat,loading:true,ready:false,send:async()=>{sends++;return true;},
+    startNew:()=>{starts++;state={...state,conversation:null,id:undefined};}};
+  const module=load('src/components/flowie-conversation-screen.tsx',{...shared,react:uiHost.react,
+    'expo-router':{Stack:{Screen:'Screen'},useFocusEffect:uiHost.focus,useRouter:()=>router},
+    '@/hooks/use-flowie-conversation':{useFlowieConversation:()=>state},'@/components/confirmation-modal':{ConfirmationModal:'Confirmation'},
+    '@/components/flowie-components':components,'@/services/flowie-preview':preview});
+  const view=()=>uiHost.render(()=>module.FlowieConversationScreen({preparation:entry}));
+  const composer=()=>find(view(),'TextInput');
+  view();assert.equal(composer().props.value,'');state={...state,ready:true,loading:false};view();assert.equal(composer().props.value,entry.prompt);
+  assert.equal(sends,0);assert.equal(starts,0);assert.equal(find(view(),'FlatList').props.data[0].message,'Saved','No conversation replacement or context message is appended');
+  composer().props.onChangeText('My own question');view();assert.equal(composer().props.value,'My own question','Rerenders never duplicate or replace the draft');
+  entry.key='20';entry.prompt='Another preparation question';view();assert.equal(composer().props.value,'My own question');
+  composer().props.onChangeText('');view();assert.equal(composer().props.value,'','Reopening the same entry does not reinsert a consumed prompt');
+  state={...state,conversation:meta(8,'ended')};entry.key='21';view();view();assert.equal(starts,1);assert.equal(composer().props.value,entry.prompt);assert.equal(sends,0);
+  const send=nodes(view()).find(n=>n.props?.accessibilityLabel==='Send message');send.props.onPress();await flush();assert.equal(sends,1,'Only an explicit Send submits the preparation question');
+  params.preparationKey=['19'];assert.equal(find(route.default(),'Chat').props.preparation,undefined);uiHost.unmount();
+});
 console.log('Flowie conversation checks passed: ' + cases + ' scenario groups covering E2 and post-E3 revisions, full-screen management, ended alignment/confirmed soft-delete, recovery, pagination and session boundaries.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

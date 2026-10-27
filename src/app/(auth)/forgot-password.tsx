@@ -1,6 +1,6 @@
 import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { Redirect, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -15,6 +15,11 @@ const TITLES: Record<Step, string> = { email: 'Forgot Password', code: 'Verify y
 // Reset credentials live only in this screen's memory, never storage or routes.
 // ========================================
 export default function ForgotPasswordScreen() {
+  return <Redirect href="/(auth)/trouble-signing-in" />;
+}
+
+// Retained for the later file audit; the donor route no longer mounts password recovery.
+export function LegacyForgotPasswordScreen() {
   const router = useRouter();
   const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');
@@ -133,7 +138,7 @@ export default function ForgotPasswordScreen() {
               maxLength={128} secureTextEntry={!showPassword} editable={!busy} value={confirmation} onChangeText={setConfirmation} style={styles.input} />
             <Pressable accessibilityRole="button" accessibilityLabel={showPassword ? 'Hide passwords' : 'Show passwords'} disabled={busy}
               onPress={() => setShowPassword(value => !value)} style={styles.textButton}>
-              <MaterialIcons name={showPassword ? 'visibility-off' : 'visibility'} color={PALETTE.neutral} size={22} />
+              <MaterialIcons name={showPassword ? 'visibility-off' : 'visibility'} color={PALETTE.primary} size={22} />
               <Text style={styles.body}>{showPassword ? 'Hide passwords' : 'Show passwords'}</Text>
             </Pressable>
           </> : <Text style={styles.body}>Your password has been updated successfully.</Text>}
@@ -161,9 +166,9 @@ const styles = StyleSheet.create({
   scroll:{flexGrow:1,justifyContent:'center',paddingHorizontal:24,paddingVertical:28},
   content:{width:'100%',maxWidth:440,alignSelf:'center',gap:14},
   logo:{width:112,height:112,alignSelf:'center'},
-  title:{color:PALETTE.primary,fontSize:30,fontWeight:'800',textAlign:'center'},
+  title:{color:PALETTE.text,fontSize:30,fontWeight:'800',textAlign:'center'},
   body:{color:PALETTE.neutral,fontSize:16,lineHeight:23},label:{color:PALETTE.text,fontSize:15,fontWeight:'700'},
-  input:{minHeight:54,paddingHorizontal:16,borderWidth:1,borderColor:PALETTE.border,borderRadius:16,backgroundColor:PALETTE.surface,color:PALETTE.text,fontSize:16},
+  input:{minHeight:54,paddingHorizontal:16,borderWidth:1,borderColor:PALETTE.controlBorder,borderRadius:16,backgroundColor:PALETTE.surface,color:PALETTE.text,fontSize:16},
   button:{minHeight:56,padding:12,alignItems:'center',justifyContent:'center',borderRadius:18,backgroundColor:PALETTE.primary},
   buttonText:{color:PALETTE.surface,fontSize:17,fontWeight:'700',textAlign:'center'},
   textButton:{minHeight:48,alignItems:'center',justifyContent:'center',flexDirection:'row',gap:8},

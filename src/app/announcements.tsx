@@ -1,5 +1,6 @@
 import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
+import { AnnouncementImage } from '@/components/announcement-image';
 import { EmptyState, LoadError } from '@/components/load-state';
 import { useAuth } from '@/contexts/auth-context';
 import { errorMessage } from '@/services/api';
@@ -15,6 +16,7 @@ export default function AnnouncementsScreen() {
   const router = useRouter();
   const { opportunities } = useAuth();
   const [posts, setPosts] = useState<DonationOpportunity[]>([]);
+  const [permanent, setPermanent] = useState<DonationOpportunity|null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -30,7 +32,7 @@ export default function AnnouncementsScreen() {
       if (manual) setRefreshing(true);
       try {
         const result = await opportunities();
-        if (active) { setPosts(result.data); setError(''); }
+        if (active) { setPosts(result.data); setPermanent(result.permanent_post ?? null); setError(''); }
       } catch (failure) {
         if (active) setError(errorMessage(failure));
       } finally {
@@ -44,7 +46,7 @@ export default function AnnouncementsScreen() {
     return () => { active = false; clearInterval(timer); refresh.current = () => {}; };
   }, [opportunities]));
 
-  const announcements = boardItems(posts, clock).filter((item): item is DonationOpportunity => item !== 'red-cross');
+  const announcements = boardItems(posts, clock, permanent);
   return <SafeAreaView style={styles.screen}>
     <View style={styles.header}>
       <Pressable accessibilityRole="button" accessibilityLabel="Back" style={styles.back} onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)')}>
@@ -55,20 +57,22 @@ export default function AnnouncementsScreen() {
     <FlatList
       contentContainerStyle={styles.content}
       data={loading ? [] : announcements}
-      keyExtractor={item => String(item.id)}
+      keyExtractor={item => item.source_type==='red_cross_dagupan' ? 'red-cross' : String(item.id)}
       showsVerticalScrollIndicator={false}
       refreshing={refreshing}
       onRefresh={() => refresh.current()}
       ListHeaderComponent={error ? <LoadError message={error} subject="announcements" loading={refreshing} onRetry={() => refresh.current()} /> : null}
       ListEmptyComponent={loading ? <TabSkeleton variant="announcement" label="Loading announcements" /> : !error && !refreshing ? <EmptyState icon="campaign" title="No active announcements" description="Check back for upcoming donation events." /> : null}
       renderItem={({ item }) => {
+        const isPermanent=item.source_type==='red_cross_dagupan';
         const image = announcementImageUrl(item.image_url);
-        return <Pressable accessibilityRole="button" accessibilityLabel={`View announcement: ${item.title}`} onPress={() => router.push({ pathname: '/announcement/[id]', params: { id: String(item.id) } })} style={({ pressed }) => [styles.card, pressed && styles.pressed]}>
-          {image ? <Image source={{ uri: image }} resizeMode="cover" style={styles.image} accessibilityLabel={`${item.title} illustration`} /> : null}
+        return <Pressable accessibilityRole="button" accessibilityLabel={`View announcement: ${item.title}`} onPress={() => router.push({ pathname: '/announcement/[id]', params: { id: isPermanent ? 'red-cross-dagupan' : String(item.id) } })} style={({ pressed }) => [styles.card, pressed && styles.pressed]}>
+          {isPermanent ? <AnnouncementImage uri={image} title={item.title} preview compact /> : image ? <Image source={{ uri: image }} resizeMode="cover" style={styles.image} accessibilityLabel={`${item.title} illustration`} /> : null}
           <View style={styles.body}>
             <Text style={styles.title}>{item.title}</Text>
-            <Text style={styles.date}>{formatDonationDate(item.event_date ?? item.donation_date)}</Text>
-            <Text style={styles.description} numberOfLines={3} ellipsizeMode="tail">{item.description}</Text>
+            <Text style={styles.date}>{isPermanent ? 'Permanent' : formatDonationDate(item.event_date ?? item.donation_date)}</Text>
+            <Text style={styles.description} numberOfLines={3} ellipsizeMode="tail">{isPermanent ? item.summary : item.description}</Text>
+            {isPermanent ? <MaterialIcons name="chevron-right" size={22} color={PALETTE.primary} accessible={false} /> : null}
             <Text style={styles.link}>View Announcement</Text>
           </View>
         </Pressable>;
@@ -79,7 +83,7 @@ export default function AnnouncementsScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: PALETTE.cream },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, gap: 8, borderBottomWidth: 1, borderBottomColor: PALETTE.border },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, gap: 8, },
   back: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   heading: { flex: 1, fontSize: 23, fontWeight: '800', color: PALETTE.text },
   content: { padding: 20, gap: 16, width: '100%', maxWidth: 600, alignSelf: 'center', flexGrow: 1 },

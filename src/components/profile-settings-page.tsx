@@ -12,7 +12,7 @@ export function ProfileSettingsPage({ title, fallback, children }: { title: stri
     <View style={styles.header}>
       <Pressable accessibilityRole="button" accessibilityLabel="Go back"
         onPress={() => router.canGoBack() ? router.back() : router.replace(fallback)} style={styles.back}>
-        <MaterialIcons name="arrow-back" size={24} color={PALETTE.text} />
+        <MaterialIcons name="arrow-back" size={24} color={PALETTE.primary} />
       </Pressable>
       <Text accessibilityRole="header" style={styles.title}>{title}</Text>
     </View>
@@ -23,7 +23,7 @@ export function ProfileSettingsPage({ title, fallback, children }: { title: stri
 }
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: PALETTE.cream },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: PALETTE.border },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8, },
   back: { minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'center' },
   title: { flex: 1, fontSize: 22, fontWeight: '800', color: PALETTE.text },
   content: { width: '100%', maxWidth: 680, alignSelf: 'center', padding: 20, gap: 24 },

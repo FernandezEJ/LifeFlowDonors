@@ -21,6 +21,17 @@ export type ProfileForm = {
 export type RegisterForm = ProfileForm & { acceptedTerms: boolean; acknowledgedPrivacy: boolean; acknowledgedPrescreening: boolean };
 export const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] as const;
 export type LoginCodeResponse = { message: string; resend_after: number; expires_in: number };
+export const LOGIN_NOTICE = 'If these details match a registered account, check its verified email for a code.';
+export function normalizeLoginIdentifier(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.includes('@')) return trimmed.toLowerCase();
+  const number = trimmed.replace(/[\s()-]/g, '');
+  return /^09\d{9}$/.test(number) ? '+63' + number.slice(1) : /^639\d{9}$/.test(number) ? '+' + number : number;
+}
+export function isLoginIdentifier(value: string): boolean {
+  const identifier = normalizeLoginIdentifier(value);
+  return identifier.length <= 254 && (/^\+639\d{9}$/.test(identifier) || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier));
+}
 export const FIELD_MAPPING = {
   firstName: 'first_name', middleName: 'middle_name', lastName: 'last_name', email: 'email',
   mobileNumber: 'mobile_number', birthDate: 'birth_date', gender: 'gender', bloodType: 'blood_type',
@@ -143,8 +154,8 @@ export const authApi = {
   } }),
   verifyRegistration: (pendingToken: string, code: string) => apiRequest<AuthResponse>('/register/verify-email', { method: 'POST', body: { pending_token: pendingToken, code } }),
   resendRegistration: (pendingToken: string) => apiRequest<{resend_after: number; expires_in: number}>('/register/resend-verification', { method: 'POST', body: { pending_token: pendingToken } }),
-  requestLoginCode: (mobile: string) => apiRequest<LoginCodeResponse>('/auth/request-login-code', { method: 'POST', body: { mobile_number: mobile.trim() } }),
-  login: (mobile: string, code: string) => apiRequest<AuthResponse>('/auth/verify-login-code', { method: 'POST', body: { mobile_number: mobile.trim(), code } }),
+  requestLoginCode: (identifier: string) => apiRequest<LoginCodeResponse>('/auth/request-login-code', { method: 'POST', body: { identifier: normalizeLoginIdentifier(identifier) } }),
+  login: (identifier: string, code: string) => apiRequest<AuthResponse>('/auth/verify-login-code', { method: 'POST', body: { identifier: normalizeLoginIdentifier(identifier), code } }),
   currentUser: (token: string) => apiRequest<User>('/user', { token }),
   profile: (token: string) => apiRequest<ProfileResponse>('/donor-profile', { token }),
   saveAvatar: (token: string, avatar: ProfileMascotKey) => apiRequest<ProfileResponse>('/donor-profile/avatar', { method: 'PUT', token, body: { profile_avatar: avatar } }),

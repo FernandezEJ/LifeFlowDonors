@@ -10,13 +10,20 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { ActivityIndicator, FlatList, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-export function FlowieConversationScreen({ conversationId }: { conversationId?: number }) {
+export function FlowieConversationScreen({ conversationId, preparation }: { conversationId?: number; preparation?: { key: string; prompt: string } }) {
   const router = useRouter();
   const chat = useFlowieConversation(conversationId);
   const c = useFlowieColors();
   const { height = 640 } = useWindowDimensions();
   const [draft, setDraft] = useState('');
   const draftRef = useRef('');
+  const preparationEntry = useRef<string | null>(null);
+  useEffect(() => {
+    if (!preparation || preparationEntry.current === preparation.key || !chat.ready || chat.loading || chat.busy || conversationId !== undefined) return;
+    if (chat.conversation?.status === 'ended') { chat.startNew(); return; }
+    preparationEntry.current = preparation.key;
+    if (!draftRef.current) { draftRef.current = preparation.prompt; setDraft(preparation.prompt); }
+  }, [preparation, chat, conversationId]);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -162,7 +169,6 @@ export function FlowieConversationScreen({ conversationId }: { conversationId?: 
 
   return <><Head><title>Flowie | LifeFlow</title></Head><Stack.Screen options={{ headerShown: false, title: 'Flowie' }} />
     <SafeAreaView edges={['top', 'bottom']} style={[styles.screen, { backgroundColor: c.background }]}>
-      <View style={[styles.headerBorder, { borderColor: c.border }]}>
         <View style={styles.header}>
           <Pressable accessibilityRole="button" accessibilityLabel="Go back" style={styles.iconButton}
             onPress={() => router.canGoBack() ? router.back() : router.replace(conversationId === undefined ? '/(tabs)' : '/flowie-history')}>
@@ -174,14 +180,13 @@ export function FlowieConversationScreen({ conversationId }: { conversationId?: 
             <MaterialIcons name="more-vert" size={24} color={c.text} />
           </Pressable>
         </View>
-      </View>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={styles.pinnedEvaluation}><FlowieActionCard action="open_evaluation" onAction={openAction} /></View>
         <View style={styles.transcript}>
         <FlatList key={conversationId ?? 'active'} ref={list} style={styles.flex} inverted data={[...messages].reverse()} keyExtractor={item => item.id}
           maintainVisibleContentPosition={showLatest ? { minIndexForVisible: 0 } : undefined}
           contentContainerStyle={[styles.listContent, showLatest && { paddingTop: latestHeight + 24 }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag"
-          ListEmptyComponent={!chat.ready && chat.loading ? <View><TabSkeleton /></View> : null}
+          ListEmptyComponent={!chat.ready && chat.loading ? <View><TabSkeleton pulse colors={{ surface: c.surface, block: c.skeleton }} /></View> : null}
           ListHeaderComponent={<>
             {chat.sending ? <View style={styles.feedback} accessibilityLiveRegion="polite">
               <FlowieMessageBubble item={{ id: 'reply-progress', role: 'flowie', message: 'Flowie Thinking...' }} pose="thinking" onAction={openAction} onPrompt={ask} />
@@ -253,7 +258,7 @@ export function FlowieConversationScreen({ conversationId }: { conversationId?: 
                 value={draft} editable={chat.ready} multiline maxLength={1000} scrollEnabled textAlignVertical="top"
                 onFocus={() => setQuickQuestionsFor(null)}
                 onChangeText={value => { draftRef.current = value; setDraft(value); setQuickQuestionsFor(null); }}
-                style={[styles.input, { color: c.text, backgroundColor: c.background, borderColor: c.border }]} />
+                style={[styles.input, { color: c.text, backgroundColor: c.background, borderColor: c.controlBorder }]} />
               <Pressable accessibilityRole="button" accessibilityLabel="Send message" accessibilityState={{ disabled: !draft.trim() || !canCompose, busy: chat.sending }}
                 disabled={!draft.trim() || !canCompose} onPress={send}
                 style={({ pressed }) => [styles.send, { backgroundColor: draft.trim() ? c.primary : c.border }, pressed && styles.pressed]}>
@@ -271,7 +276,7 @@ export function FlowieConversationScreen({ conversationId }: { conversationId?: 
   </>;
 }
 const styles = StyleSheet.create({
-  screen: { flex: 1 }, flex: { flex: 1, minHeight: 0 }, headerBorder: { borderBottomWidth: 1 },
+  screen: { flex: 1 }, flex: { flex: 1, minHeight: 0 },
   transcript: { flex: 1, minHeight: 0, position: 'relative' },
   latestButton: { position: 'absolute', bottom: 8, alignSelf: 'center', maxWidth: '90%', minHeight: 44, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderRadius: 22, flexDirection: 'row', alignItems: 'center', gap: 8, elevation: 3, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 4 },
   latestLabel: { fontSize: 13, lineHeight: 20, fontWeight: '700', flexShrink: 1 },

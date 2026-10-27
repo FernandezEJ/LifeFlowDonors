@@ -67,14 +67,14 @@ export default function NotificationSettingsScreen() {
           <Text style={styles.description}>Manage LifeFlow alerts on your device.</Text>
           {permission ? <Text style={styles.status}>{permission.granted ? 'Android permission allowed.' : 'Android permission not allowed.'}
             {permission.channelBlocked ? ' The LifeFlow notification channel is off.' : ''}</Text> : null}
-        </View><MaterialIcons name="chevron-right" size={23} color={COLORS.neutral} accessible={false} />
+        </View><MaterialIcons name="chevron-right" size={22} color={COLORS.primary} accessible={false} />
       </Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel="Sound & Vibration" accessibilityState={{ disabled: busy }} disabled={busy}
         onPress={() => void manage(true)} style={({ pressed }) => [styles.row, pressed && styles.pressed]}>
         <View style={styles.icon}><MaterialIcons name="volume-up" size={25} color={COLORS.primary} accessible={false} /></View>
         <View style={styles.labels}><Text style={styles.title}>Sound &amp; Vibration</Text>
           <Text style={styles.description}>Manage notification sounds and vibration.</Text></View>
-        <MaterialIcons name="chevron-right" size={23} color={COLORS.neutral} accessible={false} />
+        <MaterialIcons name="chevron-right" size={22} color={COLORS.primary} accessible={false} />
       </Pressable>
     </View>
     {feedback || pushStatus ? <Text accessibilityLiveRegion="polite" style={styles.description}>{feedback || pushStatus}</Text> : null}

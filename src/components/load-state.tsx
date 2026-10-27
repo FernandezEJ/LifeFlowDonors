@@ -7,7 +7,7 @@ export function EmptyState({ title, description, icon = 'inbox' }: {
   title: string; description: string; icon?: ComponentProps<typeof MaterialIcons>['name'];
 }) {
   return <View style={styles.empty}>
-    <MaterialIcons name={icon} size={28} color={COLORS.neutral} accessible={false} />
+    <MaterialIcons name={icon} size={28} color={COLORS.primary} accessible={false} />
     <Text accessibilityRole="header" style={styles.title}>{title}</Text>
     <Text style={styles.description}>{description}</Text>
   </View>;
@@ -32,7 +32,7 @@ export function LoadError({ message, subject, onRetry, loading = false, retryLab
   };
   return <View style={styles.error}>
     <View style={styles.errorHeading}><MaterialIcons name={kind === 'connection' ? 'wifi-off' : kind === 'session' ? 'lock-outline' : 'info-outline'}
-      size={21} color={COLORS.neutralText} accessible={false} />
+      size={21} color={COLORS.primary} accessible={false} />
       <Text accessibilityRole="header" style={styles.title}>{kind === 'session' ? 'Sign in required' : action ? 'Action not confirmed' : kind === 'connection' ? 'Connection Problem' : "Couldn't load " + subject}</Text></View>
     <Text accessibilityRole="alert" style={styles.errorDescription}>{kind === 'connection' && !action
       ? `We couldn't load your ${subject}. Please check your internet connection and try again.` : message}</Text>

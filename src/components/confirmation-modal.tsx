@@ -22,7 +22,7 @@ export function ConfirmationModal({ visible, icon = 'help-outline', title, messa
       {dismissible && dismissOnBackdrop && <Pressable accessible={false} disabled={busy} onPress={dismiss} style={styles.backdropDismiss}/>}
       <View accessibilityViewIsModal style={styles.card}>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content} bounces={false} keyboardShouldPersistTaps="handled">
-      <View style={[styles.icon,{backgroundColor:variant==='destructive'?PALETTE.dangerSurface:variant==='warning'?PALETTE.pendingSurface:PALETTE.neutralSurface}]}><MaterialIcons accessible={false} importantForAccessibility="no" name={icon} size={30} color={variant === 'neutral' ? PALETTE.neutral : variant==='warning'?PALETTE.pending:PALETTE.danger} /></View>
+      <View style={[styles.icon,{backgroundColor:variant==='destructive'?PALETTE.dangerSurface:variant==='warning'?PALETTE.pendingSurface:PALETTE.neutralSurface}]}><MaterialIcons accessible={false} importantForAccessibility="no" name={icon} size={30} color={variant === 'neutral' ? PALETTE.primary : variant==='warning'?PALETTE.pending:PALETTE.danger} /></View>
       <Text accessibilityRole="header" style={styles.title}>{title}</Text><Text style={styles.message}>{message}</Text>
       <View style={styles.actions}>
         <Pressable accessibilityRole="button" accessibilityLabel={secondaryLabel} accessibilityState={{ disabled: busy }} disabled={busy} onPress={onSecondary} style={[styles.button, styles.secondary, busy && styles.disabled]}><Text style={styles.secondaryText}>{secondaryLabel}</Text></Pressable>
@@ -33,7 +33,7 @@ export function ConfirmationModal({ visible, icon = 'help-outline', title, messa
   </Modal>;
 }
 const styles = StyleSheet.create({
-  overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: 'rgba(55,46,46,0.35)' },
+  overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: PALETTE.backdrop },
   backdropDismiss: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 },
   card: { width: '100%', maxWidth: 360, maxHeight: '100%', borderRadius: 24, backgroundColor: PALETTE.surface, elevation: 4, shadowColor: PALETTE.text, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 10 },
   scroll: { flexGrow: 0, borderRadius: 24 }, content: { padding: 24 },

@@ -198,8 +198,6 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: 'transparent' },
   fixedHeader: {
     zIndex: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
     backgroundColor: COLORS.background,
   },
   header: {
@@ -212,7 +210,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 9,
   },
-  headerTitle: { color: COLORS.brand, fontSize: 25, fontWeight: '800', letterSpacing: -0.5 },
+  headerTitle: { color: PALETTE.text, fontSize: 25, fontWeight: '800', letterSpacing: -0.5 },
   bellButton: {
     width: 44,
     height: 44,
@@ -297,7 +295,7 @@ const styles = StyleSheet.create({
     gap: 7,
     padding: 4,
     borderRadius: 18,
-    backgroundColor: 'rgba(255, 255, 255, 0.58)',
+    backgroundColor: PALETTE.surface,
   },
   filterButton: {
     minHeight: 40,

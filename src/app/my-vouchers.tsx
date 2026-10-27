@@ -21,7 +21,7 @@ const COLORS = {
   softRed: PALETTE.selected,
   active: PALETTE.successText,
   activeBackground: PALETTE.successSurface,
-  expiredBackground: PALETTE.neutralSurface,
+  expiredBackground: PALETTE.inactiveSurface,
 };
 
 
@@ -74,7 +74,7 @@ export default function MyVouchersScreen() {
   return <><Stack.Screen options={{ headerShown: false }} />
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
       <View style={styles.fixedHeader}><View style={styles.header}>
-        <Pressable accessibilityLabel="Go back" onPress={() => router.back()} style={styles.headerButton}><MaterialIcons name="arrow-back" color={COLORS.text} size={23} /></Pressable>
+        <Pressable accessibilityLabel="Go back" onPress={() => router.back()} style={styles.headerButton}><MaterialIcons name="arrow-back" color={PALETTE.primary} size={23} /></Pressable>
         <Text style={styles.headerTitle}>My Rewards</Text><NotificationBell />
       </View></View>
       <FlatList data={records} keyExtractor={item => String(item.id)} contentContainerStyle={styles.listContent}
@@ -91,7 +91,7 @@ export default function MyVouchersScreen() {
         renderItem={({ item }) => <View style={styles.voucherCard}>
           <View style={styles.cardTopRow}><View style={styles.voucherIcon}><MaterialIcons name="confirmation-number" color={COLORS.brand} size={25} /></View>
             <View style={styles.cardHeading}><Text style={styles.voucherTitle}>{rewardLabel(item.reward)}</Text>{hasVoucherValue(item.reward) && <Text style={styles.voucherCost}>Voucher Value: ₱{item.reward.voucher_value}</Text>}<Text style={styles.voucherCost}>{item.points_spent} Blood Points</Text></View>
-            <View style={[styles.statusBadge, { backgroundColor: voucherState(item) === 'claimed' ? COLORS.activeBackground : voucherState(item) === 'pending_claim' ? PALETTE.pendingSurface : COLORS.expiredBackground }]}><Text style={[styles.statusText,{color:voucherState(item)==='claimed'?PALETTE.successText:voucherState(item)==='pending_claim'?PALETTE.pendingText:PALETTE.neutralText}]}>{voucherStatusLabel(item)}</Text></View></View>
+            <View style={[styles.statusBadge, { backgroundColor: voucherState(item) === 'claimed' ? COLORS.activeBackground : voucherState(item) === 'pending_claim' ? PALETTE.pendingSurface : COLORS.expiredBackground }]}><Text style={[styles.statusText,{color:voucherState(item)==='claimed'?PALETTE.successText:voucherState(item)==='pending_claim'?PALETTE.pendingText:PALETTE.inactiveText}]}>{voucherStatusLabel(item)}</Text></View></View>
           {item.activated_at ? <Text style={styles.stateMessage}>Activated: {voucherDate(item.activated_at)}</Text> : null}
           {voucherState(item) === 'claimed' ? <Text style={styles.stateMessage}>Claimed: {voucherDate(item.claimed_at)}</Text> : null}
           {voucherState(item) === 'available' ? <Text style={styles.stateMessage}>Ready to activate your claim code.</Text> : null}
@@ -104,8 +104,6 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },
   fixedHeader: {
     zIndex: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
     backgroundColor: COLORS.background,
   },
   header: {

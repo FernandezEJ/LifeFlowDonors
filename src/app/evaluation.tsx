@@ -109,7 +109,7 @@ export default function EvaluationScreen() {
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
       <View style={styles.header}>
         <Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={() => router.back()} style={styles.iconButton}>
-          <MaterialIcons name="arrow-back" size={24} color={PALETTE.text} />
+          <MaterialIcons name="arrow-back" size={24} color={PALETTE.primary} />
         </Pressable>
         <Text style={styles.headerTitle}>Self-Assessment</Text>
         <NotificationBell />
@@ -144,7 +144,7 @@ export default function EvaluationScreen() {
                 <Text style={styles.body}>{SCREENING_NOTICE}</Text>
               </View>
               <View style={styles.notice}>
-                <MaterialIcons name="info-outline" size={24} color={PALETTE.neutral} />
+                <MaterialIcons name="info-outline" size={24} color={PALETTE.primary} />
                 <Text style={styles.subheading}>Important Reminder</Text>
                 <Text style={styles.body}>Recent tattoos or body piercings may require a waiting period before blood donation.</Text>
                 <Text style={styles.body}>This self-assessment is only a pre-screening guide. Final eligibility will still be confirmed by the donation facility.</Text>
@@ -199,7 +199,7 @@ export default function EvaluationScreen() {
 const styles = StyleSheet.create({
   complete: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   flex: { flex: 1 }, safeArea: { flex: 1, backgroundColor: PALETTE.cream },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: PALETTE.border },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 8, },
   headerTitle: { flex: 1, textAlign: 'center', color: PALETTE.text, fontSize: 17, fontWeight: '800' },
   iconButton: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
   scroll: { flexGrow: 1, padding: 20, paddingBottom: 32 },
@@ -214,8 +214,8 @@ const styles = StyleSheet.create({
   reason: { color: PALETTE.neutralText, fontSize: 16, lineHeight: 24, borderLeftWidth: 3, borderLeftColor: PALETTE.primary, paddingLeft: 12 },
   progress: { height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: PALETTE.border },
   progressFill: { height: 8, backgroundColor: PALETTE.primary },
-  input: { minHeight: 56, borderWidth: 1, borderColor: PALETTE.border, borderRadius: 14, padding: 14, fontSize: 20, color: PALETTE.text },
-  option: { minHeight: 56, justifyContent: 'center', padding: 16, borderWidth: 1, borderColor: PALETTE.border, borderRadius: 14 },
+  input: { minHeight: 56, borderWidth: 1, borderColor: PALETTE.controlBorder, borderRadius: 14, padding: 14, fontSize: 20, color: PALETTE.text },
+  option: { minHeight: 56, justifyContent: 'center', padding: 16, borderWidth: 1, borderColor: PALETTE.controlBorder, borderRadius: 14 },
   selected: { backgroundColor: PALETTE.primary, borderColor: PALETTE.primary }, selectedText: { color: PALETTE.surface },
   button: { minHeight: 52, padding: 14, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: PALETTE.primary },
   buttonText: { color: PALETTE.surface, fontSize: 16, fontWeight: '800', textAlign: 'center' },

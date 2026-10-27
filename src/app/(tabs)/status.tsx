@@ -178,6 +178,7 @@ export default function StatusScreen() {
           <View style={[styles.statusCard, { backgroundColor: presentation.background }]}>
             <View style={styles.mascotArea}>
               <Image
+                fadeDuration={0}
                 accessibilityLabel="Flowie, the LifeFlow assistant"
                 resizeMode="contain"
                 source={mascot}
@@ -269,8 +270,6 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: 'transparent' },
   fixedHeader: {
     zIndex: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
     backgroundColor: COLORS.background,
   },
   header: {
@@ -283,7 +282,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 9,
   },
-  headerTitle: { color: COLORS.brand, fontSize: 25, fontWeight: '800', letterSpacing: -0.5 },
+  headerTitle: { color: PALETTE.text, fontSize: 25, fontWeight: '800', letterSpacing: -0.5 },
   bellButton: {
     width: 44,
     height: 44,
@@ -359,7 +358,7 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     backgroundColor: COLORS.softRed,
   },
-  adviceHeading: { marginTop: 5, color: COLORS.brand, fontSize: 12, fontWeight: '800' },
+  adviceHeading: { marginTop: 5, color: PALETTE.text, fontSize: 12, fontWeight: '800' },
   adviceText: { marginTop: 4, marginBottom: 7, color: COLORS.text, fontSize: 14, lineHeight: 20 },
   section: { gap: 12 },
   sectionTitle: { color: COLORS.text, fontSize: 21, fontWeight: '800', letterSpacing: -0.3 },

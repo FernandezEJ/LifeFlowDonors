@@ -145,7 +145,7 @@ export function RewardCatalogue({ showBalance = false, onBalance }: { showBalanc
         }
       }} />
     {showBalance ? <View style={styles.balanceSection}><Text style={styles.balanceHeading}>Your Blood Points</Text>
-      {loading && !currentSummary ? <TabSkeleton variant="points" label="Loading reward balance" /> : currentSummary ? <View style={styles.pointsCircle}><Text style={styles.pointsNumber}>{Number.isFinite(currentSummary.current_balance) ? currentSummary.current_balance : '--'}</Text><Text style={styles.pointsLabel}>Points</Text></View> : null}</View> : null}
+      {loading && !currentSummary ? <TabSkeleton variant="reward-balance" label="Loading reward balance" /> : currentSummary ? <View style={styles.pointsCircle}><Text style={styles.pointsNumber}>{Number.isFinite(currentSummary.current_balance) ? currentSummary.current_balance : '--'}</Text><Text style={styles.pointsLabel}>Points</Text></View> : null}</View> : null}
     <View style={styles.rewardsHeader}><Text style={styles.rewardsHeading}>Available Rewards</Text>
       {loading && currentSummary ? <ActivityIndicator color={COLORS.brand} size="small" accessibilityLabel="Refreshing rewards" /> : null}
       <Pressable onPress={() => router.navigate('/my-vouchers')} style={styles.myVouchersButton}><Text style={styles.myVouchersText}>My Rewards</Text></Pressable></View>
@@ -169,16 +169,13 @@ export function RewardCatalogue({ showBalance = false, onBalance }: { showBalanc
         return <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={`View reward details: ${item.name}, ${item.points_cost} Blood Points`}
           disabled={busy} accessibilityState={{ disabled: busy }} onPress={() => openDetails(item)}
           style={({ pressed }) => [styles.rewardCard, unavailable && styles.rewardCardUnavailable, pressed && styles.pressed]}>
-          <View style={styles.rewardVisual}><RewardImage reward={item} /></View><View style={styles.rewardBody}>
-            <View style={styles.rewardHeading}>
+          <RewardImage reward={item} /><View style={styles.rewardBody}>
             <Text style={styles.rewardTitle}>{item.name}</Text>
-            <MaterialIcons name="chevron-right" size={20} color={COLORS.brand} style={{ flexShrink: 0 }} accessible={false} />
-            </View>
             {hasVoucherValue(item) ? <Text style={styles.valueText}>₱{item.voucher_value} voucher</Text> : null}
             {item.description ? <Text style={styles.costText} numberOfLines={2} ellipsizeMode="tail">{item.description}</Text> : null}
             <Text style={styles.costText}>Redeem for {item.points_cost} Blood Points</Text>
             <Text style={styles.costText}>{item.stock_quantity} remaining</Text>
-          </View></Pressable>;
+          </View><MaterialIcons name="chevron-right" size={22} color={COLORS.brand} style={{ flexShrink: 0, alignSelf: 'center' }} accessible={false} /></Pressable>;
       })}
     </View>
   </View>;
@@ -309,29 +306,16 @@ const styles = StyleSheet.create({
   rewardCard: {
     width: '100%',
     flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: 13,
+    gap: 12,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: COLORS.border,
     borderRadius: 20,
-    backgroundColor: PALETTE.selected,
-    shadowColor: PALETTE.text,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.06,
-    shadowRadius: 7,
-    elevation: 2,
+    backgroundColor: COLORS.white,
   },
   rewardCardUnavailable: { opacity: 0.72 },
-  rewardVisual: {
-    width: 76,
-    height: 96,
-    marginTop: 13,
-    marginLeft: 12,
-    borderRadius: 12,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
   unavailableBadge: {
     position: 'absolute',
     top: 8,
@@ -339,13 +323,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 4,
     borderRadius: 9,
-    backgroundColor: PALETTE.neutralText,
+    backgroundColor: PALETTE.inactiveText,
   },
   unavailableBadgeText: { color: COLORS.white, fontSize: 9, fontWeight: '800' },
   rewardImage: { width: 76, height: 96 },
-  rewardBody: { flex: 1, minWidth: 0, padding: 13 },
-  rewardHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
-  rewardTitle: { flex: 1, minWidth: 0, color: COLORS.text, fontSize: 15, fontWeight: '800', lineHeight: 19 },
+  rewardBody: { flex: 1, minWidth: 0 },
+  rewardTitle: { minWidth: 0, color: COLORS.text, fontSize: 15, fontWeight: '800', lineHeight: 19 },
   valueText: { color: COLORS.brand, fontSize: 13, fontWeight: '700', flexShrink: 1, marginTop: 4 },
   refreshButton: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
   costRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },

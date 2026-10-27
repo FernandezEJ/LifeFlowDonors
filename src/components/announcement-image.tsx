@@ -19,7 +19,7 @@ function imageIdentity(uri: string | null): string | null {
 }
 
 /** Dashboard covers stay uniform; details retain the original aspect ratio. */
-export const AnnouncementImage = memo(function AnnouncementImage({ uri, title, preview = false }: { uri: string | null; title: string; preview?: boolean }) {
+export const AnnouncementImage = memo(function AnnouncementImage({ uri, title, preview = false, compact = false, label, fallbackText = 'No event image available' }: { uri: string | null; title: string; preview?: boolean; compact?: boolean; label?: string; fallbackText?: string }) {
   const [width, setWidth] = useState(0);
   const [size, setSize] = useState<{ uri: string; width: number; height: number } | null>(null);
   const [request, setRequest] = useState({ uri, loaded: false, failed: false });
@@ -32,11 +32,11 @@ export const AnnouncementImage = memo(function AnnouncementImage({ uri, title, p
   const source = useMemo(() => current.uri ? { uri: current.uri } : undefined, [current.uri]);
   const height = current.uri && !current.failed && width > 0 && size?.uri === current.uri
     ? width * size.height / size.width : 180;
-  return <View style={[styles.container, preview ? styles.preview : { height }]} onLayout={({ nativeEvent }) => {
+  return <View style={[styles.container, preview ? compact ? styles.compactPreview : styles.preview : { height }]} onLayout={({ nativeEvent }) => {
     const measured = nativeEvent.layout.width;
     if (Number.isFinite(measured) && measured > 0) setWidth(measured);
   }}>
-    {source && !current.failed ? <Image source={source} accessibilityLabel={`${title} event banner`}
+    {source && !current.failed ? <Image source={source} accessibilityLabel={label ?? `${title} event banner`}
       resizeMode={preview ? 'cover' : 'contain'} fadeDuration={preview ? 0 : undefined} style={styles.image}
       onError={() => setRequest(previous => previous.uri !== source.uri ? previous
         : uri !== source.uri ? { uri, loaded: false, failed: false } : { ...previous, loaded: false, failed: true })}
@@ -48,8 +48,8 @@ export const AnnouncementImage = memo(function AnnouncementImage({ uri, title, p
           setSize({ uri: source.uri, width: imageWidth, height: imageHeight });
         }
       }} /> : <View style={styles.fallback}>
-        <MaterialIcons name="image-not-supported" size={30} color={PALETTE.neutral} accessible={false} />
-        <Text style={styles.fallbackText}>No event image available</Text>
+        <MaterialIcons name="image-not-supported" size={30} color={PALETTE.primary} accessible={false} />
+        <Text style={styles.fallbackText}>{fallbackText}</Text>
       </View>}
   </View>;
 });
@@ -57,6 +57,7 @@ export const AnnouncementImage = memo(function AnnouncementImage({ uri, title, p
 const styles = StyleSheet.create({
   container: { width: '100%', overflow: 'hidden', borderRadius: 16, backgroundColor: PALETTE.surface },
   preview: { aspectRatio: 16 / 9 },
+  compactPreview: { aspectRatio: 32 / 9 },
   image: { width: '100%', height: '100%' },
   fallback: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, padding: 16, backgroundColor: PALETTE.neutralSurface },
   fallbackText: { color: PALETTE.neutralText, textAlign: 'center', fontSize: 13, flexShrink: 1 },

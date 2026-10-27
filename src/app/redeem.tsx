@@ -26,7 +26,7 @@ export default function RedeemScreen() {
   return <><Stack.Screen options={{ headerShown: false }} />
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
       <View style={styles.fixedHeader}><View style={styles.header}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)/points')} style={styles.backButton}><MaterialIcons name="arrow-back" color={COLORS.text} size={23} /></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Go back" onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)/points')} style={styles.backButton}><MaterialIcons name="arrow-back" color={PALETTE.primary} size={23} /></Pressable>
         <Text style={styles.headerTitle}>Redeem</Text><NotificationBell />
       </View></View>
       <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}><RewardCatalogue showBalance /></ScrollView>
@@ -37,8 +37,6 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },
   fixedHeader: {
     zIndex: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
     backgroundColor: COLORS.background,
   },
   header: {
@@ -174,7 +172,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 4,
     borderRadius: 9,
-    backgroundColor: PALETTE.neutralText,
+    backgroundColor: PALETTE.inactiveText,
   },
   unavailableBadgeText: { color: COLORS.white, fontSize: 9, fontWeight: '800' },
   rewardBody: { flex: 1, padding: 13 },

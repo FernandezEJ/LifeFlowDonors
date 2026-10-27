@@ -21,7 +21,18 @@ const deferred=()=>{let resolve,reject;const promise=new Promise((r,j)=>{resolve
   }});
   const legacy=skeleton.TabSkeleton({});assert.equal(legacy.props.accessibilityState.busy,true);assert.equal(legacy.props.style[0].padding,16);
   assert.equal(nodes(legacy).some(n=>n.type?.name==='Pulse'),false,'Flowie retains its static placeholder with no animated wrapper');
+  const palette=load('src/constants/theme.ts',{'react-native':{Platform:{select:options=>options.default}}}).LifeFlowColors;
+  assert.equal(palette.skeleton,'rgba(137,35,37,0.14)','Keep the original Activity Details warm neutral fill');
+  const flowie=skeleton.TabSkeleton({pulse:true,colors:{surface:palette.surface,block:palette.skeleton}});
+  assert.equal(flowie.props.children.type.name,'Pulse');
+  assert.equal(JSON.stringify(flowie.props.children.props.children),JSON.stringify(legacy.props.children),'Shared pulse must not change Flowie geometry/content');
+  const dark=skeleton.TabSkeleton({colors:{surface:'#2D2628',block:'#594348'}});
+  const darkStyles=nodes(dark).flatMap(n=>[n.props?.style].flat(Infinity)).filter(Boolean);
+  assert.equal(darkStyles.filter(s=>s.backgroundColor==='#2D2628').length,3,'Dark Flowie skeleton cards keep their dark surfaces');
+  assert.ok(darkStyles.some(s=>s.backgroundColor==='#594348'));assert.ok(!darkStyles.some(s=>s.backgroundColor==='#FFF9F2'));
+  assert.equal(nodes(dark).some(n=>n.type?.name==='Pulse'),false,'Colors do not change Flowie skeleton motion or geometry');
   const pulse=skeleton.TabSkeleton({variant:'activity',label:'Loading activities'}).props.children;
+  assert.equal(flowie.props.children.type,pulse.type,'Flowie uses the exact Activity Details pulse/reduced-motion component');
   const render=()=>h.render(()=>pulse.type(pulse.props));render();assert.equal(starts,0,'No motion before accessibility preference is known');
   settings.resolve(false);await flush();render();assert.equal(starts,1);assert.equal(channelListeners,2);
   motion(true);render();assert.equal(stops,1,'Enabling reduced motion stops the current animation');
@@ -35,11 +46,22 @@ const deferred=()=>{let resolve,reject;const promise=new Promise((r,j)=>{resolve
   };
   const has=(tree,property,value)=>nodes(tree).some(n=>[n.props?.style].flat(Infinity).some(s=>s?.[property]===value));
   assert.ok(has(shape('announcement'),'aspectRatio',16/9));assert.ok(has(shape('detail'),'aspectRatio',16/9));
-  assert.ok(has(shape('points'),'borderRadius',90));assert.ok(has(shape('profile'),'borderRadius',56));
+  assert.ok(has(shape('points'),'borderRadius',77));assert.ok(has(shape('profile'),'borderRadius',56));
   assert.ok(has(shape('notifications'),'width',40));assert.ok(has(shape('notifications'),'width',8));
-  assert.ok(has(shape('rewards'),'aspectRatio',1));assert.ok(has(shape('activity'),'height',24));
+  assert.ok(has(shape('rewards'),'width',76));assert.ok(has(shape('rewards'),'height',96));assert.ok(has(shape('activity'),'height',24));
+  const styled=(tree,predicate)=>nodes(tree).filter(n=>predicate(Object.assign({},...[n.props?.style].flat(Infinity).filter(Boolean))));
+  for(const variant of ['points','reward-balance']){
+    const tree=shape(variant),circle=styled(tree,s=>s.width===154&&s.height===154);
+    assert.equal(circle.length,1);assert.equal(circle[0].props.style.alignSelf,'center');
+    assert.equal(styled(tree,s=>s.flexBasis===130&&s.minHeight===50).length,variant==='points'?2:0,'Only Points has its two real navigation actions');
+    assert.equal(styled(tree,s=>s.width===180||s.height===46).length,0,'No phantom balance bar');
+  }
+  assert.equal(styled(shape('transactions'),s=>s.width===5&&s.height===36).length,3);
+  assert.equal(styled(shape('rewards'),s=>s.width==='100%'&&s.padding===13).length,3,'Catalogue placeholders are full-width horizontal rows');
+  assert.ok(has(shape('activity-detail'),'width',48));assert.ok(has(shape('activity-detail'),'borderTopWidth',1));
+  assert.equal(nodes(shape('activity-detail')).filter(n=>n.type==='Pressable'||n.type==='Text').length,0,'Detail placeholders cannot fabricate statuses or controls');
   assert.ok(nodes(shape('profile-fields')).length>nodes(shape('profile')).length);
-  for(const variant of ['activity','rewards','notifications','profile','profile-fields','profile-summary','status','points','transactions','my-rewards']){
+  for(const variant of ['activity','activity-detail','rewards','reward-balance','notifications','profile','profile-fields','profile-summary','status','points','transactions','my-rewards']){
     const tree=skeleton.TabSkeleton({variant});assert.equal(tree.props.accessibilityRole,'progressbar');
     assert.equal(tree.props.children.props.children.props.importantForAccessibility,'no-hide-descendants');
   }

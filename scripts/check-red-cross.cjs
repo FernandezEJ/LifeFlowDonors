@@ -18,6 +18,7 @@ const shared={'@/services/announcement-presentation':presentation,'@/components/
 shared['@/components/announcement-image']={AnnouncementImage:props=>({type:'AnnouncementImage',props:{...props,children:props.uri?null:{type:'Text',props:{children:'No event image available'}}}})};
 const body=load('src/components/announcement-body.tsx',{'react/jsx-runtime':{jsx,jsxs:jsx},'react-native':native});
 shared['@/components/announcement-body']=body;
+shared['@/components/did-you-know']={DidYouKnow:'DidYouKnow'};
 const richDoc={version:1,blocks:[{type:'paragraph',content:[{text:'Hello',bold:true,italic:true}]},
  {type:'bullet_list',items:[[{text:'Bring ID'}]]},{type:'ordered_list',items:[[{text:'Register'}],[{text:'Donate'}]]}]};
 assert.equal(body.isAnnouncementDocument(richDoc),true);
@@ -49,10 +50,14 @@ function host(){
  const donations=load('src/services/donations.ts',{'./api':{apiRequest:async(path,options)=>{requests.push({path,options});return {};}}});
  const now=Date.now();
  const admin={id:9,title:'Admin bloodletting',description:'Test event',location:'Test venue',event_date:'2026-09-14',status:'published',published_at:new Date(now-1000).toISOString(),expires_at:new Date(now+60000).toISOString()};
- const red={id:null,source_type:'red_cross_dagupan',title:'Philippine Red Cross - Dagupan City Chapter',description:'Facility determines final eligibility.',location:'Dagupan City Chapter',event_date:null,start_time:null,status:'available'};
- assert.deepEqual(Array.from(donations.boardItems([],now)),['red-cross']);
- assert.deepEqual(Array.from(donations.boardItems([admin],now),row=>typeof row==='string'?row:row.id),[9,'red-cross']);
- assert.deepEqual(Array.from(donations.boardItems([{...admin,expires_at:new Date(now-1).toISOString()}],now)),['red-cross']);
+ const red={id:null,source_type:'red_cross_dagupan',title:'Saved Philippine Red Cross chapter title',summary:'Saved short description',description:'Facility determines final eligibility.',image_url:'https://cdn.test/chapter.png',location:'Dagupan City Chapter',event_date:null,start_time:null,status:'available'};
+ assert.deepEqual(Array.from(donations.boardItems([],now)),[], 'Missing server content never fabricates a permanent card');
+ assert.deepEqual(Array.from(donations.boardItems([],now,red),row=>row.source_type),['red_cross_dagupan']);
+ assert.deepEqual(Array.from(donations.boardItems([admin],now,red),row=>row.id),[9,null]);
+ assert.deepEqual(Array.from(donations.boardItems([{...admin,expires_at:new Date(now-1).toISOString()}],now,red),row=>row.id),[null]);
+ const many=[{...admin,id:8,published_at:new Date(now-2000).toISOString()},admin,{...admin,id:7,status:'draft'},red];
+ assert.deepEqual(Array.from(donations.boardItems(many,now,red),row=>row.id),[9,8,null]);
+ assert.deepEqual(Array.from(donations.boardItems(many,now,red,true),row=>row.id),[9,null]);
  await donations.donationApi.opportunity('private','red-cross-dagupan');
  await donations.donationApi.join('private','red-cross-dagupan');
  assert.equal(requests[0].path,'/donation-opportunities/red-cross-dagupan');
@@ -70,7 +75,7 @@ function host(){
  const boundary={...native,useWindowDimensions:()=>({width:360}),Alert:{alert:(...args)=>{dialog=args;}}};
  async function home(posts, history=[], options={}){
   const h=host(),timers=new Map(),clock={now:options.now??Date.now()};let foreground;
-  const auth={profile:null,loadProfile:async()=>{},opportunities:async()=>({data:posts}),donationHistory:async()=>({data:history}),...options.auth};
+  const auth={profile:null,loadProfile:async()=>{},opportunities:async()=>({data:posts,permanent_post:red}),donationHistory:async()=>({data:history}),...options.auth};
   const addTimer=(kind,fn,delay)=>{const key={};timers.set(key,{kind,fn,delay});return key;};
   const module=load('src/app/(tabs)/index.tsx',{...shared,'@/components/home-donation-reminder':{HomeDonationReminder:'Reminder'},'@/constants/flowie-mascots':load('src/constants/flowie-mascots.ts'),react:h.react,'expo-router':{useFocusEffect:h.focus,useRouter:()=>router},
    '@/contexts/auth-context':{useAuth:()=>auth},'@/services/donations':donations,'@/services/api':{errorMessage:e=>e.message},
@@ -82,9 +87,12 @@ function host(){
   const view=()=>h.render(module.default);const initial=view();await flush();return {view,initial,auth,timers,clock,foreground:()=>foreground?.('active'),
     fire:key=>{const timer=timers.get(key);if(timer?.kind==='timeout')timers.delete(key);timer?.fn();},blur:()=>h.blur(),close:()=>h.unmount()};
  }
- let h=await home([]);assert.ok(texts(h.view()).includes('DONATION OPTION'));assert.ok(!texts(h.view()).includes('PINNED'));
- button(h.view(),'View Donation Option').props.onPress();assert.equal(routes.pop().params.id,'red-cross-dagupan');h.close();
- h=await home([admin]);assert.ok(texts(h.view()).indexOf('Admin bloodletting')<texts(h.view()).indexOf('Donate Through the Philippine Red Cross'));
+ let h=await home([]);assert.ok(texts(h.view()).includes('PERMANENT'));assert.ok(!texts(h.view()).includes('PINNED'));
+ const permanentCard=button(h.view(),'View details: '+red.title);permanentCard.props.onPress();assert.equal(routes.pop().params.id,'red-cross-dagupan');
+ assert.equal(nodes(permanentCard).filter(n=>n.type==='Pressable').length,1);assert.equal(button(h.view(),'View Donation Option'),undefined);
+ assert.ok(nodes(permanentCard).some(n=>n.type==='Icon'&&n.props.name==='chevron-right'));
+ assert.ok(nodes(permanentCard).some(n=>n.type==='AnnouncementImage'&&n.props.compact&&n.props.preview));assert.match(texts(permanentCard),/Saved short description/);h.close();
+ h=await home([admin]);assert.ok(texts(h.view()).indexOf('Admin bloodletting')<texts(h.view()).indexOf(red.title));
  assert.ok(nodes(h.view()).some(n=>n.type==='AnnouncementImage' && n.props.uri===admin.image_url));
  button(h.view(),'View Details').props.onPress();assert.equal(routes.pop().params.id,'9');h.close();
 
@@ -105,7 +113,7 @@ function host(){
  h=await home([older,admin],[latest,{...latest,id:74,opportunity:older}]);
  let homeTree=h.view();
  assert.ok(!texts(homeTree).includes('Older announcement'));
- assert.equal(nodes(homeTree).filter(n=>n.type==='Pressable'&&n.props.accessibilityLabel?.startsWith('View details:')).length,1);
+ assert.equal(nodes(homeTree).filter(n=>n.type==='Pressable'&&n.props.accessibilityLabel?.startsWith('View details:')).length,2);
  assert.equal(nodes(homeTree).find(n=>n.type==='Text'&&n.props.children===admin.description).props.numberOfLines,2);
  assert.ok(texts(homeTree).includes('September 14, 2026'));
  for(const [label,expected] of [['View all announcements','/announcements'],['View all activity','/(tabs)/activity']]) {
@@ -155,7 +163,7 @@ function host(){
   opportunities:async()=>{boardCount++;if(offline)throw new Error('Board offline');return {data:[admin]};},
   donationHistory:async()=>{activityCount++;if(offline)throw new Error('Activity offline');return {data:[latest]};}}});
  assert.ok(button(h.view(),'Retry profile')&&button(h.view(),'Retry announcements')&&button(h.view(),'Retry activity'));
- assert.ok(button(h.view(),'View Donation Option'));assert.ok(!nodes(h.view()).some(n=>n.type==='TabSkeleton'));
+ assert.equal(button(h.view(),'View details: '+red.title),undefined,'Offline initial load must not show hardcoded permanent information');assert.ok(!nodes(h.view()).some(n=>n.type==='TabSkeleton'));
  offline=false;button(h.view(),'Retry announcements').props.onPress();await flush();
  assert.equal(boardCount,2);assert.equal(activityCount,1);assert.equal(profileCount,1);assert.ok(button(h.view(),'View Details'));
  button(h.view(),'Retry activity').props.onPress();await flush();assert.ok(button(h.view(),'View recent activity'));
@@ -164,7 +172,7 @@ function host(){
   h=await home([admin],[],{width,fontScale});const tree=h.view();
   const ask=button(tree,'Ask Flowie'),style=Object.assign({},...ask.props.style({pressed:false}).filter(Boolean));
   assert.equal(style.flexDirection,'row');assert.ok(style.minHeight>=44);
-  assert.ok(nodes(ask).some(n=>n.type==='Icon'&&n.props.name==='arrow-forward'));
+  assert.ok(nodes(ask).some(n=>n.type==='Icon'&&n.props.name==='chevron-right'&&n.props.size===22));
   assert.ok(nodes(tree).some(n=>n.type==='Image'&&n.props.accessibilityLabel==='Flowie, the LifeFlow assistant'));
   const card=nodes(tree).find(n=>n.type==='Pressable'&&n.props.accessibilityLabel==='View details: '+admin.title);
   assert.ok(card.props.style({pressed:true}).some(s=>s?.opacity<1));assert.equal(nodes(card).filter(n=>n.type==='Pressable').length,1);
@@ -177,6 +185,8 @@ function host(){
  renderImage().props.onLayout({nativeEvent:{layout:{width:320}}});
  nodes(renderImage()).find(n=>n.type==='Image').props.onLoad({nativeEvent:{source:{width:400,height:1200}}});
  assert.equal(renderImage().props.style[1].aspectRatio,16/9);assert.equal(nodes(renderImage()).find(n=>n.type==='Image').props.resizeMode,'cover');
+ imageProps={...imageProps,compact:true};assert.equal(renderImage().props.style[1].aspectRatio,32/9,'Permanent cover is half the height at the same width');
+ assert.equal(nodes(renderImage()).find(n=>n.type==='Image').props.resizeMode,'cover');imageProps={...imageProps,compact:false};
  assert.equal(nodes(renderImage()).find(n=>n.type==='Image').props.fadeDuration,0);
  const originalSource=nodes(renderImage()).find(n=>n.type==='Image').props.source;
  imageProps={...imageProps};assert.equal(nodes(renderImage()).find(n=>n.type==='Image').props.source,originalSource,'Unchanged rerenders retain the native source');
@@ -215,6 +225,14 @@ function host(){
  coverProps={...coverProps,uri:'https://cdn.test/legacy.png?v=1'};nativeImage().props.onLoad({nativeEvent:{source:{width:1200,height:400}}});
  coverProps={...coverProps,uri:'https://cdn.test/legacy.png?v=2'};assert.equal(nativeImage().props.source.uri,coverProps.uri,'Legacy cache-busting queries are preserved');
  coverProps={...coverProps,uri:null};assert.ok(texts(cover()).includes('No event image available'));assert.equal(cover().props.style[1].aspectRatio,16/9);coverHost.unmount();
+ let savedPermanent=red;
+ h=await home([older,admin],[],{auth:{opportunities:async()=>({data:[older,admin],permanent_post:savedPermanent})}});
+ const permanentPoll=Array.from(h.timers.entries()).find(([,timer])=>timer.kind==='interval'&&timer.delay===30000)[0];
+ savedPermanent={...red,title:'Admin edited permanent title',summary:'Admin edited preview',image_url:'https://cdn.test/new-permanent.png'};
+ h.fire(permanentPoll);await flush();assert.match(texts(h.view()),/Admin edited permanent title/);assert.doesNotMatch(texts(h.view()),/Saved Philippine Red Cross chapter title/);
+ const updatedCard=button(h.view(),'View details: '+savedPermanent.title);
+ assert.match(texts(updatedCard),/Admin edited preview/);assert.equal(nodes(updatedCard).find(n=>n.type==='AnnouncementImage').props.uri,savedPermanent.image_url);
+ assert.ok(!texts(h.view()).includes(older.title),'Only the newest regular preview remains beside the permanent card');h.close();
  // Home still applies real title/image updates and retains valid cards during silent polling.
  let refreshedPost=admin;h=await home([admin],[],{auth:{opportunities:async()=>({data:[{...refreshedPost}]})}});
  const poll=Array.from(h.timers.entries()).find(([,t])=>t.kind==='interval'&&t.delay===30000)[0];
@@ -237,12 +255,16 @@ function host(){
  const renderList=()=>listHost.render(announcementList.default);
  const getList=()=>nodes(renderList()).find(n=>n.type==='FlatList');
  assert.equal(getList().props.ListEmptyComponent.type,'TabSkeleton');
- listResult.resolve({data:[older,admin,{...admin,id:10,expires_at:new Date(now-1).toISOString()},{...admin,id:11,status:'draft'}]});await flush();
- let announcementProps=getList().props;assert.deepEqual(Array.from(announcementProps.data,row=>row.id),[9,8]);assert.equal(announcementProps.showsVerticalScrollIndicator,false);
+ listResult.resolve({data:[older,admin,{...admin,id:10,expires_at:new Date(now-1).toISOString()},{...admin,id:11,status:'draft'},red],permanent_post:red});await flush();
+ let announcementProps=getList().props;assert.deepEqual(Array.from(announcementProps.data,row=>row.id),[9,8,null]);assert.equal(announcementProps.showsVerticalScrollIndicator,false);
+ const permanentListCard=announcementProps.renderItem({item:red});assert.ok(texts(permanentListCard).includes('Permanent'));assert.ok(!texts(permanentListCard).includes('Date to be announced'));
+ assert.equal(announcementProps.keyExtractor(red),'red-cross');permanentListCard.props.onPress();assert.equal(routes.pop().params.id,'red-cross-dagupan');
  const card=announcementProps.renderItem({item:admin});assert.ok(texts(card).includes('September 14, 2026'));card.props.onPress();assert.equal(routes.pop().params.id,'9');
- listResult=deferred();announcementProps.onRefresh();assert.equal(getList().props.refreshing,true);assert.equal(getList().props.data.length,2);
- listResult.reject(new Error('Refresh unavailable'));await flush();assert.equal(getList().props.data.length,2);assert.ok(texts(getList().props.ListHeaderComponent).includes('Refresh unavailable'));
- listResult=deferred();button(getList().props.ListHeaderComponent,'Retry').props.onPress();listResult.resolve({data:[]});await flush();assert.ok(texts(getList().props.ListEmptyComponent).includes('No active announcements'));
+ listResult=deferred();announcementProps.onRefresh();assert.equal(getList().props.refreshing,true);assert.equal(getList().props.data.length,3);
+ listResult.reject(new Error('Refresh unavailable'));await flush();assert.equal(getList().props.data.length,3);assert.ok(texts(getList().props.ListHeaderComponent).includes('Refresh unavailable'));
+ listResult=deferred();button(getList().props.ListHeaderComponent,'Retry').props.onPress();listResult.resolve({data:[],permanent_post:red});await flush();assert.deepEqual(Array.from(getList().props.data,row=>row.id),[null]);
+ listResult=deferred();getList().props.onRefresh();
+ listResult.resolve({data:[]});await flush();assert.ok(texts(getList().props.ListEmptyComponent).includes('No active announcements'));
  nodes(renderList()).find(n=>n.props?.accessibilityLabel==='Back').props.onPress();assert.equal(routes.pop(),'back');
  listHost.unmount();assert.equal(listTimers.size,0);
  const failedHost=host();const failedList=load('src/app/announcements.tsx',{...shared,'react-native':{...native,FlatList:'FlatList'},react:failedHost.react,
@@ -400,17 +422,21 @@ function host(){
   }
  }
  // Task 03 exercises the actual details screen through its native boundary.
- async function detailsScenario({id='9',result={opportunity:admin},error,width=375,fontScale=1}={}){
-  const h=host(),routes=[],calls=[];let response=result,failure=error,currentId=id;
+ async function detailsScenario({id='9',notificationId,result={opportunity:admin},error,width=375,fontScale=1}={}){
+  const h=host(),routes=[],calls=[],timers=new Map();let response=result,failure=error,currentId=id,currentNotification=notificationId,clock=0,nextTimer=0;
+  class ScreenDate extends Date { static now(){return clock;} }
   const auth={opportunity:async key=>{calls.push(['load',key]);if(failure)throw failure;return response;},
+   notificationAnnouncement:async key=>{calls.push(['notification',key]);if(failure)throw failure;return response;},
    donationHistory:async()=>({data:[]}),eligibilityState:async()=>({assessment:{result:'eligible'},cooldown_active:true,remaining_seconds:100}),
    joinOpportunity:async key=>{calls.push(['join',key]);throw new ApiError('This announcement is no longer available.',404);}};
   const module=load('src/app/announcement/[id].tsx',{...shared,'@/components/confirmation-modal':{ConfirmationModal:'ConfirmationModal'},
    '@/services/eligibility':eligibility,'react-native':{...native,useWindowDimensions:()=>({width,fontScale})},react:h.react,
-   'expo-router':{Stack:{Screen:'Screen'},useFocusEffect:h.focus,useRouter:()=>({push:r=>routes.push(r),back:()=>routes.push('back'),canGoBack:()=>true,replace:r=>routes.push(r)}),useLocalSearchParams:()=>({id:currentId})},
-   '@/contexts/auth-context':{useAuth:()=>auth},'@/services/api':{ApiError,errorMessage:e=>e.message}});
+   'expo-router':{Stack:{Screen:'Screen'},useFocusEffect:h.focus,useRouter:()=>({push:r=>routes.push(r),back:()=>routes.push('back'),canGoBack:()=>true,replace:r=>routes.push(r)}),useLocalSearchParams:()=>({id:currentId,notificationId:currentNotification})},
+   '@/contexts/auth-context':{useAuth:()=>auth},'@/services/api':{ApiError,errorMessage:e=>e.message}},
+   {Date:ScreenDate,setTimeout:(fn,delay)=>{const timer=++nextTimer;timers.set(timer,{fn,at:clock+delay});return timer;},clearTimeout:timer=>timers.delete(timer)});
   const view=()=>h.render(module.default);const initial=view();await flush();
-  return {h,view,initial,routes,calls,auth,setId:value=>{currentId=value;},setResponse:value=>{response=value;failure=undefined;}};
+  return {h,view,initial,routes,calls,auth,timers,setId:value=>{currentId=value;},setNotification:value=>{currentNotification=value;},setFailure:value=>{failure=value;},setResponse:value=>{response=value;failure=undefined;},
+   advance:milliseconds=>{clock+=milliseconds;for(const [id,timer] of [...timers])if(timer.at<=clock){timers.delete(id);timer.fn();}}};
  }
  const flatStyle=value=>Object.assign({},...[value].flat(Infinity).filter(Boolean));
  let d=await detailsScenario({result:{opportunity:{...admin,start_time:'09:05:00',end_time:'15:30:00',description_document:richDoc}}});
@@ -430,7 +456,7 @@ function host(){
  assert.ok(!nodes(scroll).includes(button(tree,'Evaluate'))&&!nodes(scroll).includes(button(tree,'Go Donate')),'CTA is a layout sibling below scroll content');
  assert.ok(nodes(tree).some(n=>n.type==='View'&&n.props.style?.flexShrink===0&&n.props.style?.backgroundColor==='#FFF9F2'));
  assert.ok(button(tree,'Evaluate').props.style({pressed:false}).some(s=>s?.borderWidth===1));
- assert.ok(button(tree,'Go Donate').props.style({pressed:false}).some(s=>s?.backgroundColor==='#9B1238'));
+ assert.ok(button(tree,'Go Donate').props.style({pressed:false}).some(s=>s?.backgroundColor==='#892325'));
  nodes(tree).find(n=>n.props?.accessibilityLabel==='Go back').props.onPress();assert.equal(d.routes.pop(),'back');
  d.h.unmount();
  for(const [width,fontScale,stacked] of [[320,1,true],[375,1,false],[375,2,true],[768,1,false]]){
@@ -455,7 +481,7 @@ function host(){
   d=await detailsScenario({id:id===undefined?null:id});assert.ok(texts(d.view()).includes('This announcement is unavailable.'));assert.equal(d.calls.length,0);assert.equal(button(d.view(),'Go Donate'),undefined);d.h.unmount();
  }
  for(const result of [null,{}, {opportunity:null}]){d=await detailsScenario({result});assert.ok(texts(d.view()).includes('This announcement is unavailable.'));assert.equal(button(d.view(),'Go Donate'),undefined);d.h.unmount();}
- d=await detailsScenario({error:new ApiError('Not found',404)});assert.match(texts(d.view()),/unavailable or has expired/);assert.equal(button(d.view(),'Go Donate'),undefined);
+ d=await detailsScenario({error:new ApiError('Not found',404)});assert.match(texts(d.view()),/no longer available/);assert.equal(button(d.view(),'Go Donate'),undefined);
  d.setResponse({opportunity:admin});button(d.view(),'Retry donation details').props.onPress();await flush();assert.ok(button(d.view(),'Go Donate'));assert.equal(d.calls.filter(c=>c[0]==='load').length,2);d.h.unmount();
  d=await detailsScenario({error:new Error('Network unavailable')});assert.match(texts(d.view()),/Network unavailable/);assert.ok(button(d.view(),'Retry donation details'));d.h.unmount();
  d=await detailsScenario();button(d.view(),'Go Donate').props.onPress();await flush();nodes(d.view()).find(n=>n.type==='ConfirmationModal').props.onPrimary();await flush();
@@ -479,6 +505,67 @@ function host(){
  assert.equal(d.routes.length,0,'Previous-route join completion must not navigate from the new event');
  assert.equal(button(d.view(),'Joining donation activity').props.disabled,true,'Previous-route cleanup must not unlock the new confirmation');
  nodes(d.view()).find(n=>n.type==='ConfirmationModal').props.onSecondary();assert.equal(button(d.view(),'Go Donate').props.disabled,false);d.h.unmount();
+ // 7D: only a validated notification context uses the recipient-scoped archive API.
+ const archived={opportunity:{...admin,title:'Retained announcement',image_url:'https://cdn.test/retained.png',description_document:richDoc,
+   event_date:'2026-10-28',expires_at:'2026-10-27T16:00:00Z'},view_state:'expired',read_only:true,server_time:'2026-10-27T16:00:00Z'};
+ const archivedOriginal=JSON.stringify(archived);
+ for(const [width,fontScale] of [[320,1],[390,2]]){
+  d=await detailsScenario({notificationId:'17',result:archived,width,fontScale});tree=d.view();copy=texts(tree);
+  assert.equal(d.calls.length,1);assert.equal(d.calls[0].join(':'),'notification:17');
+  for(const content of ['Retained announcement','Event Location','Bring ID','Expired','viewing only'])assert.ok(copy.includes(content));
+  assert.equal(nodes(tree).find(n=>n.type==='AnnouncementImage').props.uri,archived.opportunity.image_url);
+  assert.equal(nodes(tree).find(n=>n.type==='AnnouncementImage').props.preview,undefined);
+  for(const action of ['Go Donate','Evaluate','Confirm','Register','Participate'])assert.equal(button(tree,action),undefined);
+  assert.equal(nodes(tree).filter(n=>n.type==='Pressable').length,1,'Only safe Back remains interactive');
+  assert.ok(!nodes(tree).some(n=>n.type==='ConfirmationModal'));
+  const badge=nodes(tree).find(n=>n.props?.accessibilityLabel==='Expired announcement');assert.ok(badge);assert.equal(badge.props.numberOfLines,undefined);
+  const reads=d.calls.length;d.h.blur();d.view();await flush();assert.equal(d.calls.length,reads+1,'The same read/unread notification can reopen');
+  assert.ok(texts(d.view()).includes('Expired'));d.h.unmount();assert.equal(d.timers.size,0);
+ }
+ assert.equal(JSON.stringify(archived),archivedOriginal,'Read-only rendering never mutates announcement data');
+ const activeNotice={...archived,opportunity:{...archived.opportunity,event_date:'2026-10-01'},view_state:'active',read_only:false,server_time:'2026-10-27T15:59:59Z'};
+ d=await detailsScenario({notificationId:'17',result:activeNotice});tree=d.view();
+ assert.ok(button(tree,'Evaluate')&&button(tree,'Go Donate'),'A past event date alone does not expire a publication');
+ assert.ok(!nodes(tree).some(n=>n.props?.accessibilityLabel==='Expired announcement'));
+ const staleEvaluate=button(tree,'Evaluate').props.onPress,staleDonate=button(tree,'Go Donate').props.onPress;
+ staleDonate();await flush();const staleConfirmation=nodes(d.view()).find(n=>n.type==='ConfirmationModal').props.onPrimary;
+ d.advance(1000);tree=d.view();assert.ok(texts(tree).includes('Expired'));assert.equal(button(tree,'Go Donate'),undefined);assert.equal(button(tree,'Evaluate'),undefined);
+ assert.ok(!nodes(tree).some(n=>n.type==='ConfirmationModal'));const beforeStale=d.calls.length;
+ staleEvaluate();staleDonate();staleConfirmation();await flush();assert.equal(d.routes.length,0);assert.equal(d.calls.length,beforeStale);d.h.unmount();
+ // A long publication does not expire early at the native timer's signed-int limit.
+ d=await detailsScenario({notificationId:'17',result:{...activeNotice,opportunity:{...activeNotice.opportunity,expires_at:'2027-10-27T16:00:00Z'}}});d.view();
+ assert.equal([...d.timers.values()][0].at,2147483647);d.advance(2147483647);assert.ok(button(d.view(),'Go Donate'));d.h.unmount();assert.equal(d.timers.size,0);
+ const delayed=deferred();d=await detailsScenario({notificationId:'17',result:delayed.promise});d.advance(1500);delayed.resolve(activeNotice);await flush();
+ assert.ok(texts(d.view()).includes('Expired'));assert.equal(button(d.view(),'Go Donate'),undefined,'A response arriving after expiry never flashes active actions');d.h.unmount();
+ for(const notificationId of ['0','-1','../17','17x','999999999999999999999',['17']]){
+  d=await detailsScenario({notificationId,result:archived});assert.equal(d.calls.length,0);assert.equal(button(d.view(),'Go Donate'),undefined);d.h.unmount();
+ }
+ d=await detailsScenario({id:'red-cross-dagupan',notificationId:'17',result:archived});assert.equal(d.calls.length,0);d.h.unmount();
+ d=await detailsScenario({id:'10',notificationId:'17',result:archived});assert.ok(!texts(d.view()).includes('Retained announcement'));assert.match(texts(d.view()),/unavailable/);d.h.unmount();
+ for(const status of [403,404,410,500,503]){
+  d=await detailsScenario({notificationId:'17',error:new ApiError('Server unavailable',status)});copy=texts(d.view());
+  assert.ok(!copy.includes('Expired'));assert.equal(button(d.view(),'Go Donate'),undefined);assert.ok(button(d.view(),'Retry donation details'));
+  if(status<500)assert.match(copy,/no longer available/);else assert.match(copy,/Server unavailable/);
+  assert.ok(d.calls.every(call=>call[0]==='notification'),'A denied notice never falls back to unrestricted detail');d.h.unmount();
+ }
+ d=await detailsScenario({notificationId:'17',result:archived});d.view();d.setFailure(new Error('Offline'));
+ d.h.blur();d.view();await flush();assert.ok(texts(d.view()).includes('Retained announcement'));assert.ok(texts(d.view()).includes('Offline'));
+ assert.equal(button(d.view(),'Go Donate'),undefined);d.setResponse(archived);button(d.view(),'Retry donation details').props.onPress();await flush();assert.ok(!texts(d.view()).includes('Offline'));
+ d.setFailure(new ApiError('Withdrawn',403));d.h.blur();d.view();await flush();assert.ok(!texts(d.view()).includes('Retained announcement'));assert.match(texts(d.view()),/no longer available/);d.h.unmount();
+ // Changing notification ID on the same announcement invalidates cached content and late replies.
+ const firstNotice=deferred(),nextNotice=deferred();d=await detailsScenario({notificationId:'17',result:firstNotice.promise});
+ d.setNotification('18');d.setResponse(nextNotice.promise);assert.ok(!texts(d.view()).includes('Retained announcement'));
+ nextNotice.resolve(archived);await flush();assert.ok(texts(d.view()).includes('Retained announcement'));
+ firstNotice.resolve({...archived,opportunity:{...archived.opportunity,title:'Previous notification content'}});await flush();
+ assert.ok(!texts(d.view()).includes('Previous notification content'));d.h.unmount();
+ console.log('7D notification announcement checks passed: recipient-scoped detail, expired read-only content, active/event-date distinction, exact server-time boundary and delayed replies, safe IDs, denied/archive isolation, retry/cached errors and stale confirmation/route guards.');
+ const permanentDetails=await detailsScenario({id:'red-cross-dagupan',result:{opportunity:{...savedPermanent,description_document:richDoc}}});
+ assert.match(texts(permanentDetails.view()),/Admin edited permanent title|Admin edited preview/);assert.match(texts(permanentDetails.view()),/Bring ID/);
+ assert.doesNotMatch(texts(permanentDetails.view()),/Event Date|Date to be announced|Confirm donation arrangements with the chapter\./);
+ assert.equal(nodes(permanentDetails.view()).find(n=>n.type==='AnnouncementImage').props.preview,undefined);
+ assert.equal(nodes(permanentDetails.view()).find(n=>n.type==='AnnouncementImage').props.uri,savedPermanent.image_url);
+ assert.ok(button(permanentDetails.view(),'Go Donate')&&button(permanentDetails.view(),'Evaluate'));permanentDetails.h.unmount();
+ console.log('B1 permanent post checks passed: saved content/refetch, zero/one/many board ordering, View All reachability/deduplication, whole-card chevron routes, 32:9 covers, full detail images/rich text and no fabricated dates or offline fallback.');
  console.log('Phase A detail checks passed: structured loading, missing IDs, out-of-order route responses, retry recovery and route-scoped join locks.');
  console.log('Task 03 details UI checks passed: cream theme, screenshot hierarchy, real banner/failure fallback, dates/times/nulls, full safe rich text/plain text, truthful guidance, footer/320/375dp/large-font configuration, Back/Evaluate, invalid/empty/expired/network/retry states and server-rejected join. Native boundaries mocked.');
  console.log('Red Cross / Go Donate checks passed: both sources, ordered validation, popup routes, expiry, cancel, duplicate taps, changed-server-state recovery, offline safety and shared Activity navigation.');

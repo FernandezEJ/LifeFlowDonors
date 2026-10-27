@@ -33,12 +33,12 @@ export default function BirthDatePicker({ value, onChange, disabled }: BirthDate
   };
   return <>
     <Pressable accessibilityRole="button" accessibilityLabel="Choose birth date" disabled={disabled} onPress={show}
-      style={{ minHeight: 54, paddingHorizontal: 16, borderWidth: 1, borderColor: PALETTE.border, borderRadius: 16, backgroundColor: PALETTE.surface, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+      style={{ minHeight: 54, paddingHorizontal: 16, borderWidth: 1, borderColor: PALETTE.controlBorder, borderRadius: 16, backgroundColor: PALETTE.surface, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
       <Text style={{ fontSize: 16, color: value ? PALETTE.text : PALETTE.neutral }}>{value || 'MM/DD/YYYY'}</Text>
-      <MaterialIcons name="calendar-today" size={22} color={PALETTE.neutral} />
+      <MaterialIcons name="calendar-today" size={22} color={PALETTE.primary} />
     </Pressable>
     <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
-      <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: '#00000055' }}>
+      <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: PALETTE.backdrop }}>
         <View style={{ padding: 20, backgroundColor: PALETTE.surface, borderRadius: 20 }}>
           <Text style={{ fontSize: 20, color: PALETTE.text }}>Birth Date</Text>
           <DateTimePicker value={draft} mode="date" display="spinner" themeVariant="light" maximumDate={latestBirthDate()}

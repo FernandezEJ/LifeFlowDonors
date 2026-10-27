@@ -54,7 +54,10 @@ async function serviceChecks() {
   assert.equal(service.notificationDestination({type:'donation_completed',data:{participation_id:12}}).params.id, '12');
   assert.equal(service.notificationDestination({type:'donation_needs_revision',data:{participation_id:12}}).pathname, '/activity/[id]');
   assert.equal(service.notificationDestination({type:'donation_cooldown_complete',data:null}).pathname, '/(tabs)/status');
-  assert.equal(service.notificationDestination({type:'admin_announcement',data:{opportunity_id:8}}).pathname, '/announcement/[id]');
+  const announcement=service.notificationDestination({id:17,type:'admin_announcement',data:{opportunity_id:8}});
+  assert.equal(announcement.pathname, '/announcement/[id]');assert.equal(announcement.params.id,'8');assert.equal(announcement.params.notificationId,'17');
+  for(const id of [undefined,0,-1,1.5,'17',Number.MAX_SAFE_INTEGER+1])assert.equal(service.notificationDestination({id,type:'admin_announcement',data:{opportunity_id:8}}),null);
+  await service.notificationApi.announcement('session',17);assert.equal(sent.path,'/notifications/17/announcement');assert.equal(sent.token,'session');assert.equal(sent.body,undefined);
   for (const id of [-1,0,1.5,'12','../12',Number.MAX_SAFE_INTEGER+1,null]) {
     assert.equal(service.notificationDestination({type:'donation_rejected',data:{participation_id:id}}), null);
   }
@@ -168,6 +171,12 @@ async function screenChecks() {
   assert.ok(nodes(ui.list().ListHeaderComponent).some(n=>n.props?.accessibilityRole==='alert'));
   ui.control.failList=false;ui.action('Retry notifications').props.onPress();await flush();
   assert.ok(ui.list().data.every(item=>item.read_at));assert.equal(ui.action('Mark all read').props.disabled,true);
+  button(ui.list().ListFooterComponent,'Load more').props.onPress();await flush();
+  const announcementRow=ui.list().renderItem({item:ui.list().data.find(item=>item.type==='admin_announcement')});
+  announcementRow.props.onPress();await flush();let announcementRoute=ui.routes.at(-1);
+  assert.equal(announcementRoute.pathname,'/announcement/[id]');assert.equal(announcementRoute.params.id,'8');assert.equal(announcementRoute.params.notificationId,'1');
+  const readCount=ui.shared.unreadCount;announcementRow.props.onPress();await flush();announcementRoute=ui.routes.at(-1);
+  assert.equal(announcementRoute.params.notificationId,'1');assert.equal(ui.shared.unreadCount,readCount,'Reopening a read announcement keeps unread tracking unchanged');
   assert.ok(!JSON.stringify(ui.list().ListHeaderComponent).includes('Enable important notifications'));
   ui.action('Notification Settings').props.onPress();assert.equal(ui.routes.at(-1),'/notification-settings');
   ui.action('Go back').props.onPress();assert.equal(ui.routes.at(-1),'back');
@@ -317,42 +326,182 @@ async function contextChecks() {
 }
 
 async function reminderChecks() {
-  const slots=[];let cursor=0,focus,cleanup,foreground,timer,requests=0;
-  const user={id:42},routes=[];
-  const record=id=>({notification:{id,type:'donation_reminder',data:{participation_id:88,reminder_date:'2026-09-21'},read_at:null},activity_title:'Tomorrow drive',event_date:'2026-09-22',start_time:'09:00',remaining_seconds:60});
-  let records=[record(1)];
-  const auth={user,homeReminders:async()=>{requests++;return {reminders:records,server_time:'2026-09-21T12:00:00Z'};}};
-  const react={useCallback:fn=>fn,useRef:initial=>{const i=cursor++;return slots[i]||={current:initial};},useState:initial=>{const i=cursor++;if(!(i in slots))slots[i]=initial;return [slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];}};
-  const stored=new Map();let failSave=false;
-  const secure={getItemAsync:async key=>stored.get(key)??null,setItemAsync:async(key,value)=>{if(failSave)throw Error('Storage unavailable');stored.set(key,value);}};
-  const storage=()=>load('src/services/reminder-dismissal-storage.ts',{'expo-secure-store':secure}).reminderDismissalStorage;
-  const web=()=>load('src/services/reminder-dismissal-storage.web.ts',{}, {localStorage:{getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value)}}).reminderDismissalStorage;
-  await web().dismiss(99,9);assert.equal(await web().isDismissed(99,9),true);assert.equal(await web().isDismissed(98,9),false);assert.equal(await web().isDismissed(99,10),false);
-  const build=()=>load('src/components/home-donation-reminder.tsx',{
-    react,'react/jsx-runtime':{jsx,jsxs:jsx},'expo-router':{useFocusEffect:fn=>{focus=fn;},useRouter:()=>({push:route=>routes.push(route)})},
-    'react-native':{Modal:'Modal',Pressable:'Pressable',Text:'Text',View:'View',StyleSheet:{create:x=>x},AppState:{addEventListener:(_,fn)=>{foreground=fn;return {remove:()=>{foreground=null;}};}}},
-    '@/contexts/auth-context':{useAuth:()=>auth},'@/services/notifications':service,
-    '@/services/reminder-dismissal-storage':{reminderDismissalStorage:storage()},
-  },{setTimeout:fn=>{timer=fn;return 1;},clearTimeout:()=>{timer=null;}});
-  let module=build();
-  const render=()=>{cursor=0;return module.HomeDonationReminder();};
-  render();cleanup=focus();await flush();assert.ok(button(render(),'Got it'));
-  const before=requests;button(render(),'Got it').props.onPress();await flush();assert.equal(render(),null);assert.equal(requests,before,'Dismissal does not mark read/delete');
-  cleanup();render();cleanup=focus();await flush();assert.equal(render(),null,'Same reminder stays suppressed across focus');
-  cleanup();slots.length=0;module=build();render();cleanup=focus();await flush();assert.equal(render(),null,'Dismissal survives fresh module/app restart');
-  assert.equal(await storage().isDismissed(42,1),true);assert.equal(await storage().isDismissed(43,1),false);
-  auth.user={id:43};cleanup();render();cleanup=focus();await flush();assert.ok(render(),'Different donor is not suppressed');
-  auth.user=user;cleanup();render();cleanup=focus();await flush();
-  records=[record(6)];foreground('active');await flush();failSave=true;button(render(),'Got it').props.onPress();await flush();assert.ok(button(render(),'Got it'),'Storage failure keeps popup for retry');assert.equal(await storage().isDismissed(42,6),false);
-  failSave=false;button(render(),'Got it').props.onPress();await flush();assert.equal(render(),null);
-  records=[record(2)];foreground('active');await flush();const view=button(render(),'View Activity');view.props.onPress();view.props.onPress();await flush();
-  assert.equal(routes.length,1);assert.equal(routes[0].pathname,'/activity/[id]');assert.equal(routes[0].params.id,'88');
-  records=[record(3)];foreground('active');await flush();assert.ok(render());timer();assert.equal(render(),null,'Popup hides at server deadline');
-  records=[record(4)];foreground('active');await flush();records=[];button(render(),'View Activity').props.onPress();await flush();assert.equal(routes.length,1,'No navigation after server invalidates reminder');
-  records=[record(5)];foreground('active');await flush();foreground('background');assert.equal(render(),null);
-  cleanup();assert.equal(foreground,null);assert.equal(timer,null);
-  assert.equal(service.notificationDestination(record(1).notification).params.id,'88');
+  const boundary=require('./flowie-test-boundaries.cjs');
+  class ApiError extends Error { constructor(message,status){super(message);this.status=status;} }
+  const record=id=>({notification:{id,type:'donation_reminder',data:{participation_id:200+id,opportunity_id:100+id},read_at:null},activity_title:'Tomorrow drive',event_date:'2026-11-01',start_time:'09:00',remaining_seconds:60});
+  let records=[record(1)],acks=0,ackFailure=false,ackGate,readGate;const saved=new Set();
+  const auth={user:{id:42},homeReminders:async()=>{
+    const owner=auth.user.id,result=records.filter(row=>!saved.has(owner+':'+row.notification.data.opportunity_id));
+    if(readGate)await readGate;return {reminders:result,server_time:'2026-10-31T12:00:00Z'};
+  },acknowledgePreparation:async id=>{
+    acks++;const owner=auth.user.id;if(ackGate)await ackGate;
+    if(ackFailure)throw ackFailure;
+    const row=records.find(row=>row.notification.id===id);if(!row)throw new ApiError('Stale',409);
+    saved.add(owner+':'+row.notification.data.opportunity_id);return {acknowledged:true};
+  }};
+  const create=(dev=true)=>{
+    const h=boundary.host(),routes=[],timers=new Map();let nextTimer=0,foreground;
+    const module=boundary.load('src/components/home-donation-reminder.tsx',{
+      ...boundary.shared,react:h.react,
+      '@/contexts/auth-context':{useAuth:()=>auth},'@/services/notifications':service,'@/services/api':{ApiError},
+      '@/components/donation-preparation-modal':{DonationPreparationModal:'PreparationModal'},
+      'expo-router':{useFocusEffect:h.focus,useRouter:()=>({push:route=>routes.push(route)})},
+      'react-native':{...boundary.native,AppState:{addEventListener:(_,callback)=>{foreground=callback;return {remove:()=>{foreground=null;}};}}},
+    },{__DEV__:dev,setTimeout:fn=>{timers.set(++nextTimer,fn);return nextTimer;},clearTimeout:id=>timers.delete(id)});
+    const view=()=>h.render(module.HomeDonationReminder);
+    const modal=()=>boundary.nodes(view()).find(n=>n.type==='PreparationModal').props;
+    return {h,view,modal,routes,timers,foreground:state=>foreground?.(state)};
+  };
+  let ui=create();ui.view();await flush();assert.equal(ui.modal().visible,true);
+  let release;ackGate=new Promise(resolve=>{release=resolve;});ackFailure=Error('Offline');
+  ui.modal().onAcknowledge();ui.modal().onAcknowledge();assert.equal(acks,1,'Duplicate button taps share a synchronous lock');
+  release();await flush();assert.equal(ui.modal().visible,true);assert.match(ui.modal().error,/retry/);assert.equal(saved.size,0);
+  ackGate=null;ackFailure=false;ui.modal().onAcknowledge();await flush();assert.equal(ui.modal().visible,false);assert.equal(saved.size,1);
+  ui.h.blur();ui.h.refocus();await flush();assert.equal(ui.modal().visible,false);ui.h.unmount();
+  ui=create();ui.view();await flush();assert.equal(ui.modal().visible,false,'A fresh app/device obeys the persisted server result');
+  auth.user={id:43};ui.view();await flush();assert.equal(ui.modal().visible,true,'Acknowledgement never suppresses another donor');
+  ui.modal().onBack();assert.equal(ui.modal().visible,false);const beforeBack=acks;ui.h.blur();ui.h.refocus();await flush();
+  assert.equal(ui.modal().visible,false);assert.equal(acks,beforeBack,'Back avoids a popup loop without pretending server acknowledgement');
+  records=[record(2),record(3)];ui.foreground('active');await flush();assert.equal(ui.modal().visible,true);
+  ui.modal().onAcknowledge();await flush();assert.equal(ui.modal().visible,true,'Multiple activities are handled one at a time');
+  ui.modal().onFlowie();ui.modal().onFlowie();await flush();assert.equal(ui.routes.length,1);
+  assert.equal(ui.routes[0].pathname,'/flowie');assert.equal(ui.routes[0].params.preparationKey,'3');assert.equal(ui.routes[0].params.preparationTitle,'Tomorrow drive');
+  assert.equal(ui.modal().visible,false);assert.equal(ui.timers.size,0);
+  records=[record(4)];ui.foreground('active');await flush();for(const expire of ui.timers.values())expire();assert.equal(ui.modal().visible,false);
+  records=[record(5)];ui.foreground('active');await flush();records=[];ui.modal().onFlowie();await flush();
+  assert.equal(ui.modal().visible,false);assert.equal(ui.routes.length,1,'Server cancellation/expiry prevents Flowie navigation');
+  records=[record(6)];ui.foreground('active');await flush();ui.foreground('background');assert.equal(ui.modal().visible,false);ui.h.unmount();
+  // In-flight account changes and focus changes cannot show or navigate old reminders.
+  auth.user={id:50};records=[record(7)];let releaseRead;readGate=new Promise(resolve=>{releaseRead=resolve;});
+  ui=create();ui.view();records=[];auth.user={id:51};ui.view();releaseRead();readGate=null;await flush();
+  assert.equal(ui.modal().visible,false);ui.h.unmount();
+  auth.user={id:52};records=[record(8)];ui=create();ui.view();await flush();
+  ackGate=new Promise(resolve=>{release=resolve;});ui.modal().onFlowie();auth.user={id:53};records=[];ui.view();release();await flush();
+  assert.equal(ui.routes.length,0);assert.equal(ui.modal().visible,false);ui.h.unmount();ackGate=null;
+  // Home has no preview entry point in either development or production.
+  for(const dev of [true,false]) {
+    ui=create(dev);ui.view();await flush();
+    assert.ok(!boundary.nodes(ui.view()).some(n=>n.props?.accessibilityLabel==='Preview preparation reminder'));
+    assert.equal(ui.modal().preview,undefined);assert.equal(ui.modal().visible,false);
+    const before={acks,routes:ui.routes.length};ui.modal().onFlowie();ui.modal().onAcknowledge();await flush();
+    assert.deepEqual({acks,routes:ui.routes.length},before,'No synthetic guide can acknowledge or navigate');ui.h.unmount();
+  }
+  // Explicit DP geometry must override the PNG's intrinsic 1200x900 dimensions.
+  // These execute layout callbacks and render both before and after measurement.
+  const imageBytes=fs.readFileSync('assets/images/DonationPreparationPoster.png');
+  assert.equal(imageBytes.readUInt32BE(16),1200);assert.equal(imageBytes.readUInt32BE(20),900);
+  const appearance=style=>Object.assign({},...[style].flat(Infinity).filter(Boolean));
+  const createPopup=(dimensions,insets,dev=true)=>{
+    const life=boundary.host(),environment={...dimensions},safe={...insets};
+    const module=boundary.load('src/components/donation-preparation-modal.tsx',{
+      ...boundary.shared,react:life.react,'react-native':{...boundary.native,useWindowDimensions:()=>environment},
+      'react-native-safe-area-context':{SafeAreaView:'SafeAreaView',useSafeAreaInsets:()=>safe},
+    },{__DEV__:dev});
+    const props={visible:true,busy:false,onBack(){},onFlowie(){},onAcknowledge(){}};
+    return {life,environment,props,view:()=>life.render(()=>module.DonationPreparationModal(props))};
+  };
+  const scenarios=[
+    [{width:320,height:568,fontScale:1},{top:24,bottom:16,left:0,right:0}],
+    [{width:360,height:800,fontScale:1},{top:24,bottom:24,left:0,right:0}],
+    [{width:390,height:844,fontScale:1},{top:47,bottom:34,left:0,right:0}],
+    [{width:320,height:568,fontScale:2},{top:24,bottom:16,left:0,right:0}],
+    [{width:360,height:640,fontScale:2},{top:32,bottom:24,left:0,right:0}],
+    [{width:640,height:320,fontScale:1},{top:24,bottom:16,left:24,right:12}],
+    [{width:640,height:320,fontScale:2},{top:24,bottom:16,left:24,right:12}],
+  ];
+  for(const [dimensions,insets] of scenarios){
+    const popup=createPopup(dimensions,insets),view=popup.view;
+    let tree=view(),all=boundary.nodes(tree);
+    const card=all.find(n=>n.props?.accessibilityViewIsModal),cardStyle=appearance(card.props.style);
+    const scroll=all.find(n=>n.type==='ScrollView');
+    const footer=all.find(n=>n.type==='View'&&n.props.style?.flexShrink===0);
+    const measure=all.find(n=>n.type==='View'&&n.props.style?.alignSelf==='stretch');
+    const initialImageStyle=appearance(all.find(n=>n.type==='Image').props.style);
+    assert.equal(typeof initialImageStyle.width,'number');assert.equal(typeof initialImageStyle.height,'number');
+    assert.ok(initialImageStyle.width<1200&&initialImageStyle.height<900,'Intrinsic image dimensions are overridden even before native measurement');
+    assert.equal(tree.type,'Modal');assert.equal(tree.props.animationType,'none');
+    assert.equal(cardStyle.height,undefined,'Natural height never clips dynamic text');
+    assert.ok(cardStyle.maxHeight<=(dimensions.height-insets.top-insets.bottom-32)*0.9);
+    assert.ok(cardStyle.maxWidth<=400);assert.equal(cardStyle.backgroundColor,'#FFF9F2');
+    assert.equal(all.filter(n=>n.type==='ScrollView').length,1);assert.equal(scroll.props.style.flexShrink,1);assert.equal(scroll.props.style.minHeight,0);
+    assert.equal(boundary.nodes(scroll).filter(n=>n.type==='Pressable').length,0,'Both actions are outside the content scroll');
+    assert.ok(card.props.children.includes(footer));assert.equal(footer.props.style.flexShrink,0);
+    assert.equal(boundary.texts(scroll).filter(text=>typeof text==='string'&&text.startsWith('• ')).length,6);
+    assert.ok(boundary.texts(scroll).includes('Your blood donation is tomorrow. Here are a few ways to prepare.'));
+    assert.ok(all.some(n=>n.type==='SafeAreaView'&&n.props.edges.includes('bottom')&&n.props.style.backgroundColor==='rgba(0,0,0,0.28)'));
+    const availableInner=Math.min(400,dimensions.width-insets.left-insets.right-32)-24;
+    const measuredInner=availableInner-4,measuredFooter=dimensions.fontScale===2?176:116;
+    measure.props.onLayout({nativeEvent:{layout:{width:measuredInner}}});
+    footer.props.onLayout({nativeEvent:{layout:{height:measuredFooter}}});
+    tree=view();all=boundary.nodes(tree);
+    const image=all.find(n=>n.type==='Image'),fit=appearance(image.props.style);
+    assert.equal(image.props.resizeMode,'contain');assert.ok(image.props.source.endsWith('DonationPreparationPoster.png'));
+    const nativeImageStyle={width:1200,height:900,...fit};
+    assert.equal(typeof nativeImageStyle.width,'number');assert.equal(typeof nativeImageStyle.height,'number');
+    assert.ok(nativeImageStyle.width>0&&nativeImageStyle.width<=measuredInner);
+    assert.ok(Math.abs(nativeImageStyle.height/nativeImageStyle.width-3/4)<1e-10);
+    assert.equal(fit.aspectRatio,4/3);assert.equal(fit.transform,undefined);
+    assert.ok(fit.height+measuredFooter+24<=cardStyle.maxHeight+1e-8,'Complete poster fits above the fixed actions');
+    const frame=all.find(n=>n.type==='View'&&Array.isArray(n.props.style)&&appearance(n.props.style).overflow==='hidden'&&appearance(n.props.style).borderRadius===12);
+    assert.ok(frame);assert.equal(appearance(frame.props.style).width,fit.width);assert.equal(appearance(frame.props.style).height,fit.height);
+    assert.equal(appearance(frame.props.style).backgroundColor,undefined);
+    if(dimensions.fontScale===1&&dimensions.width<=390)assert.ok(fit.height>=190&&fit.height<=260);
+    for(const text of all.filter(n=>n.type==='Text')){assert.equal(text.props.allowFontScaling,undefined);assert.equal(text.props.numberOfLines,undefined);}
+    const actions=all.filter(n=>n.type==='Pressable');assert.deepEqual(actions.map(n=>n.props.accessibilityLabel),['Prepare with Flowie','Got it']);
+    assert.ok(actions.every(n=>appearance(n.props.style).minHeight>=48));
+    popup.environment.width=dimensions.height;popup.environment.height=dimensions.width;
+    const rotatedFit=appearance(boundary.nodes(view()).find(n=>n.type==='Image').props.style);
+    assert.ok(rotatedFit.width<=Math.max(0,Math.min(400,popup.environment.width-insets.left-insets.right-32)-24));
+    assert.ok(Math.abs(rotatedFit.height-rotatedFit.width*3/4)<1e-10);popup.life.unmount();
+  }
+  const popup=createPopup({width:360,height:800,fontScale:1},{top:24,bottom:24,left:0,right:0});let closes=0,prepares=0,acknowledges=0;
+  popup.props.onBack=()=>closes++;popup.props.onFlowie=()=>prepares++;popup.props.onAcknowledge=()=>acknowledges++;
+  let tree=popup.view(),actions=boundary.nodes(tree).filter(n=>n.type==='Pressable');
+  actions[0].props.onPress();actions[1].props.onPress();tree.props.onRequestClose();assert.deepEqual([prepares,acknowledges,closes],[1,1,1]);
+  popup.props.busy=true;tree=popup.view();tree.props.onRequestClose();assert.equal(closes,1);
+  assert.ok(boundary.nodes(tree).filter(n=>n.type==='Pressable').every(n=>n.props.disabled&&appearance(n.props.style).minHeight>=48));
+  popup.props.error='Retry saving';assert.ok(boundary.texts(popup.view()).includes('Retry saving'));
+  assert.ok(!boundary.texts(popup.view()).some(text=>typeof text==='string'&&text.startsWith('Preview only')));popup.life.unmount();
+  const production=createPopup({width:360,height:800,fontScale:1},{top:24,bottom:24,left:0,right:0},false);
+  assert.ok(!boundary.texts(production.view()).some(text=>typeof text==='string'&&text.startsWith('Preview only')));production.life.unmount();
+  const destination=service.notificationDestination(record(1).notification);assert.equal(destination.pathname,'/donation-preparation');assert.equal(destination.params.id,'1');
   await service.notificationApi.reminders('session');assert.equal(sent.path,'/notifications/reminders');
+  await service.notificationApi.preparation('session',1);assert.equal(sent.path,'/notifications/1/preparation');assert.equal(sent.token,'session');
+  await service.notificationApi.acknowledgePreparation('session',1);assert.equal(sent.path,'/notifications/1/preparation-acknowledgement');assert.equal(sent.method,'POST');assert.equal(sent.body,undefined);
+  assert.match(service.preparationQuestion('Tomorrow drive','2026-11-01'),/November 1, 2026/);
+  // Voluntary inbox entry revalidates even acknowledged guides and never uses
+  // local dismissals/read state to authorize a guide or an acknowledgement.
+  const manualHost=boundary.host(),manualRoutes=[],manualTimers=new Map();let manualId='9',manualAvailable=true,manualForeground,manualReads=0,manualAcks=0;
+  const manualAuth={user:{id:80},preparationReminder:async id=>{manualReads++;assert.equal(id,9);if(!manualAvailable)throw new ApiError('Stale',409);return {reminder:record(9)};},
+    acknowledgePreparation:async id=>{manualAcks++;assert.equal(id,9);if(!manualAvailable)throw new ApiError('Stale',409);return {acknowledged:true};}};
+  const manualModule=boundary.load('src/app/donation-preparation.tsx',{
+    ...boundary.shared,react:manualHost.react,'@/contexts/auth-context':{useAuth:()=>manualAuth},
+    '@/services/api':{ApiError,errorMessage:error=>error.message},'@/components/load-state':{LoadError:'LoadError'},
+    '@/components/donation-preparation-modal':{DonationPreparationModal:'PreparationModal'},
+    'expo-router':{Stack:{Screen:'Screen'},useLocalSearchParams:()=>({id:manualId,preview:'1'}),useFocusEffect:manualHost.focus,
+      useRouter:()=>({canGoBack:()=>true,back:()=>manualRoutes.push('back'),push:route=>manualRoutes.push(route)})},
+    'react-native':{...boundary.native,AppState:{addEventListener:(_,callback)=>{manualForeground=callback;return {remove:()=>{manualForeground=null;}};}}},
+  },{setTimeout:fn=>{const key=Symbol();manualTimers.set(key,fn);return key;},clearTimeout:key=>manualTimers.delete(key)});
+  const manualView=()=>manualHost.render(manualModule.default);
+  const manualModal=()=>boundary.nodes(manualView()).find(n=>n.type==='PreparationModal').props;
+  manualView();await flush();assert.equal(manualModal().visible,true);assert.equal(manualAcks,0);
+  manualModal().onBack();assert.deepEqual(manualRoutes,['back']);assert.equal(manualAcks,0);
+  manualModal().onAcknowledge();await flush();assert.equal(manualAcks,1);assert.equal(manualRoutes.at(-1),'back');
+  manualHost.blur();manualHost.refocus();manualView();await flush();assert.equal(manualModal().visible,true,'Acknowledgement never blocks voluntary reopening');
+  manualModal().onFlowie();await flush();assert.equal(manualRoutes.at(-1).pathname,'/flowie');assert.equal(manualRoutes.at(-1).params.preparationKey,'9');
+  const routesBeforeStale=manualRoutes.length;manualAvailable=false;manualModal().onFlowie();await flush();
+  assert.equal(manualRoutes.length,routesBeforeStale);assert.equal(manualModal().visible,false);
+  let retry=boundary.nodes(manualView()).find(n=>n.type==='LoadError');assert.ok(retry);manualAvailable=true;await retry.props.onRetry();assert.equal(manualModal().visible,true);
+  manualForeground('background');assert.equal(manualModal().visible,false);manualForeground('active');await flush();assert.equal(manualModal().visible,true);
+  for(const expire of manualTimers.values())expire();assert.equal(manualModal().visible,false);
+  manualId='../9';manualView();await flush();assert.equal(manualModal().visible,false);assert.ok(boundary.nodes(manualView()).some(n=>n.type==='LoadError'));
+  const readsBeforeInvalid=manualReads,acksBeforeInvalid=manualAcks,routesBeforeInvalid=manualRoutes.length;
+  for(const id of [undefined,'preview','']) {
+    manualId=id;manualView();await flush();assert.equal(manualModal().visible,false);
+    manualModal().onFlowie();manualModal().onAcknowledge();await flush();
+    assert.equal(manualReads,readsBeforeInvalid);assert.equal(manualAcks,acksBeforeInvalid);assert.equal(manualRoutes.length,routesBeforeInvalid);
+  }
+  assert.ok(manualReads>=3);manualHost.unmount();assert.equal(manualForeground,null);assert.equal(manualTimers.size,0);
 }
 
 async function phaseFSettingsChecks() {

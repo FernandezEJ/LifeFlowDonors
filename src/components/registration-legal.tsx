@@ -41,7 +41,7 @@ export function RegistrationLegal({ document, onClose, onAgree, backLabel = 'Bac
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <View style={styles.header}>
         <Pressable accessibilityRole="button" accessibilityLabel={backLabel} onPress={onClose} style={styles.back}>
-          <MaterialIcons name="arrow-back" color={PALETTE.text} size={24} /><Text style={styles.text}>Back</Text>
+          <MaterialIcons name="arrow-back" color={PALETTE.primary} size={24} /><Text style={styles.text}>Back</Text>
         </Pressable>
         <Text accessibilityRole="header" style={styles.title}>{content?.title}</Text>
         <Text style={styles.text}>Version {content?.version}</Text>
@@ -63,7 +63,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: PALETTE.cream },
   header: { padding: 24, gap: 12, width: '100%', maxWidth: 680, alignSelf: 'center' },
   back: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start' },
-  title: { fontSize: 28, fontWeight: '800', color: PALETTE.primary },
+  title: { fontSize: 28, fontWeight: '800', color: PALETTE.text },
   content: { padding: 24, paddingTop: 0, gap: 24, width: '100%', maxWidth: 680, alignSelf: 'center' },
   footer: { flexDirection: 'row', gap: 12, paddingHorizontal: 24, paddingVertical: 12, width: '100%', maxWidth: 680, alignSelf: 'center' },
   action: { flex: 1, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 14, padding: 12 },

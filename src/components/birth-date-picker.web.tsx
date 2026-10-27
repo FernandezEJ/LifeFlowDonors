@@ -12,14 +12,14 @@ export default function BirthDatePicker({ value, onChange, disabled }: BirthDate
   const show = () => { if (disabled) return; const [m,d,y] = value.split('/'); setDraft(value ? [y,m,d].join('-') : max); setOpen(true); };
   return <>
     <Pressable accessibilityRole="button" accessibilityLabel="Choose birth date" disabled={disabled} onPress={show}
-      style={{ minHeight: 54, padding: 16, borderWidth: 1, borderColor: PALETTE.border, borderRadius: 16, backgroundColor: PALETTE.surface }}>
+      style={{ minHeight: 54, padding: 16, borderWidth: 1, borderColor: PALETTE.controlBorder, borderRadius: 16, backgroundColor: PALETTE.surface }}>
       <Text style={{color:PALETTE.text}}>{value || 'MM/DD/YYYY'} &#128197;</Text>
     </Pressable>
     <Modal visible={open} transparent onRequestClose={() => setOpen(false)}>
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#00000055' }}>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: PALETTE.backdrop }}>
         <View style={{ padding: 24, borderRadius: 20, backgroundColor: PALETTE.surface, gap: 16 }}>
           <Text style={{color:PALETTE.text}}>Birth Date</Text>
-          <input aria-label="Birth Date" type="date" value={draft} max={max} min="0001-01-01" onChange={event => setDraft(event.target.value)} style={{ fontSize: 18, padding: 12 }} />
+          <input aria-label="Birth Date" type="date" value={draft} max={max} min="0001-01-01" onChange={event => setDraft(event.target.value)} style={{ fontSize: 18, padding: 12, backgroundColor: PALETTE.surface, color: PALETTE.text, borderColor: PALETTE.controlBorder, colorScheme: 'light' }} />
           <Pressable accessibilityRole="button" onPress={() => setOpen(false)} style={{ padding: 12 }}><Text style={{color:PALETTE.text}}>Cancel</Text></Pressable>
           <Pressable accessibilityRole="button" disabled={!valid} onPress={() => { if (!valid) return; const [y,m,d] = draft.split('-'); onChange([m,d,y].join('/')); setOpen(false); }} style={{ padding: 12 }}><Text style={{color:PALETTE.text}}>Confirm</Text></Pressable>
         </View>

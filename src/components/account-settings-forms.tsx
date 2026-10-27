@@ -20,7 +20,7 @@ export function PasswordField({ label, value, onChange, disabled }: { label: str
         secureTextEntry={!visible} autoCapitalize="none" autoCorrect={false} maxLength={128} style={[styles.input, { flex: 1 }]} />
       <Pressable accessibilityRole="button" accessibilityLabel={`${visible ? 'Hide' : 'Show'} ${label.toLowerCase()}`}
         onPress={() => setVisible(current => !current)} style={styles.visibility}>
-        <MaterialIcons name={visible ? 'visibility-off' : 'visibility'} size={22} color={PALETTE.neutral} />
+        <MaterialIcons name={visible ? 'visibility-off' : 'visibility'} size={22} color={PALETTE.primary} />
       </Pressable>
     </View>
   </View>;
@@ -168,7 +168,7 @@ export function ChangePasswordForm() {
 const styles = StyleSheet.create({
   form: { gap: 18 }, field: { gap: 8 }, label: { color: PALETTE.text, fontSize: 15, fontWeight: '700' },
   copy: { color: PALETTE.neutral, fontSize: 13, lineHeight: 20 },
-  input: { minHeight: 52, borderWidth: 1, borderColor: PALETTE.border, backgroundColor: PALETTE.surface, borderRadius: 12, padding: 12, color: PALETTE.text, fontSize: 16 },
+  input: { minHeight: 52, borderWidth: 1, borderColor: PALETTE.controlBorder, backgroundColor: PALETTE.surface, borderRadius: 12, padding: 12, color: PALETTE.text, fontSize: 16 },
   passwordRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   visibility: { minWidth: 44, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   button: { minHeight: 50, alignItems: 'center', justifyContent: 'center', borderRadius: 14, padding: 12, backgroundColor: PALETTE.primary },

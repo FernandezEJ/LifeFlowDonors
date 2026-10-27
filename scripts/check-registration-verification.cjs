@@ -49,23 +49,61 @@ function host(){
 (async()=>{
  // Actual shared theme, with only native font selection mocked; no new harness.
  const {LifeFlowColors:p,DonationStatusColors:statusColors,Colors:theme}=load('src/constants/theme.ts',{'react-native':{Platform:{select:options=>options.default}}});
- const approved={primary:'#9B1238',danger:'#B42318',success:'#15803D',pending:'#B45309',info:'#1D4ED8',neutral:'#64748B',
-   background:'#F8FAFC',surface:'#FFFFFF',text:'#0F172A',border:'#E2E8F0',selected:'#FFF1F3',
+ const approved={floralWhite:'#FFF9F2',pastelPink:'#FFCAD0',racingRed:'#F10222',crushedBerry:'#892325',richMahogany:'#250202',
+   primary:'#892325',primaryPressed:'#250202',onPrimary:'#FFF9F2',danger:'#B42318',success:'#15803D',pending:'#B45309',info:'#1D4ED8',neutral:'rgba(37,2,2,0.72)',
+   background:'#FFF9F2',surface:'#FFF9F2',text:'#250202',border:'#FFCAD0',selected:'rgba(255,202,208,0.36)',
    successSurface:'#ECFDF3',successText:'#166534',pendingSurface:'#FFF7E6',pendingText:'#92400E',dangerSurface:'#FEF3F2',
-   infoSurface:'#EFF6FF',neutralSurface:'#F1F5F9',neutralText:'#475569',revision:'#EA580C',revisionAction:'#C2410C',revisionPressed:'#9A3412'};
+   infoSurface:'#EFF6FF',neutralSurface:'rgba(255,202,208,0.18)',neutralText:'rgba(37,2,2,0.80)',revision:'#EA580C',revisionAction:'#C2410C',revisionPressed:'#9A3412',
+   revisionText:'#9A3412',revisionSurface:'#FFF7ED',dangerPressed:'#912017',inactive:'#64748B',inactiveText:'#475569',inactiveSurface:'#F1F5F9'};
  for(const [name,value] of Object.entries(approved))assert.equal(p[name],value,`Approved ${name}`);
- const luminance=hex=>{const c=hex.slice(1).match(/../g).map(v=>parseInt(v,16)/255).map(v=>v<=0.04045?v/12.92:((v+0.055)/1.055)**2.4);return c[0]*0.2126+c[1]*0.7152+c[2]*0.0722;};
- const contrast=(a,b)=>{const x=luminance(a),y=luminance(b);return (Math.max(x,y)+0.05)/(Math.min(x,y)+0.05);};
+ // Composite transparent brand variants on their real surface before measuring AA.
+ const paint=(value,under=[255,249,242])=>{
+   let channels;if(value.startsWith('#')){let hex=value.slice(1);if(hex.length===3)hex=hex.split('').map(c=>c+c).join('');channels=hex.match(/../g).map(v=>parseInt(v,16));if(channels.length===4)channels[3]/=255;}
+   else channels=value.match(/[\d.]+/g).map(Number);
+   const alpha=channels[3]??1;return channels.slice(0,3).map((v,i)=>v*alpha+under[i]*(1-alpha));
+ };
+ const luminance=rgb=>{const c=rgb.map(v=>v/255).map(v=>v<=0.04045?v/12.92:((v+0.055)/1.055)**2.4);return c[0]*0.2126+c[1]*0.7152+c[2]*0.0722;};
+ const contrast=(a,b)=>{const background=paint(b),x=luminance(paint(a,background)),y=luminance(background);return (Math.max(x,y)+0.05)/(Math.min(x,y)+0.05);};
  const pairs=[['text','background'],['neutral','background'],['neutral','surface'],['neutral','cream'],['primary','selected'],
    ['neutralText','selected'],['neutralText','neutralSurface'],['successText','successSurface'],['pendingText','pendingSurface'],
-   ['danger','dangerSurface'],['info','infoSurface'],['revisionText','revisionSurface'],['neutralText','pointsSurface']];
+   ['danger','dangerSurface'],['info','infoSurface'],['revisionText','revisionSurface'],['neutralText','pointsSurface'],['inactiveText','inactiveSurface'],['text','pastelPink'],['primary','pastelPink']];
  for(const token of ['primary','primaryPressed','danger','dangerPressed','success','pending','revisionAction','revisionPressed','info'])pairs.push(['surface',token]);
  for(const [foreground,background] of pairs)assert.ok(contrast(p[foreground],p[background])>=4.5,`${foreground} on ${background} meets AA text contrast`);
  assert.ok(contrast(p.surface,p.revision)<4.5,'Bright orange is reserved for non-text accents; filled revision actions use darker orange');
+ assert.ok(contrast(p.surface,p.racingRed)<4.5,'Racing Red remains an accent, never a normal-sized filled-button/text pair');
+ for(const background of [p.cream,p.pastelPink])assert.ok(contrast(p.controlBorder,background)>=3,'Form outlines remain visible on brand surfaces');
  assert.equal(statusColors.pending.surface,p.pendingSurface);assert.equal(statusColors.for_verification.text,p.pendingText);
  assert.equal(statusColors.needs_revision.text,p.revisionText);assert.equal(statusColors.rejected.text,p.danger);assert.equal(statusColors.completed.text,p.successText);
  assert.notEqual(statusColors.pending.text,statusColors.needs_revision.text);assert.notEqual(statusColors.needs_revision.text,statusColors.rejected.text);
+ assert.equal(statusColors.cancelled.text,p.inactiveText);assert.equal(statusColors.cancelled.surface,p.inactiveSurface);
  assert.equal(theme.light.tint,p.primary);assert.notEqual(theme.light.background,theme.dark.background,'Existing dark appearance remains available');
+ let darkMode=false;
+ const flowie=load('src/components/flowie-components.tsx',{...shared,'@/hooks/use-color-scheme':{useColorScheme:()=>darkMode?'dark':'light'},'@/constants/flowie-mascots':{FLOWIE_MASCOTS:{}},'@/services/flowie-preview':{flowieAction:()=>null}});
+ assert.equal(flowie.useFlowieColors().surface,p.floralWhite);assert.equal(flowie.useFlowieColors().primary,p.crushedBerry);
+ assert.equal(flowie.useFlowieColors().skeleton,p.skeleton,'Light Flowie and Activity Details share the same neutral skeleton fill');
+ const scrim=p.backdrop.match(/^rgba\((\d+),(\d+),(\d+),([\d.]+)\)$/);assert.ok(scrim);
+ assert.equal(scrim[1],scrim[2]);assert.equal(scrim[2],scrim[3]);assert.ok(Number(scrim[4])>0&&Number(scrim[4])<=0.35,'Modal scrim is neutral and restrained');
+ darkMode=true;const dark=flowie.useFlowieColors();assert.equal(dark.background,'#201B1C');assert.equal(dark.surface,'#2D2628');assert.equal(dark.border,'#594348');assert.equal(dark.controlBorder,dark.border);
+ assert.equal(dark.skeleton,p.skeletonDark);assert.equal(p.skeletonDark,'rgba(255,249,242,0.18)','Dark skeleton exception stays light enough to see without a pink fill');
+ for(const [foreground,background] of [[dark.text,dark.surface],[dark.muted,dark.background],[dark.accent,dark.soft],[dark.danger,dark.surface],[dark.success,dark.surface],[dark.white,dark.primary]])assert.ok(contrast(foreground,background)>=4.5,'Flowie dark text stays readable');
+ // Source audit: shared tokens everywhere except deliberate dark Flowie/award artwork colors.
+ const exceptions={
+   'src/components/flowie-components.tsx':new Set(['#201B1C','#2D2628','#FFF4EF','#D0BFC0','#594348','#FF9BA3','#41292F','#FCA5A5','#86EFAC']),
+   'src/app/(tabs)/profile.tsx':new Set(['#A86432','#F5E5D8','#78838D','#E9EDF0','#B97700','#FFF1D6']),
+ };
+ function audit(dir){for(const entry of fs.readdirSync(dir,{withFileTypes:true})){
+   const file=dir+'/'+entry.name;if(entry.isDirectory()){audit(file);continue;}if(!/\.tsx?$/.test(file))continue;
+   const ast=ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true);
+   function visit(n){if(ts.isStringLiteral(n)&&/^(?:#[\da-f]{3,8}|rgba?\([^)]*\)|white|black)$/i.test(n.text)){
+     assert.ok(!/^(?:#fff(?:fff)?(?:ff)?|white|rgba?\(\s*255\s*,\s*255\s*,\s*255(?:\s*,\s*1)?\s*\))$/i.test(n.text),file+': no pure-white general UI colors');
+     if(file!=='src/constants/theme.ts')assert.ok(exceptions[file]?.has(n.text),file+': use a shared color token for '+n.text);
+   }
+   if(ts.isJsxSelfClosingElement(n)||ts.isJsxOpeningElement(n)){
+     const props=n.attributes.properties,icon=props.find(a=>a.name?.getText(ast)==='name');
+     if(icon?.initializer?.getText(ast)==='"chevron-right"')assert.equal(props.find(a=>a.name?.getText(ast)==='size')?.initializer?.getText(ast),'{22}',file+': navigation chevrons share one size');
+   }
+   ts.forEachChild(n,visit);}visit(ast);
+ }}audit('src');
  console.log(`PASS: ${Object.keys(approved).length} approved mobile tokens, ${pairs.length} AA text pairs, accessible orange revision actions, distinct pending/revision/rejection/completion colors and preserved dark theme`);
  const api=load('src/services/api.ts',{}, {process:{env:{}},AbortController,setTimeout,clearTimeout});
  const requests=[],authService=load('src/services/auth.ts',{'./api':{...api,apiRequest:async(path,options)=>{requests.push({path,options});return {};}}});
@@ -79,29 +117,50 @@ function host(){
  // Passwordless API contract, Philippine calendar boundary and legacy initial display.
  assert.equal(requests[0].options.body.password,undefined);assert.equal(requests[0].options.body.password_confirmation,undefined);
  await authService.authApi.requestLoginCode('09171234567');
- assert.equal(requests.at(-1).path,'/auth/request-login-code');assert.deepEqual(JSON.parse(JSON.stringify(requests.at(-1).options.body)),{mobile_number:'09171234567'});
+ assert.equal(requests.at(-1).path,'/auth/request-login-code');assert.deepEqual(JSON.parse(JSON.stringify(requests.at(-1).options.body)),{identifier:'+639171234567'});
  await authService.authApi.login('+639171234567','012345');
- assert.equal(requests.at(-1).path,'/auth/verify-login-code');assert.deepEqual(JSON.parse(JSON.stringify(requests.at(-1).options.body)),{mobile_number:'+639171234567',code:'012345'});
+ assert.equal(requests.at(-1).path,'/auth/verify-login-code');assert.deepEqual(JSON.parse(JSON.stringify(requests.at(-1).options.body)),{identifier:'+639171234567',code:'012345'});
+ for(const value of ['09171234567','639171234567',' +639171234567 ','(0917) 123-4567']){
+   assert.equal(authService.normalizeLoginIdentifier(value),'+639171234567');assert.equal(authService.isLoginIdentifier(value),true);
+ }
+ for(const value of ['', ' ', '0917', '+14155551212', 'not-an-email', 'x@@example.test', 'a'.repeat(255)+'@example.test'])assert.equal(authService.isLoginIdentifier(value),false);
+ await authService.authApi.requestLoginCode(' Recipient@Example.test ');
+ assert.deepEqual(JSON.parse(JSON.stringify(requests.at(-1).options.body)),{identifier:'recipient@example.test'});
+ await authService.authApi.login(' Recipient@Example.test ','012345');
+ assert.deepEqual(JSON.parse(JSON.stringify(requests.at(-1).options.body)),{identifier:'recipient@example.test',code:'012345'});
  const cutoff=authService.latestBirthDate(new Date('2026-09-30T16:00:00Z'));assert.equal(cutoff.getFullYear(),2008);assert.equal(cutoff.getMonth(),9);assert.equal(cutoff.getDate(),1);
  assert.equal(authService.middleInitial(' santos '),'S');assert.equal(authService.middleInitial(null),'');
  // Exercise the actual login handlers: duplicate taps, invalid/expired codes, resend, back and verified session handoff.
  const lh=host(),loginTimers=new Set(),loginRoutes=[];let loginClock=0,requested=0,logged=0,sessionAccepted=false;
  let requestGate=deferred(),loginFailure=null;
- const loginAuth={busy:false,requestLoginCode:async number=>{assert.equal(number,'09171234567');requested++;return requestGate.promise;},login:async(number,code)=>{assert.equal(number,'09171234567');assert.equal(code,'012345');logged++;if(loginFailure)throw loginFailure;sessionAccepted=true;}};
- const loginScreen=load('src/app/(auth)/login.tsx',{...shared,react:lh.react,'expo-router':{useRouter:()=>({push:route=>loginRoutes.push(route)}),useFocusEffect:lh.focus},'@/contexts/auth-context':{useAuth:()=>loginAuth},'@/services/api':api},
+ const loginAuth={busy:false,requestLoginCode:async number=>{assert.equal(number,'+639171234567');requested++;return requestGate.promise;},login:async(number,code)=>{assert.equal(number,'+639171234567');assert.equal(code,'012345');logged++;if(loginFailure)throw loginFailure;sessionAccepted=true;}};
+ const loginScreen=load('src/app/(auth)/login.tsx',{...shared,react:lh.react,'expo-router':{useRouter:()=>({push:route=>loginRoutes.push(route)}),useFocusEffect:lh.focus},'@/contexts/auth-context':{useAuth:()=>loginAuth},'@/services/api':api,'@/services/auth':authService},
  {performance:{now:()=>loginClock},setInterval:fn=>{loginTimers.add(fn);return fn;},clearInterval:fn=>loginTimers.delete(fn)});
  const lv=()=>lh.render(loginScreen.default),loginInput=()=>nodes(lv()).find(n=>n.type==='TextInput');
- assert.match(texts(lv()),/Mobile Number/);assert.doesNotMatch(texts(lv()),/Password/);assert.equal(nodes(lv()).filter(n=>n.type==='TextInput').length,1);
- button(lv(),'Register').props.onPress();assert.equal(loginRoutes.pop(),'/(auth)/register');
+ assert.match(texts(lv()),/Email or Contact Number/);assert.doesNotMatch(texts(lv()),/Password/);assert.equal(nodes(lv()).filter(n=>n.type==='TextInput').length,1);
+ const initialLogin=lv(),registerLink=button(initialLogin,'Register here'),registerRow=nodes(initialLogin).find(n=>n.type==='View'&&nodes(n).includes(registerLink)&&n.props.style?.flexDirection==='row');
+ assert.equal(registerLink.props.accessibilityRole,'link');assert.equal(registerLink.props.accessibilityLabel,'Register here');
+ assert.ok(registerLink.props.style.minHeight>=48);assert.equal(registerLink.props.style.paddingHorizontal,undefined);assert.equal(registerLink.props.style.padding,undefined);
+ assert.equal(registerRow.props.style.flexWrap,'wrap');assert.ok(registerRow.props.style.gap<=6);
+ assert.equal(registerLink.props.style.maxWidth,'100%');assert.equal(nodes(registerLink).find(n=>n.type==='Text').props.allowFontScaling,undefined);
+ registerLink.props.onPress();assert.equal(loginRoutes.pop(),'/(auth)/register');
  loginInput().props.onChangeText('09171234567');const continueLogin=button(lv(),'Continue').props.onPress;continueLogin();continueLogin();assert.equal(requested,1);assert.equal(button(lv(),'Sending...').props.disabled,true);
- requestGate.resolve({resend_after:60,expires_in:600});await flush();assert.match(texts(lv()),/Verify Your Login/);assert.equal(button(lv(),'Resend code in 60s').props.disabled,true);
+ requestGate.resolve({resend_after:60,expires_in:600});await flush();assert.match(texts(lv()),/Verify Your Login/);assert.equal(button(lv(),'Resend in 60s').props.disabled,true);
  assert.equal(loginInput().props.keyboardType,'number-pad');assert.equal(loginInput().props.maxLength,6);assert.doesNotMatch(texts(lv()),/@/);
  // Six visual slots share the existing native input and never auto-submit.
  const loginSlots=()=>nodes(lv()).filter(n=>/^login-code-slot-\d$/.test(n.props?.testID||''));
  const style=value=>Object.assign({},...[value].flat(Infinity).filter(Boolean));
  const focusedSlots=()=>loginSlots().filter(n=>style(n.props.style).borderWidth===2);
- const back=()=>nodes(lv()).find(n=>n.props?.accessibilityLabel==='Back to mobile number');
- assert.match(texts(lv()),/Account Verification/);assert.match(texts(lv()),/Code expires in 10:00/);
+ const back=()=>nodes(lv()).find(n=>n.props?.accessibilityLabel==='Back to email or contact number');
+ assert.match(texts(lv()),/Account Verification/);assert.doesNotMatch(texts(lv()),/Code expires in|Change Email or Contact Number|Trouble signing in\?/);
+ assert.equal(nodes(lv()).filter(n=>n.props?.accessibilityRole==='link').length,0,'OTP has no secondary navigation links');
+ const resendRow=()=>nodes(lv()).find(n=>n.type==='View'&&n.props.style?.flexDirection==='row'&&texts(n).includes('Didn’t receive the code?'));
+ assert.ok(resendRow());assert.equal(resendRow().props.style.flexWrap,'wrap');assert.equal(resendRow().props.onPress,undefined);
+ assert.ok(resendRow().props.style.columnGap<=8);assert.equal(resendRow().props.style.height,undefined);
+ assert.equal(nodes(resendRow()).filter(n=>n.type==='Pressable').length,1,'Only the resend phrase is an action target');
+ const resendPrompt=nodes(resendRow()).find(n=>n.type==='Text'&&texts(n)==='Didn’t receive the code?');
+ assert.equal(resendPrompt.props.onPress,undefined);assert.equal(Object.assign({},...resendPrompt.props.style).maxWidth,'100%');
+ assert.ok(button(resendRow(),'Resend in').props.style.minHeight>=48);assert.equal(button(resendRow(),'Resend in').props.style.paddingHorizontal,undefined);
  assert.match(texts(lv()),/Your account verification is secure/);assert.ok(button(lv(),'Verify & Continue'));
  assert.equal(loginSlots().length,6);assert.equal(nodes(lv()).filter(n=>n.type==='TextInput').length,1);
  assert.equal(loginInput().props.autoComplete,'one-time-code');assert.equal(loginInput().props.editable,true);
@@ -128,7 +187,7 @@ function host(){
  assert.equal(slotStyle.flex,1);assert.equal(slotStyle.minWidth,0);assert.ok(slotStyle.minHeight>=44);
  assert.equal(digit.props.allowFontScaling,undefined,'Font scaling remains enabled');assert.equal(digit.props.maxFontSizeMultiplier,2);
  for(const width of [320,375])assert.ok((width-40-5*6)/6>digit.props.style.fontSize,'Six flexible cells have space for digits at narrow widths');
- button(lv(),'Resend code in').props.onPress();assert.equal(requested,1,'Countdown also guards the handler');
+ button(lv(),'Resend in').props.onPress();assert.equal(requested,1,'Countdown also guards the handler');
  loginInput().props.onChangeText('12x');button(lv(),'Verify').props.onPress();assert.match(texts(lv()),/6-digit login code/);assert.equal(logged,0);
  for(const message of ['The login code is invalid.','The login code has expired.']){
    loginFailure=new api.ApiError(message,422,{code:[message]});loginInput().props.onChangeText('012345');const submit=button(lv(),'Verify').props.onPress;submit();submit();
@@ -137,11 +196,14 @@ function host(){
    await flush();assert.ok(texts(lv()).includes(message));assert.equal(loginInput().props.value,'012345','Errors preserve the entered code');
  }
  assert.equal(logged,2);assert.equal(sessionAccepted,false);
- loginClock=59000;loginTimers.forEach(fn=>fn());assert.match(texts(lv()),/Code expires in 09:01/);assert.equal(button(lv(),'Resend code in 1s').props.disabled,true);
+ loginClock=59000;loginTimers.forEach(fn=>fn());assert.doesNotMatch(texts(lv()),/Code expires in/);assert.equal(button(lv(),'Resend in 1s').props.disabled,true);
  loginClock=60000;loginTimers.forEach(fn=>fn());requestGate=deferred();const resendLogin=button(lv(),'Resend code').props.onPress;resendLogin();resendLogin();assert.equal(requested,2);
- assert.equal(button(lv(),'Sending...').props.disabled,true);requestGate.resolve({resend_after:17,expires_in:130});await flush();assert.equal(loginInput().props.value,'');
- assert.match(texts(lv()),/Code expires in 02:10/);assert.equal(button(lv(),'Resend code in 17s').props.disabled,true);assert.match(texts(lv()),/New code requested/);
+ assert.equal(button(lv(),'Sending...').props.disabled,true);assert.equal(button(resendRow(),'Sending…').props.accessibilityState.busy,true);
+ assert.equal(button(resendRow(),'Sending…').props.disabled,true);requestGate.resolve({resend_after:17,expires_in:130});await flush();assert.equal(loginInput().props.value,'');
+ assert.doesNotMatch(texts(lv()),/Code expires in/);assert.equal(button(lv(),'Resend in 17s').props.disabled,true);assert.match(texts(lv()),/New code requested/);
+ loginClock=189999;loginTimers.forEach(fn=>fn());assert.doesNotMatch(texts(lv()),/Code expires in|Code expired/,'Valid code expiry occupies no UI space until the authoritative duration ends');
  loginClock=190000;loginTimers.forEach(fn=>fn());assert.match(texts(lv()),/Code expired\. Request a new code\./);assert.equal(button(lv(),'Resend code').props.disabled,false);assert.equal(logged,2);
+ assert.ok(nodes(lv()).some(n=>n.props?.accessibilityRole==='alert'&&texts(n)==='Code expired. Request a new code.'));
  back().props.onPress();assert.match(texts(lv()),/Welcome to LifeFlow/);assert.equal(loginInput().props.value,'09171234567');assert.doesNotMatch(texts(lv()),/Code expires|Account Verification|New code requested/);assert.equal(loginRoutes.length,0,'Back returns to the number form without navigating to protected screens');
  requestGate=deferred();button(lv(),'Continue').props.onPress();requestGate.resolve({resend_after:60,expires_in:600});await flush();loginFailure=null;loginInput().props.onChangeText('012345');button(lv(),'Verify').props.onPress();await flush();assert.equal(sessionAccepted,true);
  lh.unmount();assert.equal(loginTimers.size,0);assert.equal(loginInput().props.value,'09171234567');
@@ -150,25 +212,48 @@ function host(){
    const h=host(),timers=new Set(),calls=[],routes=[];let clock=0;
    const backend={request:async()=>({resend_after:12,expires_in:75}),verify:async()=>{}};
    const auth={busy:false,requestLoginCode:async value=>{calls.push(['request',value]);return backend.request();},login:async(mobile,code)=>{calls.push(['verify',mobile,code]);return backend.verify();}};
-   const screen=load('src/app/(auth)/login.tsx',{...shared,react:h.react,'expo-router':{useRouter:()=>({push:route=>routes.push(route)}),useFocusEffect:h.focus},'@/contexts/auth-context':{useAuth:()=>auth},'@/services/api':api},
+   const screen=load('src/app/(auth)/login.tsx',{...shared,react:h.react,'expo-router':{useRouter:()=>({push:route=>routes.push(route)}),useFocusEffect:h.focus},'@/contexts/auth-context':{useAuth:()=>auth},'@/services/api':api,'@/services/auth':authService},
      {performance:{now:()=>clock},setInterval:fn=>{timers.add(fn);return fn;},clearInterval:fn=>timers.delete(fn)});
    const view=()=>h.render(screen.default),input=()=>nodes(view()).find(n=>n.type==='TextInput');
-   return {h,auth,backend,calls,routes,view,input,tick:value=>{clock=value;timers.forEach(fn=>fn());},start:async()=>{input().props.onChangeText('09171234567');button(view(),'Continue').props.onPress();await flush();}};
+   return {h,auth,backend,calls,routes,view,input,tick:value=>{clock=value;timers.forEach(fn=>fn());},start:async(identifier='09171234567')=>{input().props.onChangeText(identifier);button(view(),'Continue').props.onPress();await flush();}};
  }
- const retryLogin=loginScenario();await retryLogin.start();assert.match(texts(retryLogin.view()),/Code expires in 01:15/);
+ const retryLogin=loginScenario();await retryLogin.start();assert.doesNotMatch(texts(retryLogin.view()),/Code expires in|Code expired/);
  for(const failure of [new api.ApiError('Too many attempts. Please try again later.',429),new api.ApiError('Unable to connect. Please retry.'),new Error('private transport details')]){
    retryLogin.backend.verify=async()=>{throw failure;};retryLogin.input().props.onChangeText('012345');button(retryLogin.view(),'Verify & Continue').props.onPress();await flush();
    assert.equal(retryLogin.input().props.value,'012345');assert.equal(button(retryLogin.view(),'Verify & Continue').props.disabled,false);
    assert.ok(nodes(retryLogin.view()).some(n=>n.props?.accessibilityRole==='alert'));assert.doesNotMatch(texts(retryLogin.view()),/private transport details/);
  }
  retryLogin.tick(12000);retryLogin.backend.request=async()=>{throw new api.ApiError('Please wait before requesting another code.',429);};
- button(retryLogin.view(),'Resend code').props.onPress();await flush();assert.match(texts(retryLogin.view()),/Please wait before/);assert.equal(retryLogin.input().props.value,'012345');assert.match(texts(retryLogin.view()),/Code expires in 01:03/);
- retryLogin.backend.request=async()=>({resend_after:9});button(retryLogin.view(),'Resend code').props.onPress();await flush();assert.match(texts(retryLogin.view()),/Use the most recent code/);assert.doesNotMatch(texts(retryLogin.view()),/Code expires in/,'No invented expiry without API data');
- button(retryLogin.view(),'Change Number').props.onPress();assert.match(texts(retryLogin.view()),/Welcome to LifeFlow/);assert.equal(retryLogin.routes.length,0);retryLogin.h.unmount();
+ button(retryLogin.view(),'Resend code').props.onPress();await flush();assert.match(texts(retryLogin.view()),/Please wait before/);assert.equal(retryLogin.input().props.value,'012345');assert.doesNotMatch(texts(retryLogin.view()),/Code expires in|Code expired/);
+ retryLogin.tick(75000);assert.match(texts(retryLogin.view()),/Code expired\. Request a new code\./,'A failed resend cannot extend the original expiry');
+ retryLogin.backend.request=async()=>({resend_after:9});button(retryLogin.view(),'Resend code').props.onPress();await flush();assert.doesNotMatch(texts(retryLogin.view()),/Code expires in|Code expired|Use the most recent code/,'No invented expiry or reserved timer text without API data');
+ nodes(retryLogin.view()).find(n=>n.props?.accessibilityLabel==='Back to email or contact number').props.onPress();assert.match(texts(retryLogin.view()),/Welcome to LifeFlow/);assert.equal(retryLogin.routes.length,0);retryLogin.h.unmount();
+ for(const [entered,normalized] of [[' Recipient@Example.test ','recipient@example.test'],[' (0917) 123-4567 ','+639171234567']]){
+   const trial=loginScenario();
+   assert.equal(trial.input().props.accessibilityLabel,'Email or Contact Number');assert.equal(trial.input().props.keyboardType,'email-address');
+   assert.equal(trial.input().props.autoCapitalize,'none');assert.equal(trial.input().props.autoCorrect,false);assert.equal(trial.input().props.maxLength,254);
+   button(trial.view(),'Trouble signing in?').props.onPress();assert.equal(trial.routes.pop(),'/(auth)/trouble-signing-in');
+   for(const malformed of ['', 'invalid', '0917', 'a'.repeat(255)+'@example.test']){
+     trial.input().props.onChangeText(malformed);button(trial.view(),'Continue').props.onPress();assert.equal(trial.calls.length,0);assert.match(texts(trial.view()),/valid email or Philippine contact number/);
+   }
+   await trial.start(entered);assert.deepEqual(trial.calls,[['request',normalized]]);
+   assert.ok(texts(trial.view()).includes(authService.LOGIN_NOTICE));assert.doesNotMatch(texts(trial.view()),/recipient@example.test/);
+   assert.doesNotMatch(texts(trial.view()),/Change Email or Contact Number|Trouble signing in\?|Code expires in/);
+   trial.input().props.onChangeText('012345');button(trial.view(),'Verify & Continue').props.onPress();await flush();
+   assert.deepEqual(trial.calls.at(-1),['verify',normalized,'012345']);
+   trial.tick(12000);button(trial.view(),'Resend code').props.onPress();await flush();assert.deepEqual(trial.calls.at(-1),['request',normalized]);
+   const staleVerify=button(trial.view(),'Verify & Continue').props.onPress;
+   nodes(trial.view()).find(n=>n.props?.accessibilityLabel==='Back to email or contact number').props.onPress();assert.equal(trial.input().props.value,entered);
+   assert.equal(trial.input().props.editable,true);assert.equal(trial.calls.at(-1)[0],'request');assert.equal(trial.calls.length,3,'Back neither requests nor verifies a code');
+   assert.ok(button(trial.view(),'Trouble signing in?'),'Help stays available on initial login');
+   const before=trial.calls.length;staleVerify();assert.equal(trial.calls.length,before,'An old OTP callback cannot verify after changing the identifier');
+   trial.h.unmount();
+ }
+ console.log('PASS: single Email or Contact Number input, normalization/validation, generic notice without resolved email, help routing, same request/resend/verify identifier and stale-change safeguards');
  const staleLogin=loginScenario(),lateCode=deferred();staleLogin.backend.request=()=>lateCode.promise;
  staleLogin.input().props.onChangeText('09171234567');button(staleLogin.view(),'Continue').props.onPress();staleLogin.h.unmount();lateCode.resolve({resend_after:12,expires_in:75});await flush();
  assert.doesNotMatch(texts(staleLogin.view()),/Verify Your Login|Code expires in/,'Leaving ignores a late code request response');
- console.log('PASS: Login Verification UI, six flexible slots/native numeric entry/paste/deletion/selection, no auto-submit, focus/errors/loading, server-based expiry/resend/unknown-duration fallback, duplicate guards, back/change-number, stale cleanup and platform keyboard/scroll configuration (mocked native boundaries)');
+ console.log('PASS: OTP hotfix: no secondary links or valid-code expiry text, accessible expired error at the unchanged deadline, compact wrapping resend row with 48dp action, cooldown/busy/double-tap safeguards, header Back preserves identifier without requests, compact accessible Register here footer; native keyboard/rotation/200% paint remains device QA');
  // Native picker uses calendar days, preserves Cancel and rejects future selections.
  const dh=host();let pickerOptions,selected='09/13/2004';
  const picker=load('src/components/birth-date-picker.tsx',{...shared,'@/services/auth':authService,react:dh.react,'@react-native-community/datetimepicker':{__esModule:true,default:'DateTimePicker',DateTimePickerAndroid:{open:options=>{pickerOptions=options;}}}});

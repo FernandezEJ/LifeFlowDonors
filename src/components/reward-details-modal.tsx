@@ -1,5 +1,5 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LifeFlowColors as COLORS } from '@/constants/theme';
@@ -9,9 +9,25 @@ import { hasVoucherValue, type Reward } from '@/services/rewards';
 export function RewardImage({ reward, large = false }: { reward: Reward; large?: boolean }) {
   const uri = publicImageUrl(reward.image_url, 'rewards');
   const [failed, setFailed] = useState<string | null>(null);
+  const [dimensions, setDimensions] = useState<{ uri: string; ratio: number } | null>(null);
+  const currentUri = useRef(uri);
+  useLayoutEffect(() => { currentUri.current = uri; }, [uri]);
+  const ratio = dimensions?.uri === uri ? dimensions.ratio : null;
+  const frameRatio = 76 / 96;
+  // Fill normal thumbnails. Keep unusually wide/tall artwork complete rather
+  // than cropping away more than a quarter of the product; details stay full-size.
+  const excessiveCrop = ratio !== null && Math.min(ratio / frameRatio, frameRatio / ratio) < 0.75;
   return <View style={[styles.imageFrame, large && styles.largeImage]}>
-    {uri && failed !== uri ? <Image source={{ uri }} resizeMode="contain" style={styles.image}
-      accessibilityLabel={reward.name} onError={() => setFailed(uri)} /> :
+    {uri && failed !== uri ? <Image source={{ uri }} resizeMode={large || excessiveCrop ? 'contain' : 'cover'} style={styles.image}
+      accessibilityLabel={reward.name}
+      onLoad={event => {
+        if (currentUri.current !== uri) return;
+        const { width, height } = event.nativeEvent.source;
+        if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+          setDimensions({ uri, ratio: width / height });
+        }
+      }}
+      onError={() => { if (currentUri.current === uri) setFailed(uri); }} /> :
       <MaterialIcons name="card-giftcard" size={large ? 64 : 40} color={COLORS.primary}
         accessibilityLabel="Reward image unavailable" />}
   </View>;
@@ -33,7 +49,7 @@ export function RewardDetailsModal({ reward, balance, variantId, busy, reason, s
           <Text accessibilityRole="header" style={styles.heading}>Reward Details</Text>
           <Pressable accessibilityRole="button" accessibilityLabel="Close reward details" disabled={busy}
             accessibilityState={{ disabled: busy }} onPress={dismiss} style={styles.close}>
-            <MaterialIcons name="close" size={22} color={COLORS.neutralText} accessible={false} />
+            <MaterialIcons name="close" size={22} color={COLORS.primary} accessible={false} />
           </Pressable>
         </View>
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content} bounces={false}>
@@ -85,13 +101,13 @@ export function RewardDetailsModal({ reward, balance, variantId, busy, reason, s
 }
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16, backgroundColor: 'rgba(55,46,46,0.35)' },
+  overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16, backgroundColor: COLORS.backdrop },
   dialog: { width: '100%', maxWidth: 420, maxHeight: '100%', borderRadius: 24, backgroundColor: COLORS.surface, overflow: 'hidden' },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 20, paddingRight: 8, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 20, paddingRight: 8, paddingVertical: 8, },
   heading: { flex: 1, minWidth: 0, fontSize: 20, lineHeight: 27, fontWeight: '700', color: COLORS.text },
   close: { width: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   scroll: { flexGrow: 0, flexShrink: 1 }, content: { padding: 20, gap: 8 },
-  imageFrame: { width: 76, height: 96, borderRadius: 12, backgroundColor: COLORS.selected, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  imageFrame: { width: 76, height: 96, borderRadius: 12, backgroundColor: COLORS.surface, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
   largeImage: { width: '100%', height: 180, marginBottom: 4 }, image: { width: '100%', height: '100%' },
   name: { color: COLORS.text, fontSize: 20, lineHeight: 27, fontWeight: '800' },
   category: { color: COLORS.neutralText, fontSize: 13, textTransform: 'capitalize' },
@@ -100,7 +116,7 @@ const styles = StyleSheet.create({
   description: { color: COLORS.text, fontSize: 14, lineHeight: 21 },
   sizes: { gap: 8, marginTop: 8 }, sizeHeading: { color: COLORS.text, fontSize: 15, fontWeight: '700' },
   sizeChoices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  sizeChip: { minHeight: 44, justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border, borderRadius: 10, padding: 10 },
+  sizeChip: { minHeight: 44, justifyContent: 'center', borderWidth: 1, borderColor: COLORS.controlBorder, borderRadius: 10, padding: 10 },
   sizeSelected: { borderColor: COLORS.primary, backgroundColor: COLORS.selected },
   reason: { color: COLORS.danger, fontSize: 14, lineHeight: 21, marginTop: 8 },
   guidance: { color: COLORS.neutral, fontSize: 12, lineHeight: 18, marginTop: 8 },

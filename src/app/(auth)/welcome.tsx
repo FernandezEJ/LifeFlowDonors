@@ -92,7 +92,7 @@ mascot: {
   marginBottom: 16,
 },
   title: {
-    color: COLORS.brand,
+    color: PALETTE.text,
     fontSize: 38,
     fontWeight: '800',
     letterSpacing: -0.8,

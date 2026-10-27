@@ -3,12 +3,13 @@ import type { ProofUpload } from '@/services/proof-storage';
 import type { ProfileMascotKey } from '@/constants/profile-settings';
 import { rewardsApi, type PointSummary, type PointTransaction, type Voucher, type VoucherStatus, type Page, type Catalogue, type RedemptionResponse, type VoucherResponse } from '@/services/rewards';
 import { notificationApi, type HomeReminders, type NotificationPage, type ImportantNotification } from '@/services/notifications';
-import { donationApi, type DonationOpportunity, type DonationParticipation, type DonationPage, type DonationSummary, type DonationStatus } from '@/services/donations';
+import { donationApi, type AnnouncementDetail, type DonationOpportunity, type DonationParticipation, type DonationPage, type DonationSummary, type DonationStatus } from '@/services/donations';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ApiError, errorMessage } from '@/services/api';
 import { authApi, type AuthResponse, type LoginCodeResponse, type PendingRegistration, type DonorProfile, type ProfileForm, type RegisterForm, type User } from '@/services/auth';
 import { eligibilityApi, type EligibilityState, type EligibilityAnswers, type EligibilityAssessment } from '@/services/eligibility';
 import { tokenStorage } from '@/services/token-storage';
+import { educationalArticlesApi, type EducationalPage, type EducationalArticle } from '@/services/educational-articles';
 
 // ========================================
 // SHARED SESSION STATE
@@ -16,6 +17,8 @@ import { tokenStorage } from '@/services/token-storage';
 // The token stays private to this provider and storage.
 // ========================================
 type AuthContextValue = {
+  educationalArticles: (page?: number) => Promise<EducationalPage>;
+  educationalArticle: (id: number) => Promise<{ article: EducationalArticle }>;
   flowieChat: (message: string, history: FlowieHistoryEntry[], conversationId?: number) => Promise<FlowieChatResult>;
   flowieHistory: (page?: number) => Promise<FlowiePage<FlowieConversation>>;
   flowieDeleted: (page?: number) => Promise<FlowiePage<FlowieConversation>>;
@@ -25,8 +28,8 @@ type AuthContextValue = {
   restoreFlowie: (id: number) => Promise<FlowieMutation>;
   user: User | null; profile: DonorProfile | null; restoring: boolean; sessionError: string;
   busy: boolean; restore: () => Promise<void>;
-  requestLoginCode: (mobile: string) => Promise<LoginCodeResponse>;
-  login: (mobile: string, code: string) => Promise<void>;
+  requestLoginCode: (identifier: string) => Promise<LoginCodeResponse>;
+  login: (identifier: string, code: string) => Promise<void>;
   register: (form: RegisterForm) => Promise<PendingRegistration>;
   verifyRegistration: (pendingToken: string, code: string) => Promise<void>;
   confirmEmailLogin: (mobile: string, code: string) => Promise<void>;
@@ -42,8 +45,9 @@ type AuthContextValue = {
   donationHistory: (page?: number, status?: DonationStatus) => Promise<DonationPage>;
   donationSummary: () => Promise<DonationSummary>;
   donationDetail: (id: string) => Promise<{ participation: DonationParticipation }>;
-  opportunities: () => Promise<{data:DonationOpportunity[]}>;
-  opportunity: (id:string) => Promise<{opportunity:DonationOpportunity}>;
+  opportunities: () => Promise<{data:DonationOpportunity[];permanent_post?:DonationOpportunity|null}>;
+  opportunity: (id:string) => Promise<AnnouncementDetail>;
+  notificationAnnouncement: (id:number) => Promise<AnnouncementDetail>;
   joinOpportunity: (id:string) => Promise<{participation:DonationParticipation}>;
   cancelParticipation: (id:string) => Promise<{participation:DonationParticipation}>;
   submitProof: (id:string,file:ProofUpload) => Promise<{participation:DonationParticipation}>;
@@ -52,6 +56,8 @@ type AuthContextValue = {
   // The bearer token stays inside this provider.
   // ========================================
   homeReminders: () => Promise<HomeReminders>;
+  preparationReminder: (id: number) => Promise<{reminder: HomeReminders['reminders'][number]}>;
+  acknowledgePreparation: (id: number) => Promise<{acknowledged: boolean}>;
   listNotifications: (page?: number, unread?: boolean) => Promise<NotificationPage>;
   notificationCount: () => Promise<{unread_count: number}>;
   readNotification: (id: number) => Promise<{notification: ImportantNotification}>;
@@ -238,6 +244,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // All actions reuse the existing private token and expired-session handling.
   // ========================================
   const opportunities=useCallback(()=>donationRequest(donationApi.opportunities),[donationRequest]);
+  const educationalArticles=useCallback((page=1)=>donationRequest(saved=>educationalArticlesApi.list(saved,page)),[donationRequest]);
+  const educationalArticle=useCallback((id:number)=>donationRequest(saved=>educationalArticlesApi.detail(saved,id)),[donationRequest]);
   const opportunity=useCallback((id:string)=>donationRequest(saved=>donationApi.opportunity(saved,id)),[donationRequest]);
   const joinOpportunity=useCallback((id:string)=>donationRequest(saved=>donationApi.join(saved,id)),[donationRequest]);
   const cancelParticipation=useCallback((id:string)=>donationRequest(saved=>donationApi.cancel(saved,id)),[donationRequest]);
@@ -249,6 +257,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Logout's Sanctum deletion cascades only this login's device registration.
   // ========================================
   const homeReminders = useCallback(() => donationRequest(notificationApi.reminders), [donationRequest]);
+  const notificationAnnouncement = useCallback((id:number) => donationRequest(saved => notificationApi.announcement(saved,id)), [donationRequest]);
+  const preparationReminder = useCallback((id: number) => donationRequest(saved => notificationApi.preparation(saved, id)), [donationRequest]);
+  const acknowledgePreparation = useCallback((id: number) => donationRequest(saved => notificationApi.acknowledgePreparation(saved, id)), [donationRequest]);
   const listNotifications = useCallback((page = 1, unread = false) => donationRequest(saved => notificationApi.list(saved, page, unread)), [donationRequest]);
   const notificationCount = useCallback(() => donationRequest(notificationApi.count), [donationRequest]);
   const readNotification = useCallback((id: number) => donationRequest(saved => notificationApi.read(saved, id)), [donationRequest]);
@@ -314,13 +325,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return warning;
   });
 
-  return <AuthContext.Provider value={{ homeReminders, flowieChat, flowieHistory, flowieDeleted, flowieDetail, endFlowie, deleteFlowie, restoreFlowie, pointsSummary, pointTransactions, rewards, redeemReward, vouchers, voucher, activateVoucher, listNotifications, notificationCount, readNotification, readAllNotifications, registerDeviceToken, unregisterDeviceToken, captureDeviceTokenSession, user, profile, restoring, sessionError, busy,
+  return <AuthContext.Provider value={{ notificationAnnouncement, preparationReminder, acknowledgePreparation, homeReminders, flowieChat, flowieHistory, flowieDeleted, flowieDetail, endFlowie, deleteFlowie, restoreFlowie, pointsSummary, pointTransactions, rewards, redeemReward, vouchers, voucher, activateVoucher, listNotifications, notificationCount, readNotification, readAllNotifications, registerDeviceToken, unregisterDeviceToken, captureDeviceTokenSession, user, profile, restoring, sessionError, busy,
     restore: async () => { setRestoring(true); await restore(); },
-    requestLoginCode: mobile => exclusive(() => authApi.requestLoginCode(mobile)),
-    login: (mobile, code) => exclusive(async () => acceptSession(await authApi.login(mobile, code))),
+    requestLoginCode: identifier => exclusive(() => authApi.requestLoginCode(identifier)),
+    login: (identifier, code) => exclusive(async () => acceptSession(await authApi.login(identifier, code))),
     register: (form) => exclusive(() => authApi.register(form)),
     verifyRegistration: (pendingToken, code) => exclusive(async () => acceptSession(await authApi.verifyRegistration(pendingToken, code))),
-    eligibilityState, latestAssessment, submitAssessment, donationHistory, donationSummary, donationDetail, opportunities, opportunity, joinOpportunity, cancelParticipation, submitProof,
+    eligibilityState, latestAssessment, submitAssessment, donationHistory, donationSummary, donationDetail, opportunities, opportunity, joinOpportunity, cancelParticipation, submitProof, educationalArticles, educationalArticle,
     confirmEmailLogin: (mobile, code) => exclusive(async () => { await donationRequest(saved => authApi.confirmEmailLogin(saved, mobile, code)); }),
     requestEmailChange: email => exclusive(() => donationRequest(saved => authApi.requestEmailChange(saved, email))),
     resendEmailChange: pending => exclusive(() => donationRequest(saved => authApi.resendEmailChange(saved, pending))),

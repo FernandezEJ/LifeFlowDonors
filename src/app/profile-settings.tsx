@@ -24,7 +24,7 @@ export default function ProfileSettingsScreen() {
           {item.key === 'avatar' ? <Image source={profileMascotImage(profile?.profile_avatar)} resizeMode="contain" style={styles.mascot} accessibilityLabel="LifeFlow profile mascot" />
             : <MaterialIcons name={item.icon} size={25} color={PALETTE.primary} />}
           <View style={styles.labels}><Text style={styles.title}>{item.title}</Text><Text style={styles.description}>{item.description}</Text></View>
-          <MaterialIcons name="chevron-right" size={23} color={PALETTE.neutral} />
+          <MaterialIcons name="chevron-right" size={22} color={PALETTE.primary} />
         </Pressable>)}
       </View>
     </View>
@@ -35,7 +35,7 @@ export default function ProfileSettingsScreen() {
           style={({ pressed }) => [styles.row, pressed && styles.pressed]}>
           <MaterialIcons name="notifications-none" size={25} color={PALETTE.primary} />
           <View style={styles.labels}><Text style={styles.title}>Notification Settings</Text><Text style={styles.description}>Manage important LifeFlow notifications</Text></View>
-          <MaterialIcons name="chevron-right" size={23} color={PALETTE.neutral} />
+          <MaterialIcons name="chevron-right" size={22} color={PALETTE.primary} />
         </Pressable>
       </View>
     </View>

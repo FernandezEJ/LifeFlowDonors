@@ -14,8 +14,9 @@ export function useFlowieColors() {
   const dark = useColorScheme() === 'dark';
   return { background: dark ? '#201B1C' : PALETTE.cream, surface: dark ? '#2D2628' : PALETTE.surface,
     text: dark ? '#FFF4EF' : PALETTE.text, muted: dark ? '#D0BFC0' : PALETTE.neutral,
-    border: dark ? '#594348' : PALETTE.border, accent: dark ? '#FF9BA3' : PALETTE.primary,
-    soft: dark ? '#41292F' : PALETTE.selected, danger: dark ? '#FCA5A5' : PALETTE.danger, success: dark ? '#86EFAC' : PALETTE.successText, softText: dark ? '#D0BFC0' : PALETTE.neutralText, primary: PALETTE.primary, white: PALETTE.surface };
+    border: dark ? '#594348' : PALETTE.border, controlBorder: dark ? '#594348' : PALETTE.controlBorder, accent: dark ? '#FF9BA3' : PALETTE.primary,
+    skeleton: dark ? PALETTE.skeletonDark : PALETTE.skeleton,
+    soft: dark ? '#41292F' : PALETTE.selected, danger: dark ? '#FCA5A5' : PALETTE.danger, success: dark ? '#86EFAC' : PALETTE.successText, softText: dark ? '#D0BFC0' : PALETTE.neutralText, primary: PALETTE.primary, white: PALETTE.onPrimary };
 }
 
 // ========================================
@@ -47,7 +48,7 @@ export function FlowieActionCard({ action, onAction }: {
       <Text style={[styles.actionTitle, { color: c.text }]}>{action === 'open_evaluation' ? 'Evaluation Form' : item.title}</Text>
       {action === 'open_evaluation' ? <Text style={[styles.shortcutSubtitle, { color: c.softText }]}>Check your donation readiness</Text> : null}
     </View>
-    <MaterialIcons name="arrow-forward" size={20} color={c.accent} />
+    <MaterialIcons name="chevron-right" size={22} color={c.accent} accessible={false} />
   </Pressable>;
 }
 
@@ -67,7 +68,7 @@ export function FlowieInlineAction({ action, label, onAction, disabled = false }
     onPress={() => { if (!disabled) onAction(action); }}
     style={({ pressed }) => [styles.actionButton, { backgroundColor: c.soft }, disabled && styles.disabled, pressed && !disabled && styles.pressed]}>
     <Text style={[styles.buttonText, { color: c.accent }]}>{caption}</Text>
-    <MaterialIcons name="arrow-forward" size={18} color={c.accent} />
+    <MaterialIcons name="chevron-right" size={22} color={c.accent} accessible={false} />
   </Pressable>;
 }
 

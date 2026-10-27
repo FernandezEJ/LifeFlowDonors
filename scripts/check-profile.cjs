@@ -81,6 +81,12 @@ function host(){
    assert.equal(auth.user.name,source);
  }
  auth.user=savedUser;auth.profile=savedProfile;
+ const avatarTree=view(),frame=nodes(avatarTree).find(n=>n.type==='View'&&n.props.accessibilityLabel?.endsWith(' profile picture'));
+ assert.ok(frame);assert.equal(frame.props.style.width,frame.props.style.height);assert.equal(frame.props.style.borderRadius,frame.props.style.width/2);
+ assert.equal(frame.props.style.overflow,'hidden');assert.equal(frame.props.style.backgroundColor,'#FFF9F2');assert.equal(frame.props.style.elevation,undefined);assert.equal(frame.props.style.shadowOpacity,undefined);
+ const mascot=nodes(frame).find(n=>n.type==='Image');assert.equal(mascot.props.resizeMode,'contain');assert.equal(mascot.props.style.width,mascot.props.style.height);
+ assert.ok(mascot.props.style.width<=frame.props.style.width-2*frame.props.style.borderWidth);
+ const badge=nodes(avatarTree).find(n=>n.props?.accessibilityLabel==='Change Avatar');assert.ok(badge.props.hitSlop>=7);assert.equal(badge.props.style({pressed:false})[0].zIndex,1);
  for(const [source,initial] of [['C','C.'],['C.','C.'],['c','C.'],[' c. ','C.'],['C..','C.'],['Cruz','C.'],[null,''],['',''],['   ',''],[undefined,'']]){
    const original=auth.profile;auth.profile={...original,middle_name:source};
    const tree=view(),expectedName=initial?'Juan '+initial+' Cruz':'Juan Cruz';
@@ -168,17 +174,117 @@ function host(){
  assert.equal(navigations,2);assert.equal(auth.profile.first_name,'Ana');assert.equal(nodes(view()).filter(n=>n.type==='TextInput').length,0);
 
  // Exercise the actual tab listener: navigation must wait for the Profile decision.
- let tabProps, tabTopInset = 44;
+ let tabProps, tabTopInset = 44, tabTheme, tabFontScale = 1;
  const tabLayout=load('src/app/(tabs)/_layout.tsx',{...shared,'@expo/vector-icons/MaterialCommunityIcons':{__esModule:true,default:'CommunityIcon'},
- 'expo-router':{Tabs:Object.assign(props=>{tabProps=props;return null;},{Screen:'Screen'})},'react-native-safe-area-context':{useSafeAreaInsets:()=>({top:tabTopInset,bottom:0})},
+ 'react-native':{...native,useWindowDimensions:()=>({width:360,height:800,fontScale:tabFontScale})},
+ 'expo-router':{Tabs:Object.assign(props=>{tabProps=props;return null;},{Screen:'Screen'})},
+ 'expo-router/react-navigation':{DefaultTheme:{dark:false,colors:{}},ThemeProvider:({value,children})=>{tabTheme=value;return children;}},
+ 'react-native-safe-area-context':{useSafeAreaInsets:()=>({top:tabTopInset,bottom:0})},
+ '@/components/sliding-tab-bar':{SlidingTabBar:'SlidingTabBar'},
  '@/components/haptic-tab':{HapticTab:'HapticTab'},'@/contexts/tab-leave-context':{useTabLeave:()=>tabGuard,TabLeaveProvider:({children})=>children}});
  tabLayout.default();
  // Exercise the installed pressable so its default themed Android ripple cannot leak through.
  assert.equal(tabProps.screenOptions.animation,undefined);
- assert.equal(tabProps.screenOptions.tabBarActiveTintColor,'#9B1238');
- assert.equal(tabProps.screenOptions.tabBarInactiveTintColor,'#64748B');
+ assert.equal(tabTheme.dark,false);assert.equal(tabTheme.colors.background,'#FFF9F2');assert.equal(tabTheme.colors.card,'#FFF9F2');
+ assert.equal(tabProps.screenOptions.lazy,undefined,'Keep the installed lazy mounting default; do not eagerly load donor tabs');
+ assert.equal(tabProps.screenOptions.tabBarActiveTintColor,'#892325');
+ assert.equal(tabProps.screenOptions.tabBarInactiveTintColor,'rgba(37,2,2,0.72)');
  assert.equal(tabProps.children.map(tab=>tab.props.name).join(','),'index,activity,points,status,profile');
  assert.equal(tabProps.children.map(tab=>tab.props.options.title).join(','),'Home,Activity,Points,Status,Profile');
+ assert.equal(tabProps.screenOptions.tabBarLabelPosition,'below-icon');
+ assert.equal(tabProps.screenOptions.tabBarActiveBackgroundColor,'transparent');
+ assert.equal(tabProps.screenOptions.tabBarInactiveBackgroundColor,'transparent');
+ assert.equal(tabProps.screenOptions.tabBarStyle[0].borderWidth,0);
+ assert.equal(tabProps.screenOptions.tabBarStyle[0].borderTopWidth,0);
+ assert.equal(tabProps.screenOptions.tabBarStyle[0].elevation,0);
+ assert.equal(tabProps.screenOptions.tabBarStyle[0].shadowOpacity,0);
+ for(const tab of tabProps.children){
+   const icon=tab.props.options.tabBarIcon({color:'#892325',focused:true});
+   assert.equal(nodes(icon).filter(n=>n.type==='View').length,1,'Icon has no redundant selection line/background');
+   assert.equal(nodes(icon).filter(n=>['Icon','CommunityIcon'].includes(n.type)).length,1);
+ }
+ const originalHeight=tabProps.screenOptions.tabBarStyle[1].height;
+ tabFontScale=2;tabLayout.default();assert.ok(tabProps.screenOptions.tabBarStyle[1].height>originalHeight);
+ assert.ok(tabProps.screenOptions.sceneStyle.paddingBottom>tabProps.screenOptions.tabBarStyle[1].height);
+ tabFontScale=1;tabLayout.default();
+ // One background pill follows committed navigation state; the installed native
+ // tab bar continues to own press handlers, accessibility, haptics and guards.
+ {
+ const boundary=require('./flowie-test-boundaries.cjs'),pillHost=boundary.host();
+ const timings=[],values=[],nativePositionReads=[];let motionChanged,removed=0,resolveMotion;
+ const motionPreference=new Promise(resolve=>{resolveMotion=resolve;});
+ const pillNative={...boundary.native,I18nManager:{isRTL:false},Easing:{sin:t=>1-Math.cos(t*Math.PI/2),inOut:easing=>t=>t<0.5?easing(t*2)/2:1-easing((1-t)*2)/2},
+   AccessibilityInfo:{isReduceMotionEnabled:()=>motionPreference,addEventListener:(event,callback)=>{assert.equal(event,'reduceMotionChanged');motionChanged=callback;return {remove:()=>removed++};}},
+   Animated:{View:'AnimatedPill',Value:class{constructor(value){this.value=value;this.stops=0;values.push(this);}setValue(value){this.value=value;}stopAnimation(callback){this.stops++;const position=this.value;if(callback)nativePositionReads.push(()=>callback(position));}},
+     timing:(value,config)=>{const call={value,config,started:false,stopped:false};timings.push(call);return {start:()=>{call.started=true;call.from=value.value;},stop:()=>{call.stopped=true;}};}}};
+ const flushPositionReads=()=>{while(nativePositionReads.length)nativePositionReads.shift()();};
+ const sliding=boundary.load('src/components/sliding-tab-bar.tsx',{
+   ...boundary.shared,react:pillHost.react,'react-native':pillNative,'expo-router/js-tabs':{BottomTabBar:'NativeBottomTabBar'},
+ });
+ const committed={index:4,routes:['index','activity','points','status','profile'].map(name=>({name,key:name}))};
+ const descriptors=Object.fromEntries(committed.routes.map(route=>[route.key,{options:{tabBarButton:'ExistingHaptic',tabBarLabel:route.name,tabBarHideOnKeyboard:true}}]));
+ const nativeProps={state:committed,descriptors,navigation:{emit:()=>{}},insets:{top:44,bottom:24,left:10,right:0}};
+ const originalDescriptors=JSON.stringify(descriptors);
+ const bar=()=>sliding.SlidingTabBar(nativeProps);
+ let barTree=bar();assert.equal(barTree.type,'NativeBottomTabBar');
+ for(const key of ['state','navigation','insets'])assert.equal(barTree.props[key],nativeProps[key]);
+ assert.equal(barTree.props.descriptors.profile.options.tabBarButton,'ExistingHaptic');
+ assert.equal(barTree.props.descriptors.profile.options.tabBarHideOnKeyboard,true);
+ const background=()=>bar().props.descriptors[committed.routes[committed.index].key].options.tabBarBackground();
+ const backgroundType=background().type;
+ const pillView=()=>pillHost.render(()=>backgroundType(background().props));
+ let pillTree=pillView();assert.equal(boundary.nodes(pillTree).filter(n=>n.type==='AnimatedPill').length,1);
+ assert.equal(pillTree.props.pointerEvents,'none');assert.equal(pillTree.props.importantForAccessibility,'no-hide-descendants');
+ const appearance=tree=>Object.assign({},...boundary.nodes(tree).find(n=>n.type==='AnimatedPill').props.style);
+ assert.equal(appearance(pillTree).opacity,0);
+ pillTree.props.onLayout({nativeEvent:{layout:{width:360}}});pillTree=pillView();
+ assert.equal(values[0].value,294,'First deep-linked Profile placement is immediate');assert.equal(timings.length,0);
+ assert.equal(appearance(pillTree).backgroundColor,'#FFCAD0');assert.equal(appearance(pillTree).height,30);
+ assert.equal(appearance(pillTree).borderRadius,15);assert.equal(appearance(pillTree).width,44);
+ resolveMotion(false);await flush();pillView();assert.equal(timings.length,0,'Resolving accessibility preference does not animate initial placement');
+ const transition=(index,duration,target)=>{
+   const count=timings.length,from=values[0].value;
+   committed.index=index;assert.equal(background().type,backgroundType,'Route changes preserve the same background component');pillView();
+   assert.equal(timings.length,count,'Wait for the stopped native position before retargeting');flushPositionReads();
+   assert.equal(timings.length,count+1,'Exactly one animation to the final route, with no intermediate hops');
+   const call=timings.at(-1);assert.equal(call.config.toValue,target);assert.equal(call.config.duration,duration);assert.equal(call.from,from);
+   assert.equal(call.config.useNativeDriver,true);assert.equal(call.config.isInteraction,false);assert.ok(call.started);
+   const curve=call.config.easing;assert.equal(curve(0),0);assert.equal(curve(1),1);assert.ok(Math.abs(curve(0.5)-0.5)<1e-10);
+   assert.ok(curve(0.1)<0.05,'Gentle start instead of an abrupt ease-out launch');
+   let prior=-1;
+   for(let frame=0;frame<=24;frame++){
+     const progress=curve(frame/24);assert.ok(progress>prior,'Continuous monotonic easing, with no intermediate stops or bounce');prior=progress;
+     values[0].value=from+(target-from)*progress;pillView();
+     assert.equal(bar().props.state.index,index,'Visual crossing never selects an intermediate tab');
+   }
+   assert.equal(timings.length,count+1,'Same-route renders do not restart motion');
+   return call;
+ };
+ transition(0,400,22); // Profile -> Home (Back/programmatic route update).
+ transition(1,220,90);transition(0,220,22); // Home <-> Activity.
+ transition(2,280,158);transition(0,280,22); // Home <-> Points.
+ const longJump=transition(4,400,294); // Home -> Profile (deep link or tab).
+ // Interrupt halfway through a long crossing, then reverse from its visual
+ // position. A stale destination would incorrectly give this another 400 ms.
+ committed.index=0;pillView();flushPositionReads();const interrupted=timings.at(-1);values[0].value=158;
+ committed.index=4;pillView();assert.ok(interrupted.stopped);flushPositionReads();
+ const retarget=timings.at(-1);assert.equal(retarget.from,158);assert.equal(retarget.config.toValue,294);assert.equal(retarget.config.duration,280);
+ assert.ok(longJump.stopped);
+ // Native position reads can arrive asynchronously and out of date. Only the
+ // newest committed route may start an animation, including after Reduce Motion.
+ committed.index=0;pillView();const beforeRace=timings.length;
+ committed.index=1;pillView();flushPositionReads();assert.equal(timings.length,beforeRace+1);assert.equal(timings.at(-1).config.toValue,90);
+ committed.index=3;pillView();const beforeReduce=timings.length;
+ motionChanged(true);pillView();flushPositionReads();assert.equal(timings.length,beforeReduce);assert.ok(timings.at(-1).stopped);assert.equal(values[0].value,226);
+ committed.index=0;pillView();assert.equal(values[0].value,22);assert.equal(timings.length,beforeReduce,'Reduce Motion makes route changes instant');
+ motionChanged(false);pillView();
+ pillView().props.onLayout({nativeEvent:{layout:{width:640}}});pillView();assert.equal(values[0].value,50);assert.equal(timings.length,beforeReduce,'Rotation snaps to the measured slot without a cross-bar sweep');
+ pillNative.I18nManager.isRTL=true;pillView();assert.equal(values[0].value,546);
+ pillNative.I18nManager.isRTL=false;committed.index=2;pillView();
+ assert.equal(JSON.stringify(descriptors),originalDescriptors,'Do not mutate native descriptors or navigation state from a press');
+ committed.index=4;pillView();const beforeUnmount=timings.length;
+ assert.equal(values.length,1);pillHost.unmount();flushPositionReads();assert.equal(removed,1);assert.equal(timings.length,beforeUnmount,'Unmount cancels pending native callbacks');
+ }
  for(const os of ['android','ios'])for(const dark of [false,true])for(const disabled of [false,true]){
    const animatedValues=[],feedback=[],events=[];
    const pressNative={...native,Platform:{OS:os,Version:35},Pressable:'NativePressable',
@@ -220,15 +326,21 @@ function host(){
  }
  button(view(),'Edit Profile').props.onPress();nodes(view()).find(n=>n.type==='TextInput'&&n.props.accessibilityLabel==='First Name').props.onChangeText('Changed');view();
  let prevented=0,moved=0;
- tabProps.screenListeners({navigation:{getState:()=>({index:0,routes:[{name:'profile'}]}),navigate:()=>moved++},route:{name:'activity'}}).tabPress({preventDefault:()=>prevented++});
- assert.equal(prevented,1);assert.equal(moved,0);nodes(view()).find(n=>n.type==='ConfirmationModal').props.onPrimary();assert.equal(moved,1);view();
+ const guardedState={index:4,routes:['index','activity','points','status','profile'].map(name=>({name,key:name}))};
+ const guardedPress=tabProps.screenListeners({navigation:{getState:()=>guardedState,navigate:()=>{moved++;guardedState.index=1;}},route:{name:'activity'}}).tabPress;
+ guardedPress({preventDefault:()=>prevented++});
+ assert.equal(prevented,1);assert.equal(moved,0);nodes(view()).find(n=>n.type==='ConfirmationModal').props.onSecondary();
+ assert.equal(tabProps.tabBar({state:guardedState}).props.state.index,4,'Cancelling the Profile guard leaves the pill on the actual Profile route');
+ assert.equal(moved,0);guardedPress({preventDefault:()=>prevented++});
+ nodes(view()).find(n=>n.type==='ConfirmationModal').props.onPrimary();assert.equal(moved,1);
+ assert.equal(tabProps.tabBar({state:guardedState}).props.state.index,1,'Only committed navigation moves the pill');view();
  const mh=host();let confirmed=0,cancelled=0,dismissible=true,dismissOnBackdrop=false;const confirmationPending=deferred();
  const modalComponent=load('src/components/confirmation-modal.tsx',{...shared,react:mh.react,'react-native':{...native,Modal:'Modal',ActivityIndicator:'Spinner'}});
  const modalView=()=>mh.render(()=>modalComponent.ConfirmationModal({visible:true,title:'Discard changes?',message:'Unsaved changes',primaryLabel:'Discard',variant:'destructive',dismissible,dismissOnBackdrop,onSecondary(){cancelled++;},onPrimary:()=>{confirmed++;return confirmationPending.promise;}}));
  const modalButtons=()=>nodes(modalView()).filter(n=>n.type==='Pressable');
  assert.equal(modalButtons().map(n=>n.props.accessibilityLabel).join(','),'Cancel,Discard');
  assert.ok(nodes(modalView()).some(n=>n.type==='SafeAreaView'&&n.props.edges.join(',')==='top,bottom'));
- assert.ok(nodes(modalView()).some(n=>n.props?.accessibilityViewIsModal&&n.props.style.backgroundColor==='#FFFFFF'&&n.props.style.maxHeight==='100%'));
+ assert.ok(nodes(modalView()).some(n=>n.props?.accessibilityViewIsModal&&n.props.style.backgroundColor==='#FFF9F2'&&n.props.style.maxHeight==='100%'));
  assert.ok(nodes(modalView()).some(n=>n.type==='ScrollView'));
  assert.ok(modalButtons().every(n=>n.props.style[0].minHeight>=48));
  const primary=()=>nodes(modalView()).find(n=>n.props?.accessibilityLabel==='Discard');primary().props.onPress();primary().props.onPress();
@@ -383,9 +495,16 @@ function host(){
  'expo-constants':{__esModule:true,default:{expoConfig:JSON.parse(fs.readFileSync('app.json','utf8')).expo}},
  '@/components/profile-settings-page':page,'@/components/registration-legal':legal});
  const helpView=()=>helpHost.render(help.default);
- const headings=['About LifeFlow','How LifeFlow Works','Frequently Asked Questions','Donation Disclaimer','Terms and Conditions','Privacy Policy','Contact / Support','App Version'];
+ const headings=['About LifeFlow','How LifeFlow Works','Frequently Asked Questions','Donation Disclaimer','Terms and Conditions','Privacy Policy','Contact / Support','Meet the Developers','LifeFlow Development Team','App Version'];
  let previous=-1;const helpText=texts(helpView());for(const heading of headings){const index=helpText.indexOf(heading,previous+1);assert.ok(index>previous,heading);previous=index;}
  assert.ok(nodes(helpView()).some(n=>n.type==='ScrollView'));assert.ok(helpText.includes(JSON.parse(fs.readFileSync('app.json','utf8')).expo.version));
+ const team=nodes(helpView()).find(n=>n.type==='View'&&Array.isArray(n.props.children)&&n.props.children.some(child=>child?.type==='Text'&&child.props.children==='LifeFlow Development Team'));
+ assert.ok(team);assert.deepEqual(nodes(team).filter(n=>n.type==='Text').map(n=>n.props.children),['LifeFlow Development Team','Name','Name','Name']);
+ assert.ok(helpText.includes('LifeFlow is a capstone project supporting blood donation awareness and donor engagement.'));
+ assert.ok(nodes(helpView()).some(n=>n.type==='Icon'&&n.props.name==='groups'&&n.props.accessible===false));
+ assert.equal(nodes(team).filter(n=>['Pressable','Image','TextInput'].includes(n.type)).length,0,'Credits are static text without portraits, links or controls');
+ assert.ok(nodes(team).filter(n=>n.type==='Text').every(n=>n.props.allowFontScaling!==false&&!n.props.numberOfLines),'Names can wrap and retain accessibility text scaling');
+ assert.equal(team.props.style.height,undefined,'The team card grows with text instead of clipping names');
  goBack(helpView());assert.equal(routes.pop(),'/(tabs)/profile');
  for(const [title,key] of [['Terms and Conditions','terms'],['Privacy Policy','privacy']]){
    button(helpView(),title).props.onPress();const modal=nodes(helpView()).find(n=>n.type==='Modal');
@@ -395,6 +514,24 @@ function host(){
    assert.equal(nodes(helpView()).find(n=>n.type==='Modal').props.visible,false);
  }
  helpHost.unmount();
+
+ // Actual top-screen/modal headers have no divider; content separators remain.
+ const topHeaders={
+   'src/app/(tabs)/index.tsx':'fixedHeader','src/app/(tabs)/activity.tsx':'fixedHeader','src/app/(tabs)/points.tsx':'fixedHeader','src/app/(tabs)/status.tsx':'fixedHeader','src/app/(tabs)/profile.tsx':'fixedHeader',
+   'src/app/activity/[id].tsx':'header','src/app/announcement/[id].tsx':'header','src/app/announcements.tsx':'header','src/app/evaluation.tsx':'header',
+   'src/app/my-vouchers.tsx':'fixedHeader','src/app/notifications.tsx':'fixedHeader','src/app/redeem.tsx':'fixedHeader','src/app/voucher.tsx':'fixedHeader',
+   'src/components/profile-settings-page.tsx':'header','src/components/flowie-conversation-screen.tsx':'header','src/components/flowie-history-screen.tsx':'header',
+   'src/components/reward-details-modal.tsx':'header','src/components/did-you-know.tsx':'sheetHeader',
+ };
+ for(const [file,key] of Object.entries(topHeaders)){
+   const ast=ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true);let header;
+   function inspect(n){if(ts.isCallExpression(n)&&n.expression.getText(ast)==='StyleSheet.create')header=n.arguments[0].properties.find(p=>p.name.getText(ast)===key)?.initializer;ts.forEachChild(n,inspect);}inspect(ast);
+   assert.ok(header,file);assert.ok(!header.properties.some(p=>['borderBottomWidth','borderBottomColor'].includes(p.name.getText(ast))),file+': clean top header');
+ }
+ for(const [file,key,property] of [['src/app/(tabs)/profile.tsx','informationRowBorder','borderBottomWidth'],['src/components/flowie-conversation-screen.tsx','composerBorder','borderTopWidth'],['src/app/activity/[id].tsx','about','borderTopWidth']]){
+   const ast=ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true);let divider;
+   function inspect(n){if(ts.isPropertyAssignment(n)&&n.name.getText(ast)===key&&ts.isObjectLiteralExpression(n.initializer))divider=n.initializer.properties.find(p=>p.name.getText(ast)===property)?.initializer.getText(ast);ts.forEachChild(n,inspect);}inspect(ast);assert.equal(divider,'1',file+': meaningful content divider retained');
+ }
 
  // Execute the shared scene decoration, preserving the child identity and tab clearance.
  const content = { type: 'TabContent', props: {} };
@@ -425,7 +562,7 @@ function host(){
  for (const circle of [topCircle, bottomCircle]) {
    assert.equal(circle.position, 'absolute'); assert.equal(circle.width, circle.height);
    assert.equal(circle.borderRadius, circle.width / 2); assert.ok(circle.opacity <= 0.65);
-   assert.ok(['#FDECE6', '#FCE9E2'].includes(circle.backgroundColor));
+   assert.ok(circle.backgroundColor.startsWith('rgba(255,202,208,'),'Background circles use subtle Pastel Pink alpha variants');
  }
  // At phone widths/heights both circles cross only their intended corner and stay mostly outside.
  for (const [width, height] of [[320, 568], [390, 844], [430, 932]]) {
@@ -459,6 +596,7 @@ function host(){
      '@/components/notification-bell': { NotificationBell: 'Bell' },
      '@/components/home-donation-reminder': { HomeDonationReminder: 'Reminder' },
      '@/components/announcement-image': { AnnouncementImage: 'AnnouncementImage' },
+     '@/components/did-you-know': { DidYouKnow: 'DidYouKnow' },
      '@/constants/profile-settings': settings, '@/constants/flowie-mascots': load('src/constants/flowie-mascots.ts'),
      '@/services/auth': service, '@/services/api': { errorMessage: error => error.message },
      '@/services/donations': { boardItems: () => [], DONATION_STATUS: {}, DONATION_STATUS_DESCRIPTION: {} },
@@ -471,7 +609,8 @@ function host(){
    const tree = tabView();
    assert.equal(tree.type, 'SafeAreaView'); assert.equal(tree.props.edges.join(','), 'top');
    assert.equal(tree.props.style.backgroundColor, 'transparent');
-   const header = nodes(tree).find(node => node.type === 'View' && node.props.style?.borderBottomWidth === 1);
+   const header = nodes(tree).find(node => node.type === 'View' && node.props.style?.zIndex === 10);
+   assert.equal(header.props.style.borderBottomWidth??0,0,`${tab}: no pink header divider`);
    assert.equal(header.props.style.backgroundColor, '#FFF9F2', `${tab}: opaque continuous header`);
    assert.equal(header.props.style.zIndex, 10);
    assert.equal(header.props.children.props.style.width, '100%');
@@ -518,7 +657,7 @@ function host(){
    }
    if (tab === 'points') {
      const filter = nodes(tabView()).find(node => node.type === 'Pressable' && texts(node) === 'Earned');
-     assert.equal(filter.props.style({ pressed: false })[1].backgroundColor, '#9B1238');
+     assert.equal(filter.props.style({ pressed: false })[1].backgroundColor, '#892325');
    }
    scrollers.forEach(node => { node.props.ref.current = null; });
    tabHost.blur(); tabHost.refocus(); await flush(); tabView();

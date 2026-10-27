@@ -1,7 +1,7 @@
 import { API_BASE_URL } from './api';
 
 /** Public media only; never turn local/private storage paths into URLs. */
-export function publicImageUrl(value: string | null | undefined, collection: 'announcements' | 'rewards'): string | null {
+export function publicImageUrl(value: string | null | undefined, collection: 'announcements' | 'rewards' | 'education'): string | null {
   if (!value?.trim()) return null;
   try {
     const base = new URL(API_BASE_URL);

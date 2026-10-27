@@ -46,6 +46,8 @@ for (const [action, route] of Object.entries(expected)) {
   assert.equal(preview.flowieAction(action).route, route);
   let selected;
   const card = components.FlowieActionCard({action,onAction:value=>{selected=value;}});
+  assert.ok(nodes(card).some(n=>n.type==='Icon'&&n.props.name==='chevron-right'&&n.props.size===22));
+  assert.ok(!nodes(card).some(n=>n.props?.name==='arrow-forward'));
   card.props.onPress(); assert.equal(selected,action);
   const file = 'src/app/' + route.slice(1) + '.tsx';
   assert.ok(fs.existsSync(file), 'Missing existing route ' + file);
@@ -87,6 +89,7 @@ for (const [question, action, label] of [
   assert.ok(inline, 'Action must share the explanation box');
   let selected;
   const button=components.FlowieInlineAction({...inline.props,onAction:value=>{selected=value;}});
+  assert.ok(nodes(button).some(n=>n.type==='Icon'&&n.props.name==='chevron-right'&&n.props.size===22));
   assert.equal(button.props.accessibilityLabel,label);
   button.props.onPress();assert.equal(selected,action);
 }
@@ -106,6 +109,7 @@ const h = host();
 const timers = new Map(); let timerId = 0, profileLoads = 0;
 const home = load('src/app/(tabs)/index.tsx', { ...shared, react: h.react,
   '@/components/announcement-image': { AnnouncementImage: 'AnnouncementImage' },
+  '@/components/did-you-know': { DidYouKnow: 'DidYouKnow' },
   '@/services/announcement-presentation': {}, '@/components/home-donation-reminder': { HomeDonationReminder: 'Reminder' },
   '@/constants/flowie-mascots': load('src/constants/flowie-mascots.ts'), 'expo-router': { useRouter: () => router, useFocusEffect: h.focus },
   '@/components/notification-bell': { NotificationBell: 'Bell' }, '@/contexts/auth-context': { useAuth: () => auth },

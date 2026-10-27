@@ -100,7 +100,7 @@ export default function NotificationsScreen() {
       <View style={styles.fixedHeader}><View style={styles.header}>
         <Pressable accessibilityRole="button" accessibilityLabel="Go back"
           onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)')} style={styles.iconButton}>
-          <MaterialIcons name="arrow-back" color={COLORS.text} size={24} />
+          <MaterialIcons name="arrow-back" color={PALETTE.primary} size={24} />
         </Pressable>
         <Text accessibilityRole="header" style={styles.headerTitle}>Notifications</Text>
         <Pressable accessibilityRole="button" accessibilityLabel="Notification Settings" style={styles.iconButton}
@@ -149,7 +149,7 @@ export default function NotificationsScreen() {
               <Text style={[styles.cardTitle, !item.read_at && styles.cardTitleUnread]}>{item.title}</Text>
               {!item.read_at ? <View style={styles.unreadDot} accessible={false} /> : null}
             </View><Text numberOfLines={2} style={styles.cardMessage}>{item.message}</Text><Text style={styles.cardDate}>{timestamp}</Text></View>
-            {target ? <MaterialIcons name="chevron-right" size={20} color={COLORS.muted} accessible={false} style={styles.chevron} /> : null}
+            {target ? <MaterialIcons name="chevron-right" size={22} color={PALETTE.primary} accessible={false} style={styles.chevron} /> : null}
           </Pressable>;
         }}
       />
@@ -180,7 +180,7 @@ function notificationIcon(type: ImportantNotification['type']) {
 }
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },
-  fixedHeader: { borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  fixedHeader: { backgroundColor: COLORS.background },
   header: { width: '100%', maxWidth: 620, minHeight: 60, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 8 },
   iconButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { flex: 1, minWidth: 0, color: COLORS.text, fontSize: 21, fontWeight: '800' },
@@ -210,7 +210,7 @@ const styles = StyleSheet.create({
   error: { marginBottom: 14 }, errorText: { color: PALETTE.danger, fontSize: 13, lineHeight: 20 },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 70 },
   emptyText: { marginTop: 10, color: COLORS.muted, fontSize: 14, fontWeight: '600', textAlign: 'center' },
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.45)', justifyContent: 'center', padding: 20 },
+  modalBackdrop: { flex: 1, backgroundColor: PALETTE.backdrop, justifyContent: 'center', padding: 20 },
   detailCard: { width: '100%', maxWidth: 580, maxHeight: '85%', alignSelf: 'center', borderRadius: 22, backgroundColor: COLORS.white, padding: 20, gap: 8 },
   detailTitle: { color: COLORS.text, fontSize: 19, lineHeight: 26, fontWeight: '800' },
   detailScroll: { flexShrink: 1 }, detailContent: { paddingVertical: 4 },

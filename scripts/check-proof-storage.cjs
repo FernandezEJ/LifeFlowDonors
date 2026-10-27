@@ -7,7 +7,7 @@ function load(file, imports, globals = {}) {
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
-  vm.runInNewContext(code, { module, exports: module.exports, require: name => {if (name === '@/constants/theme') return load('src/constants/theme.ts', {'react-native': {Platform: {select: options => options.default}}});
+  vm.runInNewContext(code, { __DEV__: false, module, exports: module.exports, require: name => {if (name === '@/constants/theme') return load('src/constants/theme.ts', {'react-native': {Platform: {select: options => options.default}}});
     if (!(name in imports)) throw new Error(`Unexpected import: ${name}`);
     return imports[name];
   }, ...globals });
@@ -91,7 +91,7 @@ async function screenChecks(reconciled=false, cancelled=false, needsRevision=fal
   const stateWrites = [], timers = new Map(), delays = [];
   let now = 0, timerId = 0;
   let uploads = 0; let submissions = 0; let finishSave; let finishFailure; let cancellations=0;
-  let failSave = false;
+  let failSave = false; let finishReconciliation;
   const pending = { id: 34, status: finalStatus || (needsRevision?'needs_revision':'pending'), revision_reason:'Please upload a clearer image.', rejection_reason:'Invalid certificate.', proof_original_name:finalStatus||needsRevision?'IMG_20260928_114941.jpg':null, opportunity: { title: 'Drive', points_reward: 300 } };
   let selected = 0;
   const jsx = (type, props) => typeof type==='function'?type(props):({ type, props });
@@ -99,6 +99,7 @@ async function screenChecks(reconciled=false, cancelled=false, needsRevision=fal
   const presentation=load('src/services/announcement-presentation.ts',{'./api':{API_BASE_URL:'http://api.test/api'}},{URL});
   const body=load('src/components/announcement-body.tsx',{'react/jsx-runtime':{jsx,jsxs:jsx},'react-native':native});
   const screen = load('src/app/activity/[id].tsx', {
+    '@/components/tab-skeleton': { TabSkeleton: 'TabSkeleton' },
     '@expo/vector-icons/MaterialIcons': { __esModule:true, default: 'Icon' },
     'expo-router': { Stack: { Screen: 'Screen' }, useRouter: () => ({ back() {} }), useLocalSearchParams: () => ({ id: '34' }), useFocusEffect: fn => { if (!focused) { focused = true; focus = fn; } } },
     react: {
@@ -112,14 +113,14 @@ async function screenChecks(reconciled=false, cancelled=false, needsRevision=fal
     '@/services/announcement-presentation':presentation,
     'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
     '@/components/confirmation-modal': { ConfirmationModal: 'ConfirmationModal' },
-    '@/contexts/auth-context': { useAuth: () => ({ user: { id: 12 }, donationDetail: async () => ({ participation: pending }), cancelParticipation: async () => {cancellations++;return {participation:{...pending,status:'cancelled'}};}, submitProof: async () => {
+    '@/contexts/auth-context': { useAuth: () => ({ user: { id: 12 }, donationDetail: async () => {if(submissions && failSave)return new Promise(resolve=>{finishReconciliation=()=>resolve({participation:pending});});return {participation:pending};}, cancelParticipation: async () => {cancellations++;return {participation:{...pending,status:'cancelled'}};}, submitProof: async () => {
       submissions++; if (failSave) return new Promise((_resolve,reject)=>{finishFailure=()=>{if(reconciled)pending.status='for_verification';reject(new Error('Offline'));};});
       return new Promise(resolve => { finishSave = () => resolve({ participation: { ...pending, status: 'for_verification' } }); });
     } }) },
     '@/services/api': { ApiError,errorMessage: error => error.message },
     '@/services/donations': { DONATION_STATUS: { pending: 'Pending', for_verification: 'For Verification', needs_revision: 'Needs Revision', completed: 'Completed', rejected: 'Rejected', cancelled: 'Cancelled' } },
     '@/services/proof-storage': { pickProofFile: async () => { selected++; return cancelled ? null : {}; }, prepareProofUpload: () => { uploads++; return {}; }, reportProofFailure() {} },
-    '../../../assets/images/LogoMascot.png': 'LogoMascot',
+    '@/components/proof-submission-loading': { ProofSubmissionLoading: ({phase}) => jsx('Modal', {visible:true,transparent:true,animationType:'none',onRequestClose(){},children:jsx('ProofLoading',{phase})}) },
   }, {
     Date: { now: () => now },
     setTimeout: (callback, delay) => { const id=++timerId; delays.push(delay); timers.set(id,{callback,due:now+delay}); return id; },
@@ -136,19 +137,7 @@ async function screenChecks(reconciled=false, cancelled=false, needsRevision=fal
   const checkLoading = (tree, expectSubmit=true) => {
     const modal=loading(tree);assert.ok(modal);assert.equal(modal.props.visible,true);
     assert.equal(modal.props.transparent,true);assert.equal(modal.props.animationType,'none');
-    const content=nodes(modal),image=content.find(n=>n.type==='Image');
-    assert.equal(image.props.source,'LogoMascot');assert.equal(image.props.fadeDuration,0);
-    assert.equal(image.props.resizeMode,'contain');assert.ok(fs.existsSync('assets/images/LogoMascot.png'));
-    const text=content.find(n=>n.type==='Text');
-    assert.equal(text.props.children,'Flowie is submitting your proof...');assert.equal(text.props.style.textAlign,'center');
-    assert.equal(text.props.accessibilityLiveRegion,'polite');
-    const safeArea=content.find(n=>n.type==='SafeAreaView');
-    assert.equal(safeArea.props.style.backgroundColor,'#FFF9F2');
-    assert.equal(safeArea.props.style.alignItems,'center');assert.equal(safeArea.props.style.justifyContent,'center');
-    assert.equal(safeArea.props.edges.join(','),'top,bottom');assert.equal(safeArea.props.accessibilityViewIsModal,true);
-    assert.equal(safeArea.props.accessibilityState.busy,true);
-    assert.ok(!content.some(n=>n.type==='Pressable'||n.type==='ActivityIndicator'||String(n.type).includes('Animated')));
-    assert.ok(!nodes(tree).some(n=>['Uploading files...','Uploading proof...'].includes(n.props?.children)));
+    assert.ok(nodes(modal).some(n=>n.type==='ProofLoading' && ['uploading','checking'].includes(n.props.phase)));
     const submit=button(tree,'Retry Proof Upload');
     if(expectSubmit){assert.ok(submit);assert.equal(submit.props.disabled,true);assert.equal(submit.props.accessibilityState.busy,true);}
     modal.props.onRequestClose();assert.ok(loading(render()),'Back cannot dismiss an unfinished upload');
@@ -159,22 +148,10 @@ async function screenChecks(reconciled=false, cancelled=false, needsRevision=fal
     for(const [id,timer] of timers){if(timer.due<=now){timers.delete(id);timer.callback();}}
     await flush();
   };
-  const finishMinimum = async staleSubmit => {
-    if(duration<800){
-      assert.equal(delays.at(-1),800-duration,'Only the remaining minimum duration is scheduled');
-      assert.equal(timers.size,1);
-      checkLoading(render(),!reconciled && !nodes(render()).some(n=>n.props?.children==='For Verification'));
-      await advance(799-duration);
-      assert.ok(loading(render()),'Overlay remains visible until 800 ms total');
-      const before=submissions;staleSubmit.props.onPress();await flush();
-      assert.equal(submissions,before,'Submit lock remains active during the minimum-display wait');
-      await advance(1);
-    }else{
-      assert.equal(timers.size,0,'Long uploads add no closing delay');
-      assert.equal(delays.length,0,'No minimum-display timer for uploads lasting at least 800 ms');
-    }
-    assert.equal(loading(render()),undefined);
-    assert.equal(timers.size,0);
+  const finishPromptly = async () => {
+    await flush();
+    assert.equal(loading(render()),undefined,'No minimum-display or video-duration wait');
+    assert.equal(timers.size,0);assert.equal(delays.length,0);
   };
   render(); const cleanup=focus(); await flush();
   assert.equal(loading(render()),undefined);
@@ -206,7 +183,7 @@ async function screenChecks(reconciled=false, cancelled=false, needsRevision=fal
   }
   const upload = button(render(), needsRevision?'Re-upload Proof':'Upload Proof');
   if(needsRevision){assert.ok(nodes(render()).some(n=>n.props?.children==='Please upload a clearer image.'));assert.equal(button(render(),'Cancel Participation'),undefined);}
-  failSave = true;
+  failSave = cleanupPhase!=='success';
   upload.props.onPress(); upload.props.onPress(); await flush();
   if(cancelled){assert.equal(submissions,0);assert.ok(button(render(), 'Upload Proof'));return;}
   checkLoading(render());
@@ -214,24 +191,32 @@ async function screenChecks(reconciled=false, cancelled=false, needsRevision=fal
   assert.equal(submissions,1);button(render(),'Retry Proof Upload').props.onPress();await flush();
   assert.equal(submissions,1,'Duplicate taps while the mascot is visible do not resubmit');
   checkLoading(render());
+  if(cleanupPhase==='success'){
+    cleanup();const writes=stateWrites.length;
+    finishSave();await flush();
+    assert.equal(stateWrites.length,writes,'No stale state updates after leaving before upload success');
+    assert.equal(timers.size,0);return;
+  }
   if(cleanupPhase==='network'){
-    cleanup();const writes=stateWrites.filter(i=>i===3).length;
+    cleanup();const writes=stateWrites.length;
     finishFailure();await flush();await advance(1000);
     assert.equal(timers.size,0);assert.equal(delays.length,0);
-    assert.equal(stateWrites.filter(i=>i===3).length,writes,'No new overlay state updates after leaving during upload');
+    assert.equal(stateWrites.length,writes,'No stale state updates after leaving during upload');
     return;
   }
   await advance(duration);
   finishFailure();await flush();
-  if(cleanupPhase==='timer'){
-    assert.equal(timers.size,1);cleanup();const writes=stateWrites.filter(i=>i===3).length;
-    assert.equal(timers.size,0,'Leaving clears the pending minimum-display timer');
-    await advance(1000);
-    assert.equal(stateWrites.filter(i=>i===3).length,writes,'Cancelled wait does not update overlay state');
-    assert.equal(slots[2],false,'Cancelled wait resolves and releases the existing submit lock');
+  checkLoading(render(),!reconciled);
+  assert.ok(nodes(render()).some(n=>n.type==='ProofLoading' && n.props.phase==='checking'),'Keep checking state during lost-response reconciliation');
+  upload.props.onPress();await flush();assert.equal(submissions,1,'Keep duplicate-submit lock during reconciliation');
+  if(cleanupPhase==='reconciliation'){
+    cleanup();const writes=stateWrites.length;
+    finishReconciliation();await flush();
+    assert.equal(stateWrites.length,writes,'No stale state updates after leaving during reconciliation');
+    assert.equal(timers.size,0);assert.equal(delays.length,0);
     return;
   }
-  await finishMinimum(upload);
+  finishReconciliation();await finishPromptly();
   assert.equal(loading(render()),undefined,'Failed requests close the overlay');
   if(reconciled){assert.equal(submissions,1);assert.equal(button(render(), 'Cancel Participation'),undefined);return;}
   assert.equal(uploads, 1);
@@ -250,11 +235,11 @@ async function screenChecks(reconciled=false, cancelled=false, needsRevision=fal
   assert.ok(nodes(render()).some(n => n.props?.children === (needsRevision?'Needs Revision':'Pending')));
   await advance(duration);
   finishSave(); await flush();
-  await finishMinimum(retry);
+  await finishPromptly();
   assert.equal(loading(render()),undefined,'Successful requests close the overlay');
   assert.ok(nodes(render()).some(n => n.props?.children === 'For Verification'));
   assert.equal(button(render(), 'Cancel Participation'), undefined);
-  console.log(`PASS: ${needsRevision?'resubmission':'upload'} ${duration} ms success/failure, 800 ms minimum only, immediate request, duplicate lock, cached retry, static mascot`);
+  console.log(`PASS: ${needsRevision?'resubmission':'upload'} ${duration} ms success/failure, prompt close without timers, immediate request, duplicate lock, cached retry, presentation isolation`);
 }
 async function activityUiChecks(){
  const jsx=(type,props)=>typeof type==='function'?type(props):({type,props});
@@ -271,7 +256,7 @@ async function activityUiChecks(){
  const texts=tree=>nodes(tree).filter(n=>n.type==='Text').map(n=>Array.isArray(n.props.children)?n.props.children.join(''):n.props.children).join('\n');
  const button=(tree,label)=>nodes(tree).find(n=>n.type==='Pressable'&&texts(n)===label);
  const appearance=value=>Object.assign({},...[value].flat(Infinity).filter(Boolean));
- async function screen({record=fixture,id='34',failure=null,response=null}={}){
+ async function screen({record=fixture,id='34',failure=null,response=null,development=false}={}){
    const slots=[],queue=[],calls=[],routes=[];let cursor=0,focusFn,focusCleanup,current=record,requestFailure=failure,customResponse=response;
    const react={
      useState:initial=>{const i=cursor++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];},
@@ -282,6 +267,7 @@ async function activityUiChecks(){
      cancelParticipation:async key=>{calls.push(['cancel',key]);throw new ApiError('Cancellation failed. Please retry.',409);},
      submitProof:async()=>{calls.push(['proof']);throw Error('Unexpected proof submission');}};
    const module=load('src/app/activity/[id].tsx',{
+     '@/components/tab-skeleton':{TabSkeleton:'TabSkeleton'},
      '@expo/vector-icons/MaterialIcons':{__esModule:true,default:'Icon'},'react/jsx-runtime':runtime,react,'react-native':native,
      'react-native-safe-area-context':{SafeAreaView:'SafeAreaView'},'@/components/confirmation-modal':{ConfirmationModal:'ConfirmationModal'},
      '@/components/announcement-body':body,'@/services/announcement-presentation':presentation,
@@ -289,12 +275,13 @@ async function activityUiChecks(){
        useFocusEffect:fn=>{if(fn!==focusFn){focusFn=fn;queue.push(()=>{focusCleanup?.();focusCleanup=fn();});}}},
      '@/contexts/auth-context':{useAuth:()=>auth},'@/services/api':{ApiError,errorMessage:e=>e.message},
      '@/services/donations':{DONATION_STATUS:{pending:'Pending',for_verification:'For Verification',needs_revision:'Needs Revision',completed:'Completed',rejected:'Rejected',cancelled:'Cancelled'}},
-     '@/services/proof-storage':{pickProofFile:async()=>{throw new ApiError('Choose a JPEG, PNG, or PDF proof.');},prepareProofUpload:()=>{throw Error('No valid file selected');},reportProofFailure(){}},
-     '../../../assets/images/LogoMascot.png':'LogoMascot',
-   },{setTimeout,clearTimeout});
+     '@/services/proof-storage':{pickProofFile:async()=>{calls.push(['picker']);throw new ApiError('Choose a JPEG, PNG, or PDF proof.');},prepareProofUpload:()=>{throw Error('No valid file selected');},reportProofFailure(){}},
+     '@/components/proof-submission-loading':{ProofSubmissionLoading:'ProofLoading'},
+   },{__DEV__:development,setTimeout,clearTimeout});
    const view=()=>{cursor=0;const tree=module.default();while(queue.length)queue.shift()();return tree;};
    const initial=view();const flush=()=>new Promise(resolve=>setImmediate(resolve));await flush();
    return {view,initial,auth,calls,routes,flush,close:()=>focusCleanup?.(),update:value=>{current=value;customResponse=null;requestFailure=null;},
+     fail:value=>{requestFailure=value;},respond:value=>{customResponse=value;requestFailure=null;},route:value=>{id=value;},
      refocus:()=>{focusCleanup?.();focusCleanup=focusFn();}};
  }
  for(const status of ['pending','for_verification','needs_revision','completed','rejected','cancelled','unknown-status','__proto__']){
@@ -358,20 +345,41 @@ async function activityUiChecks(){
    s=await screen({failure});assert.ok(nodes(s.view()).some(n=>n.props?.accessibilityRole==='alert'));assert.equal(button(s.view(),'Upload Proof'),undefined);
    s.update(fixture);button(s.view(),'Refresh activity').props.onPress();s.view();await s.flush();assert.ok(button(s.view(),'Upload Proof'));s.close();
  }
- s=await screen();s.update({...fixture,status:'for_verification',proof_uploaded_at:'2026-10-20T05:00:00Z'});s.refocus();await s.flush();assert.match(texts(s.view()),/For Verification/);assert.equal(button(s.view(),'Upload Proof'),undefined);s.close();
- const late={};late.promise=new Promise(resolve=>{late.resolve=resolve;});s=await screen({response:late.promise});assert.ok(nodes(s.initial).some(n=>n.props?.accessibilityLabel==='Loading activity'));s.close();late.resolve({participation:{...fixture,status:'completed'}});await s.flush();assert.doesNotMatch(texts(s.view()),/Donation Verified/);
+ s=await screen();
+ const refresh={};refresh.promise=new Promise(resolve=>{refresh.resolve=resolve;});s.respond(refresh.promise);s.refocus();
+ assert.match(texts(s.view()),/A real event title/);assert.ok(!nodes(s.view()).some(n=>n.type==='TabSkeleton'),'Same-record refocus retains content');
+ assert.equal(button(s.view(),'Upload Proof').props.disabled,true);button(s.view(),'Upload Proof').props.onPress();await s.flush();assert.equal(s.calls.filter(c=>c[0]==='picker').length,0,'No cached actions before revalidation');
+ refresh.resolve({participation:{...fixture,status:'for_verification',proof_uploaded_at:'2026-10-20T05:00:00Z'}});await s.flush();assert.match(texts(s.view()),/For Verification/);assert.equal(button(s.view(),'Upload Proof'),undefined);s.close();
+ s=await screen();s.fail(new ApiError('Offline. Please retry.'));s.refocus();await s.flush();
+ assert.match(texts(s.view()),/A real event title/);assert.match(texts(s.view()),/Offline/);assert.equal(button(s.view(),'Upload Proof').props.disabled,true);
+ s.update(fixture);button(s.view(),'Refresh activity').props.onPress();s.view();await s.flush();assert.equal(button(s.view(),'Upload Proof').props.disabled,false);
+ s.fail(new ApiError('Gone',404));s.refocus();await s.flush();assert.doesNotMatch(texts(s.view()),/A real event title/);assert.equal(button(s.view(),'Upload Proof'),undefined);s.close();
+ for(const change of ['route','account']){
+   s=await screen();const wait={};wait.promise=new Promise(resolve=>{wait.resolve=resolve;});s.respond(wait.promise);
+   if(change==='route')s.route('35');else s.auth.user={id:99};
+   const tree=s.view();assert.doesNotMatch(texts(tree),/A real event title/);assert.ok(nodes(tree).some(n=>n.type==='TabSkeleton'));assert.equal(button(tree,'Upload Proof'),undefined);
+   s.close();wait.resolve({participation:fixture});await s.flush();assert.doesNotMatch(texts(s.view()),/A real event title/);
+ }
+ s=await screen({response:{participation:{...fixture,id:99}}});assert.match(texts(s.view()),/This activity is unavailable/);assert.equal(button(s.view(),'Upload Proof'),undefined);s.close();
+ for(const development of [false,true]){
+   s=await screen({development});
+   assert.ok(!nodes(s.view()).some(n=>n.type==='Pressable' && /preview/i.test(texts(n))),'No development or production preview entry');
+   assert.equal(nodes(s.view()).find(n=>n.type==='ProofLoading'),undefined,'Loading requires a real upload');
+   s.close();
+ }
+ const late={};late.promise=new Promise(resolve=>{late.resolve=resolve;});s=await screen({response:late.promise});assert.ok(nodes(s.initial).some(n=>n.type==='TabSkeleton'&&n.props.label==='Loading activity'&&n.props.variant==='activity-detail'));s.close();late.resolve({participation:{...fixture,status:'completed'}});await s.flush();assert.doesNotMatch(texts(s.view()),/Donation Verified/);
  console.log('PASS: Task 04 light card hierarchy; all six statuses plus unknown/prototype-safe read-only fallbacks; pending with/without proof; real rich-text/date/location/reasons; no fabricated awards/private filenames; cancellation/invalid file/errors/empty/missing event/retry/refocus/stale load; narrow-screen/large-text configuration (mocked native boundaries)');
 }
 main().then(async()=>{
-  for(const duration of [0,200,799,800,1500,5000]){
+  for(const duration of [0,200,799,800,1500,5000,20000]){
     await screenChecks(false,false,false,null,duration);
     await screenChecks(false,false,true,null,duration);
   }
   await screenChecks(true);await screenChecks(false,true);await screenChecks(true,false,true);
   for(const status of ['for_verification','completed','rejected','cancelled'])await screenChecks(false,false,false,status);
-  for(const phase of ['network','timer'])await screenChecks(false,false,false,null,200,phase);
+  for(const phase of ['network','reconciliation','success'])await screenChecks(false,false,false,null,200,phase);
   await screenChecks(false,false,false,null,200,null,true);
   await activityUiChecks();
-  console.log('PASS: reconciliation, picker cancellation, read-only statuses and display-timer cleanup on leaving');
+  console.log('PASS: reconciliation, picker cancellation, read-only statuses and loading/late-response cleanup on leaving');
 })
   .catch(error => { console.error(error); process.exitCode = 1; });

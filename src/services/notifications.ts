@@ -1,4 +1,5 @@
 import { apiRequest } from './api';
+import type { AnnouncementDetail } from './donations';
 
 // ========================================
 // IMPORTANT NOTIFICATION CONTRACT AND OWNED API
@@ -13,7 +14,10 @@ export type NotificationPage = { data: ImportantNotification[]; current_page: nu
 export type HomeReminder = { notification: ImportantNotification; activity_title: string; event_date: string; start_time: string | null; remaining_seconds: number };
 export type HomeReminders = { reminders: HomeReminder[]; server_time: string };
 export const notificationApi = {
+  announcement: (token: string, id: number) => apiRequest<AnnouncementDetail>('/notifications/'+id+'/announcement', { token }),
   reminders: (token: string) => apiRequest<HomeReminders>('/notifications/reminders', { token }),
+  preparation: (token: string, id: number) => apiRequest<{reminder: HomeReminder}>('/notifications/'+id+'/preparation', { token }),
+  acknowledgePreparation: (token: string, id: number) => apiRequest<{acknowledged: boolean}>('/notifications/'+id+'/preparation-acknowledgement', { token, method: 'POST' }),
   list: (token: string, page = 1, unread = false) => apiRequest<NotificationPage>('/notifications?page='+page+'&unread='+(unread?'1':'0'), { token }),
   count: (token: string) => apiRequest<{unread_count: number}>('/notifications/unread-count', { token }),
   read: (token: string, id: number) => apiRequest<{notification: ImportantNotification}>('/notifications/'+id+'/read', { token, method: 'POST' }),
@@ -31,12 +35,22 @@ export function notificationDestination(item: ImportantNotification) {
   if (item.type === 'donation_cooldown_complete') return { pathname: '/(tabs)/status' as const };
   const id = item.type === 'admin_announcement' ? item.data?.opportunity_id : item.data?.participation_id;
   if (!Number.isSafeInteger(id) || !id || id < 1) return null;
-  if (item.type === 'admin_announcement') return { pathname: '/announcement/[id]' as const, params: { id: String(id) } };
-  if (item.type === 'donation_completed' || item.type === 'donation_rejected' || item.type === 'donation_needs_revision' || item.type === 'donation_reminder') return { pathname: '/activity/[id]' as const, params: { id: String(id) } };
+  if (item.type === 'admin_announcement') return Number.isSafeInteger(item.id) && item.id > 0
+    ? { pathname: '/announcement/[id]' as const, params: { id: String(id), notificationId: String(item.id) } } : null;
+  if (item.type === 'donation_reminder') return Number.isSafeInteger(item.id) && item.id > 0
+    ? { pathname: '/donation-preparation' as const, params: { id: String(item.id) } } : null;
+  if (item.type === 'donation_completed' || item.type === 'donation_rejected' || item.type === 'donation_needs_revision') return { pathname: '/activity/[id]' as const, params: { id: String(id) } };
   return null;
 }
 
 // Presentation only; server timestamps and read state remain authoritative.
+export function preparationQuestion(title: string, date: string): string {
+  const safeTitle = title.replace(/[\r\n\x00-\x1f]/g, ' ').trim().slice(0, 180);
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(date + 'T12:00:00') : null;
+  const label = parsed && Number.isFinite(parsed.getTime()) ? parsed.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'my upcoming donation';
+  return `I'm donating blood at ${safeTitle || 'my joined activity'} on ${label}. How should I prepare? I understand healthcare staff decide final eligibility.`;
+}
+
 export function notificationTimeLabel(value: unknown, now = Date.now()): string {
   const time = typeof value === 'string' && value.trim() ? Date.parse(value) : NaN;
   if (!Number.isFinite(time) || !Number.isFinite(now)) return 'Date unavailable';

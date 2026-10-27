@@ -1,12 +1,17 @@
 import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { NotificationProvider } from '@/contexts/notification-context';
-import { Stack } from 'expo-router';
+import { Stack, useSegments } from 'expo-router';
 import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router/react-navigation';
-import { ActivityIndicator, Button, Text, View } from 'react-native';
+import { ActivityIndicator, Button, Text } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '@/contexts/auth-context';
 import { StatusBar } from 'expo-status-bar';
+import * as SplashScreen from 'expo-splash-screen';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+
+// Keep the native artwork static; Expo Router still owns the existing hide timing.
+SplashScreen.setOptions({ fade: false, duration: 0 });
 
 export const unstable_settings = {
   initialRouteName: 'index',
@@ -40,17 +45,21 @@ function NotificationSession() {
 
 function SessionNavigator() {
   const colorScheme = useColorScheme();
+  const [route] = useSegments();
   const { user, restoring, sessionError, restore } = useAuth();
-  if (restoring || sessionError) {
-    return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: PALETTE.cream }}>
+  // Most screens stay light in device dark mode. Only Flowie's own dark
+  // surfaces need light icons; startup/session errors always have a light backdrop.
+  const darkFlowie = colorScheme === 'dark' && ['flowie', 'flowie-history', 'flowie-recently-deleted', 'flowie-conversation'].includes(route);
+  const statusBarStyle = !!user && !restoring && !sessionError && darkFlowie ? 'light' : 'dark';
+
+  return <>
+    <StatusBar style={statusBarStyle} hidden={false} />
+    {restoring || sessionError ? <SafeAreaView style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: PALETTE.cream }}>
       {restoring ? <><ActivityIndicator color={PALETTE.primary} /><Text style={{color:PALETTE.text}}>Restoring session...</Text></> :
         <><Text style={{color:PALETTE.danger}}>{sessionError}</Text><Button color={PALETTE.primary} title="Retry" onPress={() => void restore()} /></>}
-    </View>;
-  }
-
-  return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : lightTheme}>
-      <Stack>
+    </SafeAreaView> :
+    <ThemeProvider value={darkFlowie ? DarkTheme : lightTheme}>
+      <Stack screenOptions={{ statusBarStyle, statusBarHidden: false }}>
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Protected guard={!user}>
           <Stack.Screen name="(auth)" options={{ headerShown: false }} />
@@ -61,6 +70,7 @@ function SessionNavigator() {
           <Stack.Screen name="profile-settings" options={{ headerShown: false }} />
           <Stack.Screen name="profile-settings/[setting]" options={{ headerShown: false }} />
           <Stack.Screen name="notifications" options={{ title: 'Notifications' }} />
+          <Stack.Screen name="donation-preparation" options={{ headerShown: false }} />
           <Stack.Screen name="notification-settings" options={{ headerShown: false }} />
           <Stack.Screen name="redeem" options={{ title: 'Redeem Points' }} />
           <Stack.Screen name="voucher" options={{ title: 'Voucher' }} />
@@ -75,7 +85,6 @@ function SessionNavigator() {
           <Stack.Screen name="announcement/[id]" />
         </Stack.Protected>
       </Stack>
-      <StatusBar style="auto" />
-    </ThemeProvider>
-  );
+    </ThemeProvider>}
+  </>;
 }

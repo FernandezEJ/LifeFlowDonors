@@ -510,6 +510,12 @@ async function phaseDChecks() {
   for(const reward of inventory){
     const card=rewardCard(tree,reward.name);assert.equal(card.props.accessibilityRole,'button');assert.equal(nodes(card).filter(n=>n.type==='Pressable').length,1);
     assert.ok(nodes(card).some(n=>n.type==='Icon'&&n.props.name==='chevron-right'&&n.props.accessible===false));
+    const appearance=Object.assign({},...card.props.style({pressed:false}).filter(Boolean));
+    assert.equal(appearance.backgroundColor,'#FFF9F2');assert.equal(appearance.padding,13);assert.equal(appearance.gap,12);assert.equal(appearance.elevation,undefined);
+    const [image,body,chevron]=card.props.children;
+    assert.equal(image.type,'RewardImage');assert.equal(image.props.reward,reward,'Card uses the real reward/cover without a second visual wrapper');
+    assert.equal(body.props.style.backgroundColor,undefined);assert.equal(body.props.style.padding,undefined);assert.equal(body.props.style.flex,1);assert.equal(body.props.style.minWidth,0);
+    assert.equal(chevron.type,'Icon');assert.equal(chevron.props.name,'chevron-right');assert.equal(chevron.props.size,22);assert.equal(chevron.props.style.flexShrink,0);
     assert.ok(card.props.style({pressed:true}).some(style=>style?.opacity<1));assert.equal(button(card,'Redeem'),undefined);
     const title=nodes(card).find(n=>n.type==='Text'&&n.props.children===reward.name);assert.equal(title.props.style.minWidth,0);assert.equal(title.props.numberOfLines,undefined);
   }
@@ -597,6 +603,31 @@ async function phaseDChecks() {
   imageNode.props.onError();assert.ok(nodes(image.render()).some(n=>n.type==='Icon'&&n.props.name==='card-giftcard'));
   imageProps.reward={...voucher,image_url:'https://cdn.test/replacement.png'};assert.ok(nodes(image.render()).some(n=>n.type==='Image'));
   imageProps.reward={...voucher,image_url:null};assert.ok(nodes(image.render()).some(n=>n.type==='Icon'));image.close();
+  // Thumbnail fitting is independent of the product data and purchase flow.
+  const thumbnailProps={reward:{...voucher,image_url:'https://cdn.test/shirt.png'}};
+  const beforeImage=JSON.stringify(thumbnailProps.reward);
+  const thumbnail=harness('src/components/reward-details-modal.tsx',{}, {},thumbnailProps,'RewardImage');
+  const renderedImage=()=>nodes(thumbnail.render()).find(n=>n.type==='Image');
+  let thumbnailTree=await thumbnail.settle();
+  const frame=Object.assign({},...thumbnailTree.props.style.filter(Boolean));
+  assert.equal(frame.width,76);assert.equal(frame.height,96);assert.equal(frame.borderRadius,12);assert.equal(frame.overflow,'hidden');
+  assert.equal(frame.backgroundColor,'#FFF9F2');assert.equal(frame.padding,undefined);assert.equal(frame.margin,undefined);
+  assert.equal(renderedImage().props.resizeMode,'cover','Normal and slow-loading thumbnails fill the viewport');
+  assert.equal(renderedImage().props.style.width,'100%');assert.equal(renderedImage().props.style.height,'100%');
+  assert.equal(renderedImage().props.accessibilityLabel,voucher.name);
+  const loadDimensions=(width,height)=>renderedImage().props.onLoad({nativeEvent:{source:{width,height}}});
+  for(const [width,height,fit] of [[1000,1000,'cover'],[750,1000,'cover'],[1200,800,'contain'],[400,1600,'contain']]){
+    loadDimensions(width,height);assert.equal(renderedImage().props.resizeMode,fit,'Fill ordinary ratios without aggressively cropping wide/tall product art');
+  }
+  loadDimensions(0,0);assert.equal(renderedImage().props.resizeMode,'contain','Invalid dimensions cannot produce unsafe scale calculations');
+  const oldImage=renderedImage();thumbnailProps.reward={...voucher,image_url:'https://cdn.test/hoodie.png'};await thumbnail.settle();
+  oldImage.props.onError();oldImage.props.onLoad({nativeEvent:{source:{width:1600,height:400}}});
+  assert.equal(renderedImage().props.resizeMode,'cover','Stale callbacks cannot change a replacement image');
+  renderedImage().props.onError();assert.ok(nodes(thumbnail.render()).some(n=>n.type==='Icon'&&n.props.accessibilityLabel==='Reward image unavailable'));
+  thumbnailProps.reward={...voucher,image_url:'https://cdn.test/recovered.png'};await thumbnail.settle();assert.ok(renderedImage());
+  thumbnailProps.reward={...voucher,image_url:null};await thumbnail.settle();assert.equal(renderedImage(),undefined);
+  assert.ok(nodes(thumbnail.render()).some(n=>n.type==='Icon'));assert.equal(JSON.stringify({...thumbnailProps.reward,image_url:'https://cdn.test/shirt.png'}),beforeImage);
+  thumbnail.close();
   console.log('Phase D checks passed: whole cards/chevrons, one centered scrollable popup, image fallback, Cancel/X/back and busy guards, live apparel selection/reset, balance/stock/key validation, persist-before-request, idempotent retries, account races, server-confirmed My Rewards navigation, and narrow/landscape/font accessibility configuration (mocked native boundaries).');
 }
 

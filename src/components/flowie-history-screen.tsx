@@ -66,7 +66,7 @@ export function FlowieHistoryScreen({ deleted = false }: { deleted?: boolean }) 
   </View>;
   return <><Head><title>{title} | LifeFlow</title></Head><Stack.Screen options={{ headerShown: false, title }} />
     <SafeAreaView edges={['top', 'bottom']} style={[styles.screen, { backgroundColor: c.background }]}>
-      <View style={[styles.header, { borderBottomColor: c.border }]}>
+      <View style={styles.header}>
         <Pressable accessibilityRole="button" accessibilityLabel="Go back" style={styles.iconButton}
           onPress={() => router.canGoBack() ? router.back() : router.replace(deleted ? '/flowie-history' : '/flowie')}>
           <MaterialIcons name="arrow-back" size={24} color={c.text} /></Pressable>
@@ -90,7 +90,7 @@ export function FlowieHistoryScreen({ deleted = false }: { deleted?: boolean }) 
             <Pressable accessibilityRole="button" accessibilityLabel="Retry history" disabled={history.loading || history.restoring !== null}
               style={styles.textButton} onPress={history.refresh}><Text style={{ color: c.accent }}>Retry</Text></Pressable></View> : null}
         </>}
-        ListEmptyComponent={!history.ready && !history.error ? <TabSkeleton /> :
+        ListEmptyComponent={!history.ready && !history.error ? <TabSkeleton pulse colors={{ surface: c.surface, block: c.skeleton }} /> :
           !history.error ? <Text style={[styles.empty, { color: c.muted }]}>{deleted ? 'Recently Deleted is empty.' : 'No conversations yet. Your Flowie chats will appear here.'}</Text> : null}
         ListFooterComponent={<>
           {history.more && history.ready ? <Pressable accessibilityRole="button" accessibilityLabel="Load more conversations"
@@ -103,7 +103,7 @@ export function FlowieHistoryScreen({ deleted = false }: { deleted?: boolean }) 
   </>;
 }
 const styles = StyleSheet.create({
-  screen: { flex: 1 }, header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1 },
+  screen: { flex: 1 }, header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 8, },
   iconButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   title: { flex: 1, fontSize: 21, fontWeight: '800', lineHeight: 28 },
   list: { flex: 1 }, managementActions: { marginBottom: 20 },

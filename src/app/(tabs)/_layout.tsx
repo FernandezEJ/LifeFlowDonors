@@ -2,12 +2,14 @@ import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Tabs } from 'expo-router';
+import { DefaultTheme, ThemeProvider } from 'expo-router/react-navigation';
 import { type ReactNode } from 'react';
 import { TabLeaveProvider, useTabLeave } from '@/contexts/tab-leave-context';
-import { type ColorValue, StyleSheet, Text, View } from 'react-native';
+import { type ColorValue, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { HapticTab } from '@/components/haptic-tab';
+import { SlidingTabBar } from '@/components/sliding-tab-bar';
 
 const COLORS = {
   background: PALETTE.cream,
@@ -25,10 +27,9 @@ type TabIconProps = {
   name: 'home' | 'directions-run' | 'stars' | 'monitor-heart' | 'person';
 };
 
-function TabIcon({ color, focused, name }: TabIconProps) {
+function TabIcon({ color, name }: TabIconProps) {
   return (
     <View style={styles.iconContainer}>
-      {focused && <View style={styles.activeIndicator} />}
       <MaterialIcons name={name} color={color} size={22} />
     </View>
   );
@@ -40,16 +41,18 @@ type CommunityTabIconProps = {
   name: 'list-box-outline' | 'progress-star-four-points';
 };
 
-function CommunityTabIcon({ color, focused, name }: CommunityTabIconProps) {
+function CommunityTabIcon({ color, name }: CommunityTabIconProps) {
   return (
     <View style={styles.iconContainer}>
-      {focused && <View style={styles.activeIndicator} />}
       <MaterialCommunityIcons name={name} color={color} size={22} />
     </View>
   );
 }
 
-export default function TabLayout() { return <TabLeaveProvider><MainTabs /></TabLeaveProvider>; }
+// These five screens are light even when the device (and Flowie) use a dark theme.
+// Match native/lazy scene backgrounds before each screen's own surface mounts.
+const tabTheme = { ...DefaultTheme, colors: { ...DefaultTheme.colors, background: PALETTE.cream, card: PALETTE.cream, text: PALETTE.text, primary: PALETTE.primary, border: PALETTE.border } };
+export default function TabLayout() { return <ThemeProvider value={tabTheme}><TabLeaveProvider><MainTabs /></TabLeaveProvider></ThemeProvider>; }
 
 // Keep the top Safe Area uniformly cream; circles sit behind the opaque tab headers.
 function TabScreenBackground({ children, topInset }: { children: ReactNode; topInset: number }) {
@@ -65,12 +68,15 @@ function TabScreenBackground({ children, topInset }: { children: ReactNode; topI
 function MainTabs() {
   const { requestLeave } = useTabLeave();
   const insets = useSafeAreaInsets();
+  const { fontScale } = useWindowDimensions();
+  const tabBarHeight = Math.max(TAB_BAR_HEIGHT, 52 + Math.ceil(14 * fontScale));
   const bottomInset = Math.max(insets.bottom, 10);
   const tabBarBottom = bottomInset + TAB_BAR_GAP;
-  const contentBottomClearance = TAB_BAR_HEIGHT + tabBarBottom + 8;
+  const contentBottomClearance = tabBarHeight + tabBarBottom + 8;
 
   return (
     <Tabs
+      tabBar={props => <SlidingTabBar {...props} />}
       screenLayout={({ children }) => <TabScreenBackground topInset={insets.top}>{children}</TabScreenBackground>}
       screenListeners={({ navigation, route }) => ({ tabPress: event => {
         const state = navigation.getState();
@@ -84,6 +90,9 @@ function MainTabs() {
         tabBarActiveTintColor: COLORS.brand,
         tabBarInactiveTintColor: COLORS.inactive,
         tabBarButton: HapticTab,
+        tabBarLabelPosition: 'below-icon',
+        tabBarActiveBackgroundColor: 'transparent',
+        tabBarInactiveBackgroundColor: 'transparent',
         sceneStyle: {
           paddingBottom: contentBottomClearance,
           backgroundColor: COLORS.background,
@@ -101,7 +110,7 @@ function MainTabs() {
           styles.tabBar,
           {
             bottom: tabBarBottom,
-            height: TAB_BAR_HEIGHT,
+            height: tabBarHeight,
           },
         ],
       }}>
@@ -169,32 +178,21 @@ const styles = StyleSheet.create({
     right: 16,
     paddingTop: 5,
     paddingBottom: 5,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 22,
+    borderWidth: 0,
+    borderTopWidth: 0,
+    borderRadius: 0,
     backgroundColor: COLORS.background,
-    elevation: 10,
-    shadowColor: PALETTE.text,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
+    elevation: 0,
+    shadowOpacity: 0,
   },
-  tabBarItem: { height: 58, paddingVertical: 3, borderRadius: 18 },
-  tabBarIcon: { marginTop: 1, marginBottom: 0 },
+  tabBarItem: { paddingVertical: 0 },
+  tabBarIcon: { height: 30, marginTop: 0, marginBottom: 2 },
   iconContainer: {
     width: 36,
     height: 30,
     alignItems: 'center',
-    justifyContent: 'flex-end',
+    justifyContent: 'center',
   },
-  activeIndicator: {
-    position: 'absolute',
-    top: 0,
-    width: 16,
-    height: 3,
-    borderRadius: 2,
-    backgroundColor: COLORS.brand,
-  },
-  tabBarLabel: { fontSize: 12, fontWeight: '500' },
+  tabBarLabel: { fontSize: 12, lineHeight: 14, fontWeight: '500' },
   tabBarLabelActive: { fontWeight: '700' },
 });

@@ -22,7 +22,7 @@ const COLORS = {
   warningBorder: PALETTE.border,
   active: PALETTE.successText,
   activeBackground: PALETTE.successSurface,
-  expiredBackground: PALETTE.neutralSurface,
+  expiredBackground: PALETTE.inactiveSurface,
 };
 
 
@@ -110,7 +110,7 @@ export default function VoucherScreen() {
   return <><Stack.Screen options={{ headerShown: false }} />
     <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
       <View style={styles.fixedHeader}><View style={styles.header}>
-        <Pressable accessibilityLabel="Go back" onPress={() => router.back()} style={styles.headerButton}><MaterialIcons name="arrow-back" color={COLORS.text} size={23} /></Pressable>
+        <Pressable accessibilityLabel="Go back" onPress={() => router.back()} style={styles.headerButton}><MaterialIcons name="arrow-back" color={PALETTE.primary} size={23} /></Pressable>
         <Text style={styles.headerTitle}>Reward</Text><NotificationBell />
       </View></View>
       <ScrollView contentContainerStyle={styles.scrollContent} refreshControl={<RefreshControl refreshing={loading} onRefresh={() => { if (!submitted.current) void load(); }} tintColor={COLORS.brand} />}><View style={styles.content}>
@@ -149,8 +149,6 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },
   fixedHeader: {
     zIndex: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
     backgroundColor: COLORS.background,
   },
   header: {
@@ -205,9 +203,9 @@ const styles = StyleSheet.create({
   },
   activeBadge: { backgroundColor: COLORS.activeBackground },
   expiredBadge: { backgroundColor: COLORS.expiredBackground },
-  statusText: { color: PALETTE.neutralText, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  statusText: { color: PALETTE.inactiveText, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
   activeStatusText: { color: COLORS.active },
-  expiredStatusText: { color: PALETTE.neutralText },
+  expiredStatusText: { color: PALETTE.inactiveText },
   voucherTitle: { marginTop: 13, color: COLORS.text, fontSize: 29, fontWeight: '800' },
   voucherCost: { marginTop: 5, color: COLORS.brand, fontSize: 14, fontWeight: '700' },
   description: {

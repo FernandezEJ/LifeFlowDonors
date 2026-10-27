@@ -1,23 +1,33 @@
-/**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
- */
-
 import { Platform } from 'react-native';
 
-// Shared semantic colors. Cream/decorative surfaces retain the polished mobile identity.
+const BRAND = {
+  floralWhite: '#FFF9F2', pastelPink: '#FFCAD0', racingRed: '#F10222',
+  crushedBerry: '#892325', richMahogany: '#250202',
+} as const;
+
+// One palette for all light screens. Legacy aliases keep existing layouts intact.
+// Brand tints use the approved source colors; functional/status colors stay separate.
 export const LifeFlowColors = {
-  primary: '#9B1238', primaryPressed: '#7D0F2D',
+  ...BRAND,
+  primary: BRAND.crushedBerry, primaryPressed: BRAND.richMahogany,
+  background: BRAND.floralWhite, cream: BRAND.floralWhite, surface: BRAND.floralWhite,
+  text: BRAND.richMahogany, onPrimary: BRAND.floralWhite,
+  neutral: 'rgba(37,2,2,0.72)', neutralText: 'rgba(37,2,2,0.80)',
+  border: BRAND.pastelPink, controlBorder: 'rgba(137,35,37,0.68)',
+  selected: 'rgba(255,202,208,0.36)', neutralSurface: 'rgba(255,202,208,0.18)',
+  decorativeTop: 'rgba(255,202,208,0.28)', decorativeBottom: 'rgba(255,202,208,0.20)',
+  pointsSurface: 'rgba(255,202,208,0.22)', pointsBorder: BRAND.pastelPink,
+  skeleton: 'rgba(137,35,37,0.14)', skeletonDark: 'rgba(255,249,242,0.18)',
+  // Neutral scrim keeps underlying colors intact; separate from branded surfaces.
+  backdrop: 'rgba(0,0,0,0.28)',
+  // Semantic exceptions: success, warning, revision, rejection and unavailable history.
   danger: '#B42318', dangerPressed: '#912017', dangerSurface: '#FEF3F2',
   success: '#15803D', successText: '#166534', successSurface: '#ECFDF3',
   pending: '#B45309', pendingText: '#92400E', pendingSurface: '#FFF7E6',
   revision: '#EA580C', revisionAction: '#C2410C', revisionPressed: '#9A3412',
   revisionText: '#9A3412', revisionSurface: '#FFF7ED',
   info: '#1D4ED8', infoSurface: '#EFF6FF',
-  neutral: '#64748B', neutralText: '#475569', neutralSurface: '#F1F5F9',
-  background: '#F8FAFC', surface: '#FFFFFF', text: '#0F172A', border: '#E2E8F0', selected: '#FFF1F3',
-  cream: '#FFF9F2', decorativeTop: '#FDECE6', decorativeBottom: '#FCE9E2',
-  pointsSurface: '#FFF3DC', pointsBorder: '#F1DFC1',
+  inactive: '#64748B', inactiveText: '#475569', inactiveSurface: '#F1F5F9',
 } as const;
 
 // Presentation only: Laravel remains authoritative for participation status.
@@ -27,18 +37,19 @@ export const DonationStatusColors = {
   needs_revision: { text: LifeFlowColors.revisionText, surface: LifeFlowColors.revisionSurface },
   completed: { text: LifeFlowColors.successText, surface: LifeFlowColors.successSurface },
   rejected: { text: LifeFlowColors.danger, surface: LifeFlowColors.dangerSurface },
-  cancelled: { text: LifeFlowColors.neutralText, surface: LifeFlowColors.neutralSurface },
+  cancelled: { text: LifeFlowColors.inactiveText, surface: LifeFlowColors.inactiveSurface },
 } as const;
 
 const tintColorLight = LifeFlowColors.primary;
-const tintColorDark = '#fff';
+// Light foreground exception for intentionally dark content, never a light card fill.
+const tintColorDark = LifeFlowColors.floralWhite;
 
 export const Colors = {
   light: {
     text: LifeFlowColors.text,
     background: LifeFlowColors.background,
     tint: tintColorLight,
-    icon: LifeFlowColors.neutral,
+    icon: LifeFlowColors.primary,
     tabIconDefault: LifeFlowColors.neutral,
     tabIconSelected: tintColorLight,
   },

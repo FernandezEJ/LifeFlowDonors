@@ -39,16 +39,46 @@ function host(){
  native.KeyboardAvoidingView='KeyboardAvoidingView';native.Platform={OS:'android'};
  const routes=[],router={push:r=>routes.push(['push',r]),replace:r=>routes.push(['replace',r])};
  const loginHost=host();
- const login=load('src/app/(auth)/login.tsx',{...shared,react:loginHost.react,'expo-router':{useRouter:()=>router,useFocusEffect:loginHost.focus},'@/contexts/auth-context':{useAuth:()=>({busy:false,login:()=>{throw Error('Unexpected login');}})},'@/services/api':api},{setInterval:()=>0,clearInterval:()=>{}});
+ const authService=load('src/services/auth.ts',{'./api':api});
+ const login=load('src/app/(auth)/login.tsx',{...shared,react:loginHost.react,'expo-router':{useRouter:()=>router,useFocusEffect:loginHost.focus},'@/contexts/auth-context':{useAuth:()=>({busy:false,login:()=>{throw Error('Unexpected login');}})},'@/services/api':api,'@/services/auth':authService},{setInterval:()=>0,clearInterval:()=>{}});
  assert.equal(button(loginHost.render(login.default),'Forgot Password'),undefined);
+ button(loginHost.render(login.default),'Trouble signing in?').props.onPress();assert.deepEqual(routes.pop(),['push','/(auth)/trouble-signing-in']);
  assert.doesNotMatch(texts(loginHost.render(login.default)),/Password/);loginHost.unmount();
+ const configured=load('src/constants/support.ts',{}, {process:{env:{}}});
+ for(const value of [undefined,null,'','not-an-email','mailto:support@example.test','support@example.test?body=private','support@example.test\r\nBcc:x@example.test'])assert.equal(configured.supportEmail(value),null);
+ assert.equal(configured.supportEmail(' support@example.test '),'support@example.test');
+ function help(address){
+   const h=host(),opens=[],backend={open:async()=>{}};
+   const shell=load('src/components/profile-settings-page.tsx',{...shared,'expo-router':{Stack:{Screen:'Screen'},useRouter:()=>({...router,canGoBack:()=>false})}});
+   const contact=load('src/constants/support.ts',{}, {process:{env:{EXPO_PUBLIC_LIFEFLOW_SUPPORT_EMAIL:address}}});
+   const screen=load('src/app/(auth)/trouble-signing-in.tsx',{...shared,react:h.react,
+     'react-native':{...native,Linking:{openURL:async uri=>{opens.push(uri);await backend.open();}}},
+     '@/components/profile-settings-page':shell,'@/constants/support':contact});
+   return {h,opens,backend,view:()=>h.render(screen.default)};
+ }
+ for(const address of [undefined,'','invalid@example.test?subject=unsafe']){
+   const s=help(address),tree=s.view();assert.ok(nodes(tree).some(n=>n.type==='SafeAreaView'));assert.ok(nodes(tree).some(n=>n.type==='ScrollView'));
+   assert.match(texts(tree),/Forgot your contact number/);assert.match(texts(tree),/Forgot your email address/);assert.match(texts(tree),/Didn’t receive a code/);
+   assert.match(texts(tree),/Lost access to your email/);assert.match(texts(tree),/not proof of account ownership/);assert.match(texts(tree),/not been configured/);
+   assert.equal(nodes(tree).filter(n=>n.props?.accessibilityLabel==='Contact LifeFlow Support').length,0);assert.equal(s.opens.length,0);
+   nodes(tree).find(n=>n.props?.accessibilityLabel==='Go back').props.onPress();assert.deepEqual(routes.pop(),['replace','/(auth)/login']);s.h.unmount();
+ }
+ const support=help(' support@example.test '),opening=deferred();support.backend.open=()=>opening.promise;
+ const contact=()=>nodes(support.view()).find(n=>n.props?.accessibilityLabel==='Contact LifeFlow Support');
+ const open=contact().props.onPress;open();open();assert.equal(support.opens.length,1);assert.equal(contact().props.disabled,true);
+ assert.equal(support.opens[0],'mailto:support%40example.test?subject=LifeFlow%20sign-in%20support');assert.doesNotMatch(support.opens[0],/body=|token=|code=/);
+ opening.reject(Error('No mail app'));await flush();assert.match(texts(support.view()),/Unable to open an email app/);assert.equal(contact().props.disabled,false);
+ support.backend.open=async()=>{};contact().props.onPress();await flush();assert.equal(support.opens.length,2);support.h.unmount();
+ console.log('PASS: Trouble signing in guidance, safe-area/scrollable help, no automatic recovery, support unset/invalid/configured states, mailto duplicate guard and no-mail-app feedback');
  function screen(){
   const h=host(),timers=new Set();let clock=0;
   const requests=[],backend={request:async()=>({message:contract.RESET_NOTICE,resend_after:60}),verify:async()=>({reset_token:'a'.repeat(64),expires_in:600}),reset:async()=>({message:'success'})};
-  const screen=load('src/app/(auth)/forgot-password.tsx',{...shared,react:h.react,'expo-router':{useRouter:()=>router,useFocusEffect:h.focus},'@/services/api':api,
+  const screen=load('src/app/(auth)/forgot-password.tsx',{...shared,react:h.react,'expo-router':{Redirect:'Redirect',useRouter:()=>router,useFocusEffect:h.focus},'@/services/api':api,
    '@/services/password-reset':{RESET_NOTICE:contract.RESET_NOTICE,passwordResetApi:Object.fromEntries(Object.keys(backend).map(key=>[key,(...args)=>{requests.push([key,...args]);return backend[key](...args);}]))}},
    {performance:{now:()=>clock},setInterval:fn=>{timers.add(fn);return fn;},clearInterval:fn=>timers.delete(fn)});
-  const view=()=>h.render(screen.default);
+  assert.equal(screen.default().props.href,'/(auth)/trouble-signing-in','The stale donor route redirects without mounting legacy reset hooks');
+  assert.equal(requests.length,0);
+  const view=()=>h.render(screen.LegacyForgotPasswordScreen);
   const input=(label,value)=>nodes(view()).find(n=>n.type==='TextInput'&&n.props.accessibilityLabel===label).props.onChangeText(value);
   const tap=label=>{const b=button(view(),label);assert.ok(b,'Missing button '+label);b.props.onPress();};
   const tick=ms=>{clock+=ms;for(const fn of timers)fn();};

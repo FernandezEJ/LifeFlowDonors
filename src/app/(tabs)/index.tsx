@@ -2,6 +2,7 @@ import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
 import { EmptyState, LoadError } from '@/components/load-state';
 import { AnnouncementImage } from '@/components/announcement-image';
+import { DidYouKnow } from '@/components/did-you-know';
 import { HomeDonationReminder } from '@/components/home-donation-reminder';
 import { FLOWIE_MASCOTS, HOME_MASCOT_CYCLE } from '@/constants/flowie-mascots';
 import { NotificationBell } from '@/components/notification-bell';
@@ -76,6 +77,7 @@ export default function HomeScreen() {
   // ========================================
   const { opportunities, donationHistory, profile, loadProfile } = useAuth();
   const [posts, setPosts] = useState<DonationOpportunity[]>([]);
+  const [permanent, setPermanent] = useState<DonationOpportunity|null>(null);
   const [recent, setRecent] = useState<DonationParticipation | null>(null);
   const [sections, setSections] = useState<Record<HomeSection, SectionState>>({
     profile: { loading: true, loaded: false, error: '' },
@@ -110,7 +112,7 @@ export default function HomeScreen() {
     };
     const load = (section?: HomeSection) => {
       if (!section || section === 'profile') run('profile', loadProfile, () => {});
-      if (!section || section === 'board') run('board', opportunities, result => { setPosts(result.data); setClock(Date.now()); });
+      if (!section || section === 'board') run('board', opportunities, result => { setPosts(result.data); setPermanent(result.permanent_post ?? null); setClock(Date.now()); });
       if (!section || section === 'activity') run('activity', () => donationHistory(1), result => setRecent(result.data[0] ?? null));
     };
     retrySection.current = load;
@@ -145,7 +147,7 @@ export default function HomeScreen() {
     const timer = setTimeout(() => setClock(Date.now()), Math.min(2147483647, Math.max(1, next - Date.now())));
     return () => clearTimeout(timer);
   }, [posts, clock]);
-  const board = boardItems(posts, clock).slice(0, 2);
+  const board = boardItems(posts, clock, permanent, true);
   const firstName = profile?.first_name?.trim();
   const [mascotIndex, setMascotIndex] = useState(0);
 
@@ -170,9 +172,6 @@ export default function HomeScreen() {
   };
 
 
-  const openRedCrossOption = () => {
-    router.push({ pathname: '/announcement/[id]', params: { id: 'red-cross-dagupan' } });
-  };
 
   return (
     <SafeAreaView edges={['top']} style={styles.safeArea}>
@@ -196,6 +195,7 @@ export default function HomeScreen() {
             <View style={styles.flowieArea}>
               <View style={styles.flowieRow}>
                 <Image
+                  fadeDuration={0}
                   accessibilityLabel="Flowie, the LifeFlow assistant"
                   resizeMode="contain"
                   source={FLOWIE_MASCOTS[HOME_MASCOT_CYCLE[mascotIndex]]}
@@ -226,7 +226,7 @@ export default function HomeScreen() {
                       pressed && styles.flowieButtonPressed,
                     ]}>
                     <Text style={styles.flowieButtonText}>Ask Flowie</Text>
-                    <MaterialIcons name="arrow-forward" size={18} color={COLORS.white} accessible={false} />
+                    <MaterialIcons name="chevron-right" size={22} color={COLORS.white} accessible={false} />
                   </Pressable>
                 </View>
               </View>
@@ -237,51 +237,36 @@ export default function HomeScreen() {
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionHeading}>Latest Announcement</Text>
               <Pressable accessibilityRole="button" accessibilityLabel="View all announcements" onPress={() => router.push('/announcements')} style={styles.viewAll}>
-                <Text style={styles.viewAllText}>View All</Text><MaterialIcons name="arrow-forward" size={18} color={COLORS.brand} accessible={false} />
+                <Text style={styles.viewAllText}>View All</Text><MaterialIcons name="chevron-right" size={22} color={COLORS.brand} accessible={false} />
               </Pressable>
             </View>
 
             {sections.board.error ? <SectionError message={sections.board.error} label="Retry announcements"
               loading={sections.board.loading} retry={() => retrySection.current('board')} /> : null}
             {!sections.board.loaded && sections.board.loading ? <TabSkeleton variant="announcement" label="Loading announcements" /> : null}
-            {board.map(announcement=>announcement==='red-cross'?(<View key="red-cross" style={styles.redCrossCard}>
-              <View style={styles.redCrossIcon}>
-                <MaterialIcons name="local-hospital" color={COLORS.brand} size={30} />
-              </View>
-              <View style={styles.redCrossContent}>
-                <Text style={styles.cardMeta}>DONATION OPTION</Text><Text style={styles.cardTitle}>Donate Through the Philippine Red Cross - Dagupan City Chapter</Text>
-                <Text style={styles.cardDescription}>
-                  Choose the Philippine Red Cross Dagupan City Chapter as your donation option.
-                </Text>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={openRedCrossOption}
-                  style={({ pressed }) => [
-                    styles.secondaryButton,
-                    pressed && styles.secondaryButtonPressed,
-                  ]}>
-                  <Text style={styles.secondaryButtonText}>View Donation Option</Text>
-                </Pressable>
-              </View>
-            </View>):(<Pressable key={announcement.id} accessibilityRole="button" accessibilityLabel={`View details: ${announcement.title}`}
-                onPress={() => router.push({ pathname: '/announcement/[id]', params: { id: String(announcement.id) } })}
+            {board.map(announcement=>{
+              const isPermanent=announcement.source_type==='red_cross_dagupan';
+              return <Pressable key={isPermanent ? 'red-cross' : announcement.id} accessibilityRole="button" accessibilityLabel={`View details: ${announcement.title}`}
+                onPress={() => router.push({ pathname: '/announcement/[id]', params: { id: isPermanent ? 'red-cross-dagupan' : String(announcement.id) } })}
                 style={({ pressed }) => [styles.adminAnnouncementCard, pressed && styles.pressed]}>
-                <AnnouncementImage uri={announcementImageUrl(announcement.image_url)} title={announcement.title} preview />
+                <AnnouncementImage uri={announcementImageUrl(announcement.image_url)} title={announcement.title} preview compact={isPermanent} />
                 <View style={styles.announcementBody}>
-                  <View style={styles.announcementMeta}>
-                    <Text style={styles.activeBadgeText}>ACTIVE ANNOUNCEMENT</Text>
-                    {formatDonationDate(announcement.event_date ?? announcement.donation_date, '') ?
+                  <View style={[styles.announcementMeta,isPermanent && styles.permanentMeta]}>
+                    <Text style={styles.activeBadgeText}>{isPermanent ? 'PERMANENT' : 'ACTIVE ANNOUNCEMENT'}</Text>
+                    {isPermanent ? <MaterialIcons name="chevron-right" size={22} color={COLORS.brand} accessible={false} /> : null}
+                    {!isPermanent && formatDonationDate(announcement.event_date ?? announcement.donation_date, '') ?
                       <Text style={styles.cardMeta}>{formatDonationDate(announcement.event_date ?? announcement.donation_date, '')}</Text> : null}
                   </View>
                   <Text style={styles.cardTitle}>{announcement.title}</Text>
-                  {announcement.description?.trim() ? <Text style={styles.cardDescription} numberOfLines={2} ellipsizeMode="tail">{announcement.description}</Text> : null}
-                  <View style={styles.viewDetails}>
+                  {(isPermanent ? announcement.summary : announcement.description)?.trim() ? <Text style={styles.cardDescription} numberOfLines={2} ellipsizeMode="tail">{isPermanent ? announcement.summary : announcement.description}</Text> : null}
+                  {!isPermanent ? <View style={styles.viewDetails}>
                     <Text style={styles.viewAllText}>View Details</Text>
-                    <MaterialIcons name="arrow-forward" size={18} color={COLORS.brand} accessible={false} />
-                  </View>
+                    <MaterialIcons name="chevron-right" size={22} color={COLORS.brand} accessible={false} />
+                  </View> : null}
                 </View>
-              </Pressable>))}
-            {sections.board.loaded && board.length === 1 ? <Text style={styles.cardDescription}>No active announcements right now. Check back for upcoming donation events.</Text> : null}
+              </Pressable>;
+            })}
+            {sections.board.loaded && !board.some(item=>item.source_type!=='red_cross_dagupan') ? <Text style={styles.cardDescription}>No active announcements right now. Check back for upcoming donation events.</Text> : null}
 
           </View>
 
@@ -289,7 +274,7 @@ export default function HomeScreen() {
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionHeading}>Recent Activity</Text>
               <Pressable accessibilityRole="button" accessibilityLabel="View all activity" onPress={() => router.push('/(tabs)/activity')} style={styles.viewAll}>
-                <Text style={styles.viewAllText}>View All</Text><MaterialIcons name="arrow-forward" size={18} color={COLORS.brand} accessible={false} />
+                <Text style={styles.viewAllText}>View All</Text><MaterialIcons name="chevron-right" size={22} color={COLORS.brand} accessible={false} />
               </Pressable>
             </View>
             {sections.activity.error ? <SectionError message={sections.activity.error} label="Retry activity"
@@ -306,6 +291,8 @@ export default function HomeScreen() {
                 : 'Joined ' + formatJoinedDate(recent.joined_at)}</Text>
             </Pressable> : sections.activity.loaded && !sections.activity.error && !sections.activity.loading ? <EmptyState icon="event-note" title="No donation activities yet" description="Your latest donation activity will appear here." /> : null}
           </View>
+
+          <DidYouKnow />
 
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>How to Use LifeFlow</Text>
@@ -339,8 +326,6 @@ const styles = StyleSheet.create({
   errorText: { color: PALETTE.neutralText, fontSize: 14, lineHeight: 21 },
   activityStatus: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   fixedHeader: {
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
     backgroundColor: COLORS.background,
     zIndex: 10,
   },
@@ -354,7 +339,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 9,
   },
-  brandTitle: { color: COLORS.brand, fontSize: 25, fontWeight: '800', letterSpacing: -0.5 },
+  brandTitle: { color: PALETTE.text, fontSize: 25, fontWeight: '800', letterSpacing: -0.5 },
   bellButton: {
     width: 44,
     height: 44,
@@ -453,6 +438,7 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   announcementMeta: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  permanentMeta: { justifyContent: 'space-between' },
   activeBadgeText: { color: COLORS.brand, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
   announcementBody: { padding: 14, gap: 6 },
   viewDetails: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 4, minHeight: 28 },
@@ -460,37 +446,6 @@ const styles = StyleSheet.create({
   cardTitle: { color: COLORS.text, fontSize: 17, fontWeight: '700' },
   cardDescription: { marginTop: 5, color: COLORS.muted, fontSize: 14, lineHeight: 20 },
   cardMeta: { flex: 1, color: COLORS.muted, fontSize: 13, fontWeight: '600' },
-  redCrossCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 13,
-    padding: 17,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 20,
-    backgroundColor: COLORS.white,
-  },
-  redCrossIcon: {
-    width: 48,
-    height: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 15,
-    backgroundColor: COLORS.softRed,
-  },
-  redCrossContent: { flex: 1 },
-  secondaryButton: {
-    minHeight: 43,
-    alignSelf: 'center',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 13,
-    paddingHorizontal: 22,
-    borderRadius: 14,
-    backgroundColor: COLORS.brand,
-  },
-  secondaryButtonPressed: { backgroundColor: COLORS.brandPressed, transform: [{ scale: 0.99 }] },
-  secondaryButtonText: { color: COLORS.white, fontSize: 14, fontWeight: '700' },
   guideCard: {
     gap: 18,
     padding: 18,

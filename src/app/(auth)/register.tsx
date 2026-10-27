@@ -264,7 +264,7 @@ export default function RegisterScreen() {
     <View style={styles.otpTopBar}>
       <Pressable accessibilityRole="button" accessibilityLabel="Back to registration" disabled={busy} onPress={changeEmail}
         accessibilityState={{ disabled: busy }} style={({ pressed }) => [styles.otpBack, (busy || pressed) && styles.otpDimmed]}>
-        <MaterialIcons name="arrow-back" color={COLORS.text} size={24} />
+        <MaterialIcons name="arrow-back" color={PALETTE.primary} size={24} />
       </Pressable>
       <Text accessibilityRole="header" style={styles.otpTopTitle}>Create Account</Text>
       <View style={styles.otpTopSpacer} />
@@ -350,7 +350,7 @@ export default function RegisterScreen() {
               hitSlop={8}
               onPress={() => router.replace('/(auth)/onboarding2')}
               style={styles.backButton}>
-              <MaterialIcons name="arrow-back" color={COLORS.text} size={22} />
+              <MaterialIcons name="arrow-back" color={PALETTE.primary} size={22} />
               <Text style={styles.backText}>Back</Text>
             </Pressable>
 
@@ -598,7 +598,7 @@ const styles = StyleSheet.create({
     marginBottom: 28,
   },
   title: {
-    color: COLORS.brand,
+    color: PALETTE.text,
     fontSize: 30,
     fontWeight: '800',
     letterSpacing: -0.5,
@@ -625,7 +625,7 @@ const styles = StyleSheet.create({
     minHeight: 54,
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: PALETTE.controlBorder,
     borderRadius: 16,
     backgroundColor: COLORS.inputBackground,
     color: COLORS.text,
@@ -638,7 +638,7 @@ const styles = StyleSheet.create({
     paddingLeft: 16,
     paddingRight: 14,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: PALETTE.controlBorder,
     borderRadius: 16,
     backgroundColor: COLORS.inputBackground,
   },
@@ -671,7 +671,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: PALETTE.controlBorder,
     borderRadius: 14,
     backgroundColor: COLORS.inputBackground,
   },
@@ -753,7 +753,7 @@ const styles = StyleSheet.create({
   otpScrollContent: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 20, paddingVertical: 24 },
   otpHeader: { alignItems: 'center', marginBottom: 24 },
   otpMascot: { width: 96, height: 96, marginBottom: 16 },
-  otpTitle: { color: COLORS.brand, fontSize: 28, fontWeight: '800', letterSpacing: -0.5, textAlign: 'center' },
+  otpTitle: { color: PALETTE.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.5, textAlign: 'center' },
   otpSubtitle: { marginTop: 10, color: COLORS.muted, fontSize: 16, lineHeight: 23, textAlign: 'center' },
   otpEmailRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 4 },
   otpEmail: { flexShrink: 1, minWidth: 0, color: COLORS.text, fontSize: 15, lineHeight: 22, fontWeight: '600', textAlign: 'center' },
@@ -763,7 +763,7 @@ const styles = StyleSheet.create({
   otpEntry: { position: 'relative' },
   otpSlots: { zIndex: 1, backgroundColor: COLORS.background, flexDirection: 'row', gap: 6 },
   otpSlot: { flex: 1, minWidth: 0, minHeight: 56, alignItems: 'center', justifyContent: 'center', paddingVertical: 10,
-    borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, backgroundColor: COLORS.inputBackground },
+    borderWidth: 1, borderColor: PALETTE.controlBorder, borderRadius: 12, backgroundColor: COLORS.inputBackground },
   otpSlotFocused: { borderWidth: 2, borderColor: COLORS.brand },
   otpDigit: { color: COLORS.text, fontSize: 24, lineHeight: 32, fontWeight: '700', textAlign: 'center' },
   otpInput: { zIndex: 0, position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, color: 'transparent', backgroundColor: 'transparent', fontSize: 24, textAlign: 'center' },
