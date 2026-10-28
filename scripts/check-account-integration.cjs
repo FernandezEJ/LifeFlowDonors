@@ -75,7 +75,7 @@ async function requestChecks() {
   try {
     await service.authApi.register(fixture);
     assert.deepEqual(JSON.parse(request.body), {
-      accepted_terms: true, acknowledged_privacy: true, acknowledged_prescreening: true,
+      accepted_terms: true, acknowledged_privacy: true, acknowledged_prescreening: true, privacy_version: '1.1',
       first_name: 'Integration', middle_name: null, last_name: 'Check', email: fixture.email,
       mobile_number: fixture.mobileNumber, birth_date: '2000-02-29', gender: 'Female', blood_type: 'O+',
     });

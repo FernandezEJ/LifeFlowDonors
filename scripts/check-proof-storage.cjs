@@ -337,6 +337,11 @@ async function activityUiChecks(){
    s=await screen({record:{...fixture,opportunity}});for(const label of ['Donation activity','Location to be announced','Date to be announced','Event details are no longer available.'])assert.ok(texts(s.view()).includes(label));s.close();
  }
  s=await screen({record:{...fixture,source_type:'red_cross_dagupan',opportunity:null}});assert.match(texts(s.view()),/Confirm arrangements with the chapter/);s.close();
+ const unavailable={id:7,source_type:'admin_announcement',status:'unavailable',title:'Announcement details unavailable',description:'This announcement is unpublished or unavailable. Your donation activity record is still available.',description_document:null,image_url:null,location:'',event_date:null,start_time:null,end_time:null,points_reward:0};
+ s=await screen({record:{...fixture,opportunity:unavailable}});
+ assert.ok(texts(s.view()).includes(unavailable.title));assert.ok(texts(s.view()).includes(unavailable.description));
+ assert.ok(button(s.view(),'Upload Proof'));assert.ok(button(s.view(),'Cancel Participation'));
+ assert.ok(!texts(s.view()).includes('PRIVATE_DRAFT_CANARY'));s.close();
  s=await screen({record:{...fixture,opportunity:{...fixture.opportunity,title:'Long activity title '.repeat(30),description:'Full description. '.repeat(200),description_document:{version:2}}}});
  assert.ok(nodes(s.view()).some(n=>n.type==='Text'&&n.props.children==='Full description. '.repeat(200)));s.close();
  for(const response of [{},{participation:null}]){s=await screen({response});assert.match(texts(s.view()),/This activity is unavailable/);assert.equal(button(s.view(),'Upload Proof'),undefined);s.close();}

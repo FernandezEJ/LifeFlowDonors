@@ -151,6 +151,7 @@ export const authApi = {
   register: (form: RegisterForm) => apiRequest<PendingRegistration>('/register/request-verification', { method: 'POST', body: {
     ...toProfilePayload(form),
     accepted_terms: form.acceptedTerms, acknowledged_privacy: form.acknowledgedPrivacy, acknowledged_prescreening: form.acknowledgedPrescreening,
+    privacy_version: '1.1',
   } }),
   verifyRegistration: (pendingToken: string, code: string) => apiRequest<AuthResponse>('/register/verify-email', { method: 'POST', body: { pending_token: pendingToken, code } }),
   resendRegistration: (pendingToken: string) => apiRequest<{resend_after: number; expires_in: number}>('/register/resend-verification', { method: 'POST', body: { pending_token: pendingToken } }),

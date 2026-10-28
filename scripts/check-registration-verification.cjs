@@ -113,6 +113,18 @@ function host(){
  await authService.authApi.verifyRegistration('pending','012345');assert.deepEqual(JSON.parse(JSON.stringify(requests[1].options.body)),{pending_token:'pending',code:'012345'});
  await authService.authApi.resendRegistration('pending');assert.deepEqual(JSON.parse(JSON.stringify(requests[2].options.body)),{pending_token:'pending'});
  const legal=load('src/components/registration-legal.tsx',shared);
+ assert.equal(legal.LEGAL_DOCUMENTS.privacy.version,'1.1');
+ assert.equal(requests[0].options.body.privacy_version,legal.LEGAL_DOCUMENTS.privacy.version,'Registration identifies the notice actually displayed');
+ assert.equal(legal.LEGAL_DOCUMENTS.terms.version,'1.0');
+ const privacy=legal.LEGAL_DOCUMENTS.privacy.sections.map(section=>section.join(' ')).join(' ');
+ for(const fact of ['Cloudflare R2','local server storage','Firebase Cloud Messaging','Groq','up to six','first name','blood type','assessment','rest period','activity status','donation count','Blood Points','achievement','raw assessment answers','proof files','30-day recovery','configured','retention','email-code sign-in'])assert.ok(privacy.includes(fact),`Privacy notice covers ${fact}`);
+ assert.doesNotMatch(privacy,/Firebase may store donation proof|future admin workflows|Forgot Password|Gmail SMTP|not available yet/);
+ assert.doesNotMatch(privacy,/legally compliant|zero retention|never retained|stored only in the Philippines|guarantee deletion/i);
+ native.Modal='Modal';
+ const privacyView=legal.RegistrationLegal({document:'privacy',onClose:()=>{},onAgree:()=>{}});
+ assert.ok(texts(privacyView).includes('Version 1.1'));
+ for(const [heading,body] of legal.LEGAL_DOCUMENTS.privacy.sections){assert.ok(texts(privacyView).includes(heading));assert.ok(texts(privacyView).includes(body));}
+ assert.ok(nodes(privacyView).some(n=>n.type==='ScrollView'));assert.ok(button(privacyView,'I Agree'));assert.ok(button(privacyView,'Cancel'));
  native.KeyboardAvoidingView='KeyboardAvoidingView';native.Modal='Modal';native.Platform={OS:'android'};
  // Passwordless API contract, Philippine calendar boundary and legacy initial display.
  assert.equal(requests[0].options.body.password,undefined);assert.equal(requests[0].options.body.password_confirmation,undefined);
