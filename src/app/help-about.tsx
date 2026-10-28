@@ -7,7 +7,7 @@ import { ProfileSettingsPage } from '@/components/profile-settings-page';
 import { RegistrationLegal, PRESCREENING_ACKNOWLEDGEMENT } from '@/components/registration-legal';
 
 // Replace each "Name" below with a developer's name.
-const DEVELOPER_NAMES = ['Name', 'Name', 'Name'] as const;
+const DEVELOPER_NAMES = ['Ferdinand EJ R. Fernandez', 'Mark Ivy Javines', 'Chloe Ellamil', 'Yul Dave Bungay'] as const;
 
 const FAQS = [
   ['What is LifeFlow?', 'LifeFlow helps donors manage their profile, donation readiness, activities and rewards in one place.'],
