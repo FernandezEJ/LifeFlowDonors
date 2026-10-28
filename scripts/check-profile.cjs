@@ -499,7 +499,20 @@ function host(){
  let previous=-1;const helpText=texts(helpView());for(const heading of headings){const index=helpText.indexOf(heading,previous+1);assert.ok(index>previous,heading);previous=index;}
  assert.ok(nodes(helpView()).some(n=>n.type==='ScrollView'));assert.ok(helpText.includes(JSON.parse(fs.readFileSync('app.json','utf8')).expo.version));
  const team=nodes(helpView()).find(n=>n.type==='View'&&Array.isArray(n.props.children)&&n.props.children.some(child=>child?.type==='Text'&&child.props.children==='LifeFlow Development Team'));
- assert.ok(team);assert.deepEqual(nodes(team).filter(n=>n.type==='Text').map(n=>n.props.children),['LifeFlow Development Team','Name','Name','Name']);
+ assert.ok(team);
+ const creditsSource=ts.createSourceFile('help-about.tsx',fs.readFileSync('src/app/help-about.tsx','utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+ const creditsDeclaration=creditsSource.statements.flatMap(statement=>ts.isVariableStatement(statement)?Array.from(statement.declarationList.declarations):[])
+   .find(declaration=>ts.isIdentifier(declaration.name)&&declaration.name.text==='DEVELOPER_NAMES');
+ assert.ok(creditsDeclaration?.initializer,'Developer credits remain configured in the About screen');
+ const creditsArray=ts.isAsExpression(creditsDeclaration.initializer)?creditsDeclaration.initializer.expression:creditsDeclaration.initializer;
+ assert.ok(ts.isArrayLiteralExpression(creditsArray),'Developer credits are an editable list');
+ const expectedDeveloperNames=Array.from(creditsArray.elements,element=>{
+   assert.ok(ts.isStringLiteral(element),'Each developer credit is a name');
+   return element.text;
+ });
+ assert.ok(expectedDeveloperNames.length>0,'Developer credits are not empty');
+ assert.ok(expectedDeveloperNames.every(name=>name.trim()&&name.trim()!=='Name'),'Developer credits use configured names instead of placeholders');
+ assert.deepEqual(nodes(team).filter(n=>n.type==='Text').map(n=>n.props.children),['LifeFlow Development Team',...expectedDeveloperNames]);
  assert.ok(helpText.includes('LifeFlow is a capstone project supporting blood donation awareness and donor engagement.'));
  assert.ok(nodes(helpView()).some(n=>n.type==='Icon'&&n.props.name==='groups'&&n.props.accessible===false));
  assert.equal(nodes(team).filter(n=>['Pressable','Image','TextInput'].includes(n.type)).length,0,'Credits are static text without portraits, links or controls');
