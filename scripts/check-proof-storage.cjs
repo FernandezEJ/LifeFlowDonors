@@ -7,7 +7,7 @@ function load(file, imports, globals = {}) {
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
-  vm.runInNewContext(code, { __DEV__: false, module, exports: module.exports, require: name => {if (name === '@/constants/theme') return load('src/constants/theme.ts', {'react-native': {Platform: {select: options => options.default}}});
+  vm.runInNewContext(code, { URL, __DEV__: false, module, exports: module.exports, require: name => {if (name === '@/constants/theme') return load('src/constants/theme.ts', {'react-native': {Platform: {select: options => options.default}}});
     if (!(name in imports)) throw new Error(`Unexpected import: ${name}`);
     return imports[name];
   }, ...globals });
@@ -80,7 +80,7 @@ async function main(){
   assert.ok(e.transportMessage.includes('Native conversion failed'));
   assert.ok(!/donor|file:\/\/\/|secret-login-token/.test(e.transportMessage));return true;
  });
- const production=load('src/services/api.ts',{'expo/fetch':{fetch:expoFetch}}, {process:{env:{}},__DEV__:false,FormData:Form,AbortController,setTimeout,clearTimeout});
+ const production=load('src/services/api.ts',{'expo/fetch':{fetch:expoFetch}}, {process:{env:{EXPO_PUBLIC_API_URL:'https://api.example.test/api'}},__DEV__:false,FormData:Form,AbortController,setTimeout,clearTimeout});
  await assert.rejects(production.apiRequest('/proof',{token:'private',method:'POST',body:form}),e=>e.transportName===undefined && e.transportMessage===undefined);
  assert.ok(!fs.readFileSync('src/services/proof-storage.ts','utf8').includes('firebase'));
  assert.ok(!fs.existsSync('src/services/firebase.ts'));

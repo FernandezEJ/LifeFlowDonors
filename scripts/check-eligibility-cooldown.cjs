@@ -28,7 +28,7 @@ function host(){
  const assessment={id:1,result:'eligible',reasons:[],answers:{weight:60,sleepHours:8,currentSymptoms:'NO',medication:'NO',donatedWithinThreeMonths:'NO',feelsWell:'YES'},assessed_at:'2026-09-12T00:00:00Z'};
  const active={assessment,cooldown_active:true,next_allowed_at:'2026-09-13T00:00:00Z',remaining_seconds:120,server_time:'2026-09-12T23:58:00Z',is_on_donation_cooldown:false};
  const inactive={...active,cooldown_active:false,remaining_seconds:0};
- const api=load('src/services/api.ts',{}, {process:{env:{}},AbortController,setTimeout,clearTimeout,fetch:async()=>({ok:false,status:409,json:async()=>active})});
+ const api=load('src/services/api.ts',{}, {process:{env:{}},URL,__DEV__:true,AbortController,setTimeout,clearTimeout,fetch:async()=>({ok:false,status:409,json:async()=>active})});
  const eligibility=load('src/services/eligibility.ts',{'./api':api});
  await assert.rejects(eligibility.eligibilityApi.submit('private',assessment.answers),e=>e instanceof eligibility.EligibilityCooldownError&&e.state.assessment.id===1);
  const requests=[],contract=load('src/services/eligibility.ts',{'./api':{...api,apiRequest:async(path,options)=>{requests.push({path,options});return active;}}});

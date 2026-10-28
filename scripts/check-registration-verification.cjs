@@ -105,7 +105,7 @@ function host(){
    ts.forEachChild(n,visit);}visit(ast);
  }}audit('src');
  console.log(`PASS: ${Object.keys(approved).length} approved mobile tokens, ${pairs.length} AA text pairs, accessible orange revision actions, distinct pending/revision/rejection/completion colors and preserved dark theme`);
- const api=load('src/services/api.ts',{}, {process:{env:{}},AbortController,setTimeout,clearTimeout});
+ const api=load('src/services/api.ts',{}, {process:{env:{}},URL,__DEV__:true,AbortController,setTimeout,clearTimeout});
  const requests=[],authService=load('src/services/auth.ts',{'./api':{...api,apiRequest:async(path,options)=>{requests.push({path,options});return {};}}});
  const fixture={acceptedTerms:true,acknowledgedPrivacy:true,acknowledgedPrescreening:true,firstName:'Test',middleName:'',lastName:'Donor',email:'new@example.com',mobileNumber:'09171234567',birthDate:'09/13/2004',gender:'Female',bloodType:'O+',password:'password123',confirmPassword:'password123'};
  await authService.authApi.register(fixture);

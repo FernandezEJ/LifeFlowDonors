@@ -25,7 +25,7 @@ function host(){
 }
 
 (async()=>{
- const api=load('src/services/api.ts',{}, {process:{env:{}},AbortController,setTimeout,clearTimeout});
+ const api=load('src/services/api.ts',{}, {process:{env:{}},URL,__DEV__:true,AbortController,setTimeout,clearTimeout});
  const calls=[];
  const contract=load('src/services/password-reset.ts',{'./api':{apiRequest:async(path,options)=>{calls.push({path,options});return {};}}});
  await contract.passwordResetApi.request(' donor@example.com ');

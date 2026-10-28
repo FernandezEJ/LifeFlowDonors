@@ -91,6 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const mutation = useRef(false);
   const profileVersion = useRef(0);
   const cleanupPending = useRef(false);
+  const restoreVersion = useRef(0);
   const [pushSessionVersion, setPushSessionVersion] = useState(0);
   const pushSessionVersionRef = useRef(0);
   const pushSessionActive = useRef(false);
@@ -116,17 +117,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [invalidatePushSession]);
 
   const restore = useCallback(async () => {
+    const operation = ++restoreVersion.current;
+    const sessionVersion = pushSessionVersionRef.current;
+    const isCurrent = () => operation === restoreVersion.current && sessionVersion === pushSessionVersionRef.current;
     try {
       const saved = await tokenStorage.get();
+      if (!isCurrent()) return;
       setSessionError('');
       if (cleanupPending.current) { await clearSession(); return; }
       if (saved) {
         const current = await authApi.currentUser(saved);
+        if (!isCurrent()) return;
         token.current = saved;
         pushSessionActive.current = true;
         setUser(current);
       }
     } catch (error) {
+      if (!isCurrent()) return;
       if (error instanceof ApiError && error.status === 401) {
         try { await clearSession(); } catch (cleanupError) { setSessionError(errorMessage(cleanupError)); }
       } else {

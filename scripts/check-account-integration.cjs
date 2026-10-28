@@ -18,11 +18,43 @@ function load(file, imports = {}, globals = {}) {
   }).outputText;
   vm.runInNewContext(code, { module, exports: module.exports,
     require: name => { if (name in imports) return imports[name]; throw new Error(`Unexpected import: ${name}`); },
-    process, AbortController, setTimeout, clearTimeout, fetch: (...args) => global.fetch(...args), ...globals,
+    process, URL, __DEV__: true, AbortController, setTimeout, clearTimeout, fetch: (...args) => global.fetch(...args), ...globals,
   }, { filename: file });
   return module.exports;
 }
 const api = load('src/services/api.ts');
+async function apiConfigurationChecks() {
+  const invalid=[undefined,'','not a url','/api','http://api.example.test/api','https://localhost/api','https://LOCALHOST./api',
+    'https://app.localhost/api','https://service.local/api','https://127.0.0.1/api','https://2130706433/api','https://0x7f000001/api',
+    'https://192.168.1.2/api','https://10.1.2.3/api','https://172.16.0.1/api','https://172.31.255.254/api','https://10.0.2.2/api',
+    'https://[::1]/api','https://[::ffff:127.0.0.1]/api','https://[fc00::1]/api','https://[fe80::1]/api','https://169.254.1.1/api',
+    'https://api.example.test','https://api.example.test/api/api','https://api.example.test/api?key=fixture',
+    'https://api.example.test/api#fragment','https://user:fixture@api.example.test/api','https://api..example.test/api',
+    'https://api.example.test\\api','https://api.example.test/a/../wrong'];
+  for(const value of invalid){
+    let sends=0;
+    const guarded=load('src/services/api.ts',{}, {__DEV__:false,process:{env:{EXPO_PUBLIC_API_URL:value}},
+      fetch:async()=>{sends++;throw Error('An unsafe URL must never reach fetch');}});
+    assert.throws(()=>guarded.resolveApiBaseUrl(value,false),/EXPO_PUBLIC_API_URL/);
+    await assert.rejects(guarded.apiRequest('/auth/request-login-code',{method:'POST',token:'synthetic-token',body:{identifier:'donor@example.test'}}),
+      error=>error instanceof guarded.ApiError && /Configure EXPO_PUBLIC_API_URL/.test(error.message) && !error.message.includes('synthetic-token'));
+    assert.equal(sends,0,'No credential-bearing network call on a release configuration error');
+  }
+  for(const value of ['https://api.example.test/api','https://staging.example.test:8443/api/','https://[2001:4860:4860::8888]/api']){
+    let sent;
+    const guarded=load('src/services/api.ts',{}, {__DEV__:false,process:{env:{EXPO_PUBLIC_API_URL:value}},
+      fetch:async(url,options)=>{sent={url,options};return {ok:true,json:async()=>({ok:true})};}});
+    await guarded.apiRequest('/user',{token:'synthetic-token'});
+    assert.equal(sent.url,value.replace(/\/+$/,'')+'/user');
+    assert.ok(!sent.url.includes('/api/api'));
+    assert.equal(sent.options.headers.Authorization,'Bearer synthetic-token');
+  }
+  assert.equal(api.resolveApiBaseUrl(undefined,true),'http://192.168.6.122:8000/api');
+  assert.equal(api.resolveApiBaseUrl('http://192.168.1.2:8000/api/',true),'http://192.168.1.2:8000/api');
+  const unknownMode=load('src/services/api.ts',{}, {__DEV__:undefined,process:{env:{}},fetch:()=>{throw Error('No request without release config');}});
+  await assert.rejects(unknownMode.apiRequest('/user'),/Configure EXPO_PUBLIC_API_URL/);
+  console.log('PASS: release/preview HTTPS configuration, private/local/malformed rejection, no unsafe fetch, exact /api composition and Expo Go HTTP');
+}
 const service = load('src/services/auth.ts', { './api': api });
 const fixture = {
   acceptedTerms: true, acknowledgedPrivacy: true, acknowledgedPrescreening: true,
@@ -147,6 +179,21 @@ async function providerChecks() {
   assert.equal(h.render().user.id, 7); assert.deepEqual(h.calls, [['user', 'stored-test']]);
   h = providerHarness('revoked-test'); state = h.render(); h.backend.currentUser = async () => { throw new api.ApiError('Expired', 401); };
   await state.restore(); assert.equal(h.saved(), null); assert.equal(h.render().user, null);
+  h=providerHarness('old-restore');state=h.render();
+  let completeOldRestore;h.backend.currentUser=()=>new Promise(resolve=>{completeOldRestore=resolve;});
+  const staleRestore=state.restore();for(let i=0;i<8;i++)await Promise.resolve();await h.render().logout();
+  completeOldRestore({id:77,name:'Stale donor'});await staleRestore;
+  assert.equal(h.render().user,null);assert.equal(h.render().profile,null);assert.equal(h.saved(),null);
+  h=providerHarness('old-restore');state=h.render();
+  let rejectOldRestore;h.backend.currentUser=()=>new Promise((resolve,reject)=>{rejectOldRestore=reject;});
+  const oldRestoration=state.restore();for(let i=0;i<8;i++)await Promise.resolve();await h.render().logout();
+  h.backend.login=async()=>({user:{id:8,name:'New donor'},token:'new-token'});
+  await h.render().login('new@example.test','123456');
+  rejectOldRestore(new api.ApiError('Expired old token',401));await oldRestoration;
+  assert.equal(h.render().user.id,8);assert.equal(h.saved(),'new-token');
+  h.backend.profile=async()=>{throw new api.ApiError('Permission denied',403);};
+  await assert.rejects(h.render().loadProfile(),{status:403});
+  assert.equal(h.render().user.id,8);assert.equal(h.saved(),'new-token','A business 403 is not session expiration');
   h = providerHarness('offline-test'); state = h.render(); h.backend.currentUser = async () => { throw new api.ApiError('Offline'); };
   await state.restore(); assert.equal(h.saved(), 'offline-test'); assert.equal(h.render().user, null); assert.equal(h.render().sessionError, 'Offline');
   h = providerHarness(); state = h.render(); await state.login(fixture.email, fixture.password);
@@ -257,5 +304,5 @@ async function liveChecks() {
   throw new Error('Live automatic registration requires email verification. Use the app with an authorized test inbox; this script does not bypass codes or send test mail.');
 }
 
-(async () => { await requestChecks(); await providerChecks(); await educationalProviderChecks(); if (process.argv.includes('--live')) await liveChecks(); })()
+(async () => { await apiConfigurationChecks(); await requestChecks(); await providerChecks(); await educationalProviderChecks(); if (process.argv.includes('--live')) await liveChecks(); })()
   .catch(error => { console.error(`FAIL: ${error.message}`); process.exitCode = 1; });
