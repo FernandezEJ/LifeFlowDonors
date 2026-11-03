@@ -2,7 +2,7 @@
   "expo": {
     "name": "LifeFlow",
     "slug": "LifeFlow",
-    "version": "3.0.0",
+    "version": "3.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "lifeflow",
@@ -13,7 +13,7 @@
     "android": {
       "package": "com.lifeflow.capstone",
       "googleServicesFile": "./google-services.json",
-      "versionCode": 3,
+      "versionCode": 4,
       "adaptiveIcon": {
         "backgroundColor": "#FFF9F2",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
