@@ -12,7 +12,8 @@ const DEVELOPER_NAMES = ['Ferdinand EJ R. Fernandez', 'Mark Ivy Javines', 'Chloe
 const FAQS = [
   ['What is LifeFlow?', 'LifeFlow helps donors manage their profile, donation readiness, activities and rewards in one place.'],
   ['Is the self-assessment a final medical decision?', 'No. It provides pre-screening guidance only. The donation facility makes the final eligibility decision.'],
-  ['How do I change my email or password?', 'Open Profile Settings from Profile, then choose Change Email or Change Password. Both require your current password; a new email must also be verified.'],
+  ['How do I change my email?', 'Open Profile Settings from Profile and choose Change Email. Verify access to your current registered email with a six-digit code, then verify your new email address with a second code.'],
+  ['How does Change Password work?', 'Change Password requires your current password, a new password and a matching confirmation.'],
   ['How do I earn points?', 'Points are awarded when a donation is verified as completed. Uploading proof alone does not earn points. Open Points to see your balance, history and available rewards.'],
   ['Where can I see my donation activity?', 'Open Activity to view your participations and their current status. Open an activity for its details.'],
 ] as const;
