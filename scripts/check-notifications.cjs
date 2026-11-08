@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const ts = require('typescript');
 function load(path, imports, globals = {}) {
+  if(path!=='src/services/date-presentation.ts'){const dates=load('src/services/date-presentation.ts',{});imports={'./date-presentation':dates,'@/services/date-presentation':dates,...imports};}
   if (!imports['@/components/load-state'] && path !== 'src/components/load-state.tsx' && imports['react/jsx-runtime'] && imports['@expo/vector-icons/MaterialIcons'] && imports.react) imports = { ...imports, '@/components/load-state': load('src/components/load-state.tsx', imports, globals) };
   const module = { exports: {} };
   const code = ts.transpileModule(fs.readFileSync(path, 'utf8'), {
@@ -71,14 +72,15 @@ async function serviceChecks() {
  * ======================================== */
 async function permissionChecks() {
   let permission = { granted:false, canAskAgain:true, status:'denied' };
-  let prompts = 0; let tokenReads = 0;
+  let prompts = 0; let tokenReads = 0; let channel = null; const channelWrites = [];
   const platform = { OS:'android' }, constants = { executionEnvironment:'bare' };
   const device = { isDevice:true };
   const native = {
     getPermissionsAsync: async () => permission,
     requestPermissionsAsync: async () => { prompts++; return permission = { granted:true, canAskAgain:true, status:'granted' }; },
-    setNotificationChannelAsync: async () => {},
-    AndroidImportance: { DEFAULT:3 },
+    getNotificationChannelAsync: async () => channel,
+    setNotificationChannelAsync: async (id, options) => { channelWrites.push({id,...options}); channel = {...options}; },
+    AndroidImportance: { DEFAULT:3, HIGH:4, NONE:0 },
     getDevicePushTokenAsync: async () => { tokenReads++; return {type:'android',data:'test-device-token'}; },
   };
   const push = load('src/services/push-notifications.ts', {
@@ -89,6 +91,8 @@ async function permissionChecks() {
   await push.getPushRegistration(); assert.equal(prompts,0); assert.equal(tokenReads,0);
   assert.equal((await push.getPushRegistration(true)).token,'test-device-token');
   assert.equal(prompts,1);
+  assert.equal(channelWrites.length,1);assert.equal(channelWrites[0].importance,4);assert.equal(channelWrites[0].sound,'default');
+  for(const importance of [0,2,3,4]) {channel={importance,sound:null};await push.getPushRegistration();assert.equal(channelWrites.length,1,'Existing channel settings, including blocked/silent, are never overwritten');}
   await push.getPushRegistration(); assert.equal(prompts,1);
   const beforeRefresh = tokenReads;
   assert.equal((await push.getPushRegistration(false, {type:'android',data:'event-supplied-token'})).token,'event-supplied-token');
@@ -225,10 +229,10 @@ function notificationHarness(granted = false, owner = 7) {
   let cursor=0,first=true,foreground,session=1,now=100000000;
   const control={granted,token:'initial-test-token',lookup:null,register:null,tokenReads:0,prompts:0,countCalls:0,reads:0};
   const native={
-    setNotificationHandler(){}, AndroidImportance:{DEFAULT:3},
+    setNotificationHandler(handler){listeners.handler=handler;}, AndroidImportance:{DEFAULT:3,HIGH:4},
     getPermissionsAsync:async()=>({granted:control.granted,canAskAgain:true,status:control.granted?'granted':'denied'}),
     requestPermissionsAsync:async()=>{control.prompts++;control.granted=true;return {granted:true};},
-    setNotificationChannelAsync:async()=>{},
+    getNotificationChannelAsync:async()=>({importance:3}),setNotificationChannelAsync:async()=>{},
     getDevicePushTokenAsync:async()=>{
       control.tokenReads++;
       const token=control.lookup?await control.lookup:{type:'android',data:control.token};
@@ -274,6 +278,7 @@ function notificationHarness(granted = false, owner = 7) {
 
 async function contextChecks() {
   let h=notificationHarness();await flush();
+  assert.deepEqual(JSON.parse(JSON.stringify(await h.listeners.handler.handleNotification())),{shouldShowBanner:true,shouldShowList:true,shouldPlaySound:true,shouldSetBadge:false},'Existing foreground presentation remains enabled without creating a second notification');
   assert.equal(h.render().unreadCount,3);
   await h.render().refreshCount();await h.render().refreshCount();assert.equal(h.control.countCalls,1);
   assert.equal(h.control.prompts,0);assert.equal(h.registrations.length,0);
@@ -562,8 +567,8 @@ function timestampChecks() {
   assert.equal(service.notificationTimeLabel(new Date(now-3600000).toISOString(),now),'1 hour ago');
   assert.equal(service.notificationTimeLabel(new Date(2026,9,24,15).toISOString(),now),'Yesterday');
   assert.equal(service.notificationTimeLabel(new Date(2026,9,22,15).toISOString(),now),'3 days ago');
-  assert.equal(service.notificationTimeLabel(new Date(2025,0,1).toISOString(),now),'Jan 1, 2025');
-  assert.equal(service.notificationTimeLabel(new Date(2026,10,1).toISOString(),now),'Nov 1, 2026');
+  assert.equal(service.notificationTimeLabel('2025-01-01T00:00:00+08:00',now),'January 1, 2025');
+  assert.equal(service.notificationTimeLabel('2026-11-01T00:00:00+08:00',now),'November 1, 2026');
 }
 
 (async()=>{

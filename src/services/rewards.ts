@@ -1,3 +1,4 @@
+import { formatDonorDateTime } from './date-presentation';
 import { apiRequest } from './api';
 
 // ========================================
@@ -50,9 +51,7 @@ export function usableClaimCode(voucher: Voucher): string | null {
   return voucherState(voucher) === 'pending_claim' && typeof voucher.claim_code === 'string' && /^LFW-[A-Z0-9]{6}$/.test(voucher.claim_code) ? voucher.claim_code : null;
 }
 export function voucherDate(value: string | null): string {
-  if (!value || !Number.isFinite(Date.parse(value))) return 'Unavailable';
-  const date = new Date(value);
-  return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) + ' at ' + date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  return formatDonorDateTime(value, 'Unavailable');
 }
 export const ACTIVATION_MESSAGE = 'Activate your one-time claim code? No additional points will be spent. Your code has no expiration and staff will confirm your claim when you receive the item.';
 

@@ -1,6 +1,7 @@
 /* Actual service/hook/screen handlers; native and React boundaries are mocked. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
 function load(path,imports={},globals={}){
+ if(path!=='src/services/date-presentation.ts'){const dates=load('src/services/date-presentation.ts');imports={'./date-presentation':dates,'@/services/date-presentation':dates,...imports};}
  if(!imports['@/components/load-state'] && path!=='src/components/load-state.tsx' && imports['react/jsx-runtime'] && imports['@expo/vector-icons/MaterialIcons'] && imports.react)imports={...imports,'@/components/load-state':load('src/components/load-state.tsx',imports,globals)};
  const module={exports:{}};const code=ts.transpileModule(fs.readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
  vm.runInNewContext(code,{module,exports:module.exports,require:n=>{if (n === '@/constants/theme') return load('src/constants/theme.ts', {'react-native': {Platform: {select: options => options.default}}}); if(n.endsWith('.png')){assert.ok(fs.existsSync(require('node:path').resolve(require('node:path').dirname(path),n)));return n;}if(!(n in imports))throw Error('Unexpected import '+n);return imports[n];},...globals});return module.exports;
@@ -644,7 +645,7 @@ function host(){
      '@/services/auth': service, '@/services/api': { errorMessage: error => error.message },
      '@/services/donations': { boardItems: () => [], DONATION_STATUS: {}, DONATION_STATUS_DESCRIPTION: {} },
      '@/services/announcement-presentation': {},
-     '@/services/eligibility': { SCREENING_NOTICE: 'Notice' },
+     '@/services/eligibility': load('src/services/eligibility.ts', { './api': { ApiError: class extends Error {} } }),
      '@/hooks/use-eligibility-cooldown': { useEligibilityCooldown: () => cooldown, formatEligibilityWait: () => '' },
    }, { setInterval: () => 0, clearInterval() {}, setTimeout: () => 0, clearTimeout() {} });
    const tabView = () => tabHost.render(tabModule.default);

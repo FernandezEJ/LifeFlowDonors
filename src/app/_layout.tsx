@@ -2,7 +2,7 @@ import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { NotificationProvider } from '@/contexts/notification-context';
 import { Stack, useSegments } from 'expo-router';
 import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router/react-navigation';
-import { ActivityIndicator, Button, Text } from 'react-native';
+import { ActivityIndicator, Button, Image, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '@/contexts/auth-context';
 import { StatusBar } from 'expo-status-bar';
@@ -55,7 +55,12 @@ function SessionNavigator() {
   return <>
     <StatusBar style={statusBarStyle} hidden={false} />
     {restoring || sessionError ? <SafeAreaView style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: PALETTE.cream }}>
-      {restoring ? <><ActivityIndicator color={PALETTE.primary} /><Text style={{color:PALETTE.text}}>Restoring session...</Text></> :
+      {restoring ? <View accessible accessibilityRole="progressbar" accessibilityLabel="Getting LifeFlow ready" accessibilityLiveRegion="polite" style={{ alignItems: 'center', gap: 14 }}>
+        <Image source={require('../../assets/images/LogoMascot.png')} resizeMode="contain" accessible={false} style={{ width: 96, height: 96 }} />
+        <Text style={{ color: PALETTE.text, fontSize: 24, fontWeight: '800' }}>LifeFlow</Text>
+        <ActivityIndicator color={PALETTE.primary} accessible={false} />
+        <Text style={{ color: PALETTE.neutralText, fontSize: 14 }}>Getting things ready…</Text>
+      </View> :
         <><Text style={{color:PALETTE.danger}}>{sessionError}</Text><Button color={PALETTE.primary} title="Retry" onPress={() => void restore()} /></>}
     </SafeAreaView> :
     <ThemeProvider value={darkFlowie ? DarkTheme : lightTheme}>

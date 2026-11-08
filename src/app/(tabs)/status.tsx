@@ -1,3 +1,4 @@
+import { formatDonorDateTime } from '@/services/date-presentation';
 import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
 import { LoadError } from '@/components/load-state';
@@ -7,7 +8,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useRef } from 'react';
 
 import { useEligibilityCooldown, formatEligibilityWait } from '@/hooks/use-eligibility-cooldown';
-import { SCREENING_NOTICE, formatDonationRestDate, type EligibilityAssessment } from '@/services/eligibility';
+import { SCREENING_NOTICE, formatDonationRestDate, QUESTIONS, isV5Assessment, assessmentPresentation } from '@/services/eligibility';
 import { type ImageSourcePropType, ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -26,47 +27,6 @@ const COLORS = {
   amber: PALETTE.pendingText,
 };
 
-type EligibilityStatus = 'ELIGIBLE' | 'NOT_ELIGIBLE' | 'EVALUATION_REQUIRED' | 'NEEDS_SCREENING';
-
-const STATUS_PRESENTATION: Record<
-  EligibilityStatus,
-  {
-    title: string;
-    description: string;
-    icon: 'check-circle' | 'cancel' | 'pending';
-    background: string;
-    color: string;
-  }
-> = {
-  ELIGIBLE: {
-    title: 'Ready to proceed',
-    description:
-      'Based on your latest self-assessment, you may proceed to the donation facility for final screening.',
-    icon: 'check-circle',
-    background: COLORS.softGreen,
-    color: COLORS.green,
-  },
-  NOT_ELIGIBLE: {
-    title: 'Not Eligible for Now',
-    description: 'Based on your latest self-assessment, one or more factors suggest that you should wait before donating.',
-    icon: 'cancel',
-    background: PALETTE.dangerSurface,
-    color: PALETTE.danger,
-  },
-  NEEDS_SCREENING: {
-    title: 'Not Eligible for Now',
-    description: 'This saved assessment used an earlier questionnaire. It has not been re-evaluated. Please confirm with the donation facility.',
-    icon: 'pending', background: COLORS.softAmber, color: COLORS.amber,
-  },
-  EVALUATION_REQUIRED: {
-    title: 'Pre-screening unavailable',
-    description: 'Complete the Donation Readiness Self-Assessment to view your latest status.',
-    icon: 'pending',
-    background: COLORS.softAmber,
-    color: COLORS.amber,
-  },
-};
-
 // ========================================
 // STATUS MASCOT STATE
 // Donation rest takes precedence; otherwise use the saved assessment result.
@@ -77,48 +37,9 @@ const STATUS_MASCOTS: { happy: ImageSourcePropType; rest: ImageSourcePropType; c
   concerned: require('../../../assets/images/SadMascot.png'),
 };
 
-// Display saved values only. Missing legacy fields never become invented answers.
-const LEGACY_ANSWER_LABELS: readonly { key: string; label: string }[] = [
-  { key: 'weight', label: 'Weight' },
-  { key: 'sleepHours', label: 'Sleep last night' },
-  { key: 'currentSymptoms', label: 'Current symptoms' },
-  { key: 'donatedWithinThreeMonths', label: 'Donated within the last 3 months' },
-  { key: 'feelsWell', label: 'Feel well enough today' },
-  { key: 'currentlyPregnant', label: 'Currently pregnant' },
-  { key: 'takingAntibioticsForActiveInfection', label: 'Taking antibiotics for an active infection' },
-  { key: 'stillRecoveringFromProcedure', label: 'Still recovering from surgery / procedure / hospitalization' },
-  { key: 'activeOrRecoveringInfection', label: 'Active infection / recovering from one' },
-  { key: 'weakDizzyOrUnusuallyTired', label: 'Weak, dizzy, unusually tired, or physically unwell' },
-];
-const ANSWER_LABELS = [
-  { key: 'weightAtLeast50Kg', label: 'Do you weigh at least 50 kg?' },
-  { key: 'sleptAtLeastFiveHours', label: 'Have you had at least 5 hours of sleep before your planned donation?' },
-  { key: 'eatenProperMeal', label: 'Have you eaten a proper meal before your planned donation?' },
-  { key: 'avoidedAlcoholFor24Hours', label: 'Have you avoided drinking alcohol within the last 24 hours?' },
-  { key: 'threeMonthsSinceLastDonation', label: 'Have at least 3 months passed since your last completed blood donation?' },
-  { key: 'recentFeverInfectionOrIllness', label: 'Have you had a fever, infection, or illness recently?' },
-  { key: 'unusualBleedingWeaknessOrDizziness', label: 'Have you recently experienced unusual bleeding, severe weakness, or dizziness?' },
-  { key: 'recentSurgeryOrMajorProcedure', label: 'Have you recently undergone surgery or a major medical or dental procedure?' },
-  { key: 'medicationAffectingDonation', label: 'Are you currently taking medication that may affect blood donation?' },
-  { key: 'conditionOrTreatmentRequiringWait', label: 'Have you had any recent condition or treatment that a blood donation facility previously told you requires waiting before donating again?' },
-];
-function answerLabels(assessment: EligibilityAssessment | null) {
-  return assessment && 'weightAtLeast50Kg' in assessment.answers ? ANSWER_LABELS : LEGACY_ANSWER_LABELS;
-}
-function displayAnswer(key: string, value: unknown): string {
-  if (key === 'weight' || key === 'sleepHours') {
-    if (typeof value !== 'number' || !Number.isFinite(value)) return 'Not recorded';
-    return key === 'weight' ? value + ' kg' : value + (value === 1 ? ' hour' : ' hours');
-  }
-  if (value === 'YES') return 'Yes';
-  if (value === 'NO') return 'No';
-  if (key === 'currentlyPregnant' && value === 'NOT_APPLICABLE') return 'Not applicable';
-  return 'Not recorded';
-}
 function displayServerDate(value: string | null | undefined, empty: string): string {
   if (!value) return empty;
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toLocaleString(undefined, { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Not recorded';
+  return formatDonorDateTime(value, 'Not recorded');
 }
 
 export default function StatusScreen() {
@@ -134,17 +55,21 @@ export default function StatusScreen() {
   const cooldown = useEligibilityCooldown();
   const { loading, error } = cooldown;
   const assessment = cooldown.state?.assessment ?? null;
-  const state: EligibilityStatus = !assessment ? 'EVALUATION_REQUIRED'
-    : assessment.result === 'eligible' ? 'ELIGIBLE'
-    : assessment.result === 'needs_further_screening' ? 'NEEDS_SCREENING' : 'NOT_ELIGIBLE';
+  const savedPresentation = assessmentPresentation(assessment);
+  const v5 = isV5Assessment(assessment);
   const onRest = cooldown.state?.is_on_donation_cooldown === true;
   const presentation = onRest ? {
     title: 'Donation Rest Period', description: 'You recently completed a blood donation.',
     icon: 'pending' as const, background: COLORS.softAmber, color: COLORS.amber,
-  } : STATUS_PRESENTATION[state];
-  const showReason = !onRest && !!assessment?.reasons.length;
+  } : {
+    title: savedPresentation.title, description: savedPresentation.copy,
+    icon: savedPresentation.tone === 'success' ? 'check-circle' as const : 'pending' as const,
+    background: savedPresentation.tone === 'success' ? COLORS.softGreen : COLORS.softAmber,
+    color: savedPresentation.tone === 'success' ? COLORS.green : COLORS.amber,
+  };
+  const concerned = v5 ? assessment?.result === 'needs_further_review' : assessment && assessment.result !== 'eligible';
   const mascot = onRest ? STATUS_MASCOTS.rest
-    : (!loading || !!cooldown.state) && (!error || !!cooldown.state) && (state === 'NOT_ELIGIBLE' || state === 'NEEDS_SCREENING')
+    : (!loading || !!cooldown.state) && (!error || !!cooldown.state) && concerned
       ? STATUS_MASCOTS.concerned ?? STATUS_MASCOTS.happy : STATUS_MASCOTS.happy;
   // ========================================
   // DONOR SUMMARY
@@ -155,10 +80,10 @@ export default function StatusScreen() {
     { label: 'Assessed', value: displayServerDate(assessment?.assessed_at, 'Not assessed'), icon: 'event' as const, wide: true },
     { label: 'Next self-assessment available', value: assessment
       ? displayServerDate(cooldown.state?.next_allowed_at, 'Not recorded') : 'Not available', icon: 'update' as const, wide: true },
-    ...answerLabels(assessment).map(({ key, label }, index) => ({
+    ...(v5 ? QUESTIONS : []).map(({ key, text: label }, index) => ({
       label: (index + 1) + '. ' + label,
-      value: displayAnswer(key, assessment?.answers?.[key]),
-      icon: key === 'weight' ? 'monitor-weight' as const : 'fact-check' as const,
+      value: assessment?.answers?.[key] === 'YES' ? 'Yes' : assessment?.answers?.[key] === 'NO' ? 'No' : 'Not recorded',
+      icon: 'fact-check' as const,
       wide: label.length > 35,
     })),
   ];
@@ -201,19 +126,10 @@ export default function StatusScreen() {
             </View>
           </View>
 
-          {showReason ? (
-            <View style={styles.adviceCard}>
-              <Text style={styles.adviceHeading}>Reason</Text>
-              <Text style={styles.adviceText}>
-                {assessment?.reasons.join('\n\n')}
-              </Text>
-              <Text style={styles.adviceHeading}>Advice</Text>
-              <Text style={styles.adviceText}>
-                {SCREENING_NOTICE}
-              </Text>
-            </View>
-          ) : null}
-
+          {onRest && v5 ? <View style={styles.adviceCard}>
+            <Text style={[styles.adviceHeading, { color: savedPresentation.tone === 'success' ? COLORS.green : COLORS.amber }]}>{savedPresentation.title}</Text>
+            <Text style={styles.adviceText}>{savedPresentation.copy}</Text>
+          </View> : null}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Donor Summary</Text>
             <View style={styles.summaryGrid}>
@@ -242,15 +158,15 @@ export default function StatusScreen() {
           {/* One compact countdown accompanies the action; exact dates stay in Donor Summary. */}
           {(!loading || cooldown.state) && (!error || cooldown.state) ? <>
           <View style={styles.updateSection}>
-          <Pressable
+          {!cooldown.state?.cooldown_active ? <Pressable
             accessibilityRole="button"
             disabled={!cooldown.canSubmit}
             accessibilityState={{ disabled: !cooldown.canSubmit }}
-            onPress={() => { if (cooldown.canSubmit) router.push(assessment ? '/flowie' : '/evaluation'); }}
+            onPress={() => { if (cooldown.canSubmit) router.push(assessment && v5 ? '/flowie' : '/evaluation'); }}
             style={({ pressed }) => [styles.updateButton, !cooldown.canSubmit && { opacity: 0.5 }, pressed && styles.updateButtonPressed]}>
             <MaterialIcons name="chat-bubble-outline" color={COLORS.white} size={21} />
-            <Text style={styles.updateButtonText}>{assessment ? 'Update Status with Flowie' : 'Start Assessment'}</Text>
-          </Pressable>
+            <Text style={styles.updateButtonText}>{v5 ? 'Update Status with Flowie' : 'Take Self-Assessment'}</Text>
+          </Pressable> : null}
 
           {assessment && cooldown.state?.cooldown_active ? <Text style={styles.updateHelper}>
             {formatEligibilityWait(cooldown.remaining).replace('Evaluate again in ', 'Available again in ')}
@@ -309,9 +225,9 @@ const styles = StyleSheet.create({
   content: { width: '100%', maxWidth: 620, alignSelf: 'center', gap: 20 },
   statusCard: {
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 22,
-    borderRadius: 22,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderRadius: 12,
   },
   mascotArea: {
     width: 126,
@@ -352,10 +268,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   adviceCard: {
-    padding: 17,
+    padding: 14,
     borderWidth: 1,
     borderColor: PALETTE.border,
-    borderRadius: 19,
+    borderRadius: 12,
     backgroundColor: COLORS.softRed,
   },
   adviceHeading: { marginTop: 5, color: PALETTE.text, fontSize: 12, fontWeight: '800' },
@@ -369,7 +285,7 @@ const styles = StyleSheet.create({
   },
   summaryItem: {
     minWidth: 0,
-    minHeight: 82,
+    minHeight: 72,
     flexBasis: '47%',
     flexGrow: 1,
     flexDirection: 'row',
@@ -378,7 +294,7 @@ const styles = StyleSheet.create({
     padding: 13,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 17,
+    borderRadius: 12,
     backgroundColor: COLORS.white,
   },
   summaryWide: { flexBasis: '100%' },

@@ -535,14 +535,14 @@ const styles = StyleSheet.create({
   bloodTypeText: { color: COLORS.brand, fontSize: 13, fontWeight: '800' },
   statsRow: { flexDirection: 'row', gap: 12 },
   statCard: {
-    minHeight: 134,
+    minHeight: 112,
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 14,
     borderWidth: 1,
     borderColor: PALETTE.border,
-    borderRadius: 21,
+    borderRadius: 12,
     backgroundColor: COLORS.softRed,
   },
   statIcon: {
@@ -564,7 +564,7 @@ const styles = StyleSheet.create({
     padding: 14,
     borderWidth: 1,
     borderColor: PALETTE.border,
-    borderRadius: 18,
+    borderRadius: 12,
     backgroundColor: COLORS.softRed,
   },
   currentMedalIcon: {

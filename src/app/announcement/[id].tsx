@@ -4,7 +4,7 @@ import { AnnouncementImage } from '@/components/announcement-image';
 import { TabSkeleton } from '@/components/tab-skeleton';
 import { AnnouncementBody } from '@/components/announcement-body';
 import { ConfirmationModal } from '@/components/confirmation-modal';
-import { formatDonationRestDate } from '@/services/eligibility';
+import { formatDonationRestDate, permitsParticipationScreening } from '@/services/eligibility';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import {Stack,useFocusEffect,useLocalSearchParams,useRouter} from 'expo-router';
 import {useCallback,useEffect,useRef,useState,type ComponentProps} from 'react';
@@ -127,7 +127,7 @@ export default function AnnouncementScreen(){
      if(!state.assessment || !state.cooldown_active || state.remaining_seconds<=0){
        blocked('evaluation_required');release(version);return;
      }
-     if(state.assessment.result!=='eligible'){
+     if(!permitsParticipationScreening(state.assessment)){
        blocked('evaluation_not_eligible',undefined,state.remaining_seconds);release(version);return;
      }
      // Keep the lock through the dialog; consume callbacks once, including Cancel.
@@ -169,10 +169,10 @@ export default function AnnouncementScreen(){
        <View style={styles.content}>
          {visibleError && <View style={styles.errorCard}>
            <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={[styles.description,{color:unavailable?PALETTE.neutral:PALETTE.danger}]}>{visibleError}</Text>
-           <Pressable accessibilityRole="button" accessibilityLabel="Retry announcement details" onPress={()=>void load()}
+           {!unavailable ? <Pressable accessibilityRole="button" accessibilityLabel="Retry announcement details" onPress={()=>void load()}
              style={({pressed})=>[styles.retryButton,pressed && styles.pressed]}>
-             <Text style={styles.retryText}>Retry donation details</Text>
-           </Pressable>
+             <Text style={styles.retryText}>Try again</Text>
+           </Pressable> : <Text style={styles.description}>This announcement may have been removed or is no longer available to view. You can go back to continue browsing.</Text>}
          </View>}
          {item ? <>
            <AnnouncementImage uri={imageUrl} title={item.title?.trim() || 'Announcement'} />

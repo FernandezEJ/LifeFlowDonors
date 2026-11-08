@@ -1,4 +1,4 @@
-import { LifeFlowColors as PALETTE } from '@/constants/theme';
+import { LifeFlowColors as PALETTE, DonationStatusColors } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
 import { EmptyState, LoadError } from '@/components/load-state';
 import { AnnouncementImage } from '@/components/announcement-image';
@@ -249,7 +249,7 @@ export default function HomeScreen() {
               return <Pressable key={isPermanent ? 'red-cross' : announcement.id} accessibilityRole="button" accessibilityLabel={`View details: ${announcement.title}`}
                 onPress={() => router.push({ pathname: '/announcement/[id]', params: { id: isPermanent ? 'red-cross-dagupan' : String(announcement.id) } })}
                 style={({ pressed }) => [styles.adminAnnouncementCard, pressed && styles.pressed]}>
-                <AnnouncementImage uri={announcementImageUrl(announcement.image_url)} title={announcement.title} preview compact={isPermanent} />
+                <AnnouncementImage uri={announcementImageUrl(announcement.image_url)} title={announcement.title} preview compact />
                 <View style={styles.announcementBody}>
                   <View style={[styles.announcementMeta,isPermanent && styles.permanentMeta]}>
                     <Text style={styles.activeBadgeText}>{isPermanent ? 'PERMANENT' : 'ACTIVE ANNOUNCEMENT'}</Text>
@@ -280,15 +280,18 @@ export default function HomeScreen() {
             {sections.activity.error ? <SectionError message={sections.activity.error} label="Retry activity"
               loading={sections.activity.loading} retry={() => retrySection.current('activity')} /> : null}
             {!sections.activity.loaded && sections.activity.loading ? <TabSkeleton variant="activity" label="Loading recent activity" /> : null}
-            {recent ? <Pressable accessibilityRole="button" accessibilityLabel="View recent activity" onPress={() => router.push({ pathname: '/activity/[id]', params: { id: String(recent.id) } })} style={({ pressed }) => [styles.guideCard, pressed && styles.pressed]}>
-              <Text style={styles.cardTitle} numberOfLines={2}>{recent.opportunity.title}</Text>
-              <View style={styles.activityStatus}>
-                <MaterialIcons name={recent.status === 'completed' ? 'check-circle-outline' : 'history'} size={20} color={COLORS.brand} />
-                <Text style={styles.viewAllText}>{DONATION_STATUS[recent.status]}</Text>
+            {recent ? <Pressable accessibilityRole="button" accessibilityLabel="View recent activity" onPress={() => router.push({ pathname: '/activity/[id]', params: { id: String(recent.id) } })} style={({ pressed }) => [styles.recentCard, pressed && styles.pressed]}>
+              <View style={styles.recentHeading}>
+                <Text style={[styles.cardTitle, styles.recentTitle]}>{recent.opportunity.title}</Text>
+                <MaterialIcons name="chevron-right" size={22} color={COLORS.brand} accessible={false} />
               </View>
               <Text style={styles.cardMeta}>{recent.opportunity.event_date
                 ? formatDonationDate(recent.opportunity.event_date)
                 : 'Joined ' + formatJoinedDate(recent.joined_at)}</Text>
+              {recent.opportunity.location ? <Text style={styles.cardMeta}>{recent.opportunity.location}</Text> : null}
+              <View style={[styles.recentBadge, { backgroundColor: DonationStatusColors[recent.status]?.surface ?? PALETTE.neutralSurface }]}>
+                <Text style={[styles.recentStatus, { color: DonationStatusColors[recent.status]?.text ?? PALETTE.neutralText }]}>{DONATION_STATUS[recent.status]}</Text>
+              </View>
             </Pressable> : sections.activity.loaded && !sections.activity.error && !sections.activity.loading ? <EmptyState icon="event-note" title="No donation activities yet" description="Your latest donation activity will appear here." /> : null}
           </View>
 
@@ -324,7 +327,11 @@ const styles = StyleSheet.create({
   viewAllText: { color: COLORS.brand, fontSize: 14, fontWeight: '700', flexShrink: 1 },
   errorCard: { padding: 12, borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.white },
   errorText: { color: PALETTE.neutralText, fontSize: 14, lineHeight: 21 },
-  activityStatus: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  recentCard: { gap: 8, padding: 14, borderWidth: 1, borderColor: COLORS.border, borderRadius: 12, backgroundColor: COLORS.white },
+  recentHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  recentTitle: { flex: 1, minWidth: 0, lineHeight: 22, fontSize: 16 },
+  recentBadge: { alignSelf: 'flex-start', maxWidth: '100%', paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8 },
+  recentStatus: { fontSize: 12, lineHeight: 18, fontWeight: '700', flexShrink: 1 },
   fixedHeader: {
     backgroundColor: COLORS.background,
     zIndex: 10,

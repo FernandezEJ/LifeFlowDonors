@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const ts = require('typescript');
 function load(file, imports, globals = {}) {
+  if(file!=='src/services/date-presentation.ts'){const dates=load('src/services/date-presentation.ts',{});imports={'./date-presentation':dates,'@/services/date-presentation':dates,...imports};}
   const module = { exports: {} };
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },

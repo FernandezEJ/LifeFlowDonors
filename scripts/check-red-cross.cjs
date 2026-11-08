@@ -1,6 +1,7 @@
 /* Actual service/hook/screen handlers; native and React boundaries are mocked. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
 function load(path,imports={},globals={}){
+ if(path!=='src/services/date-presentation.ts'){const dates=load('src/services/date-presentation.ts');imports={'./date-presentation':dates,'@/services/date-presentation':dates,...imports};}
  if(!imports['@/components/load-state'] && path!=='src/components/load-state.tsx' && imports['react/jsx-runtime'] && imports['@expo/vector-icons/MaterialIcons'] && imports.react)imports={...imports,'@/components/load-state':load('src/components/load-state.tsx',imports,globals)};
  const module={exports:{}};const code=ts.transpileModule(fs.readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
  vm.runInNewContext(code,{module,exports:module.exports,require:n=>{if (n === '@/constants/theme') return load('src/constants/theme.ts', {'react-native': {Platform: {select: options => options.default}}}); if(n.endsWith('.png')){assert.ok(fs.existsSync(require('node:path').resolve(require('node:path').dirname(path),n)));return n;}if(!(n in imports))throw Error('Unexpected import '+n);return imports[n];},...globals});return module.exports;
@@ -13,6 +14,26 @@ const texts=v=>nodes(v).filter(n=>n.type==='Text').map(n=>Array.isArray(n.props.
 const button=(tree,label)=>nodes(tree).find(n=>n.type==='Pressable'&&(texts(n).includes(label)||n.props.accessibilityLabel===label));
 const native={View:'View',Text:'Text',Pressable:'Pressable',Image:'Image',ScrollView:'ScrollView',TextInput:'TextInput',StyleSheet:{create:x=>x},Alert:{alert:()=>{throw Error('Unexpected validation alert');}}};
 const presentation=load('src/services/announcement-presentation.ts',{'./api':{API_BASE_URL:'http://device.test:8000/api'}},{URL});
+const dates=load('src/services/date-presentation.ts');
+const originalTimezone=process.env.TZ;
+try {
+ for(const zone of ['Asia/Manila','Pacific/Honolulu','America/Los_Angeles']) {
+  process.env.TZ=zone;
+  assert.equal(dates.formatCalendarDate('19-04-2026'),'April 19, 2026','Explicit day-first values never use US/implementation-defined parsing');
+  assert.equal(dates.formatCalendarDate('2026-11-19'),'November 19, 2026');
+  assert.equal(dates.formatCalendarDate('2024-02-29'),'February 29, 2024');
+  for(const value of [null,undefined,'','--','2026-02-29','2026-04-31','31-04-2026','04/19/2026','2026-13-01','0000-01-01']) assert.equal(dates.formatCalendarDate(value),'Date unavailable');
+  assert.equal(dates.formatDonorDate('2026-10-31T15:59:59Z'),'October 31, 2026');
+  assert.equal(dates.formatDonorDate('2026-10-31T16:00:00Z'),'November 1, 2026');
+  assert.equal(dates.formatDonorDate('2026-12-31T16:00:00.000000Z'),'January 1, 2027');
+  assert.equal(dates.formatDonorDate('2024-02-28T16:00:00Z'),'February 29, 2024');
+  assert.equal(dates.formatDonorDate('2026-11-19'),'November 19, 2026','Date-only never moves to the previous day');
+  assert.equal(dates.formatDonorDateTime('2026-11-19T11:09:00Z'),'November 19, 2026 at 7:09 PM');
+  assert.equal(dates.formatDonorDateTime('2026-11-19 19:09:00'),'Date unavailable','Ambiguous unzoned timestamps never guess a device/server timezone');
+  for(const value of ['2026-02-30T12:00:00Z','2026-11-19T25:00:00Z','2026-11-19T12:61:00Z','19-04-2026T12:00:00Z','not a date']) assert.equal(dates.formatDonorDate(value),'Date unavailable');
+ }
+} finally {if(originalTimezone===undefined)delete process.env.TZ;else process.env.TZ=originalTimezone;}
+console.log('PASS V5 dates: full English months, day-first/calendar interpretation, leap years, invalid values, Manila midnight/year boundaries and timezone-independent date-only display');
 const eligibility=load('src/services/eligibility.ts',{'./api':{ApiError:class extends Error{}}});
 const shared={'@/services/announcement-presentation':presentation,'@/components/tab-skeleton':{TabSkeleton:'TabSkeleton'},'react/jsx-runtime':{jsx,jsxs:jsx,Fragment:'Fragment'},'react-native':native,'@expo/vector-icons/MaterialIcons':{__esModule:true,default:'Icon'},'react-native-safe-area-context':{SafeAreaView:'SafeAreaView'}};
 shared['@/components/announcement-image']={AnnouncementImage:props=>({type:'AnnouncementImage',props:{...props,children:props.uri?null:{type:'Text',props:{children:'No event image available'}}}})};
@@ -91,8 +112,9 @@ function host(){
  const permanentCard=button(h.view(),'View details: '+red.title);permanentCard.props.onPress();assert.equal(routes.pop().params.id,'red-cross-dagupan');
  assert.equal(nodes(permanentCard).filter(n=>n.type==='Pressable').length,1);assert.equal(button(h.view(),'View Donation Option'),undefined);
  assert.ok(nodes(permanentCard).some(n=>n.type==='Icon'&&n.props.name==='chevron-right'));
- assert.ok(nodes(permanentCard).some(n=>n.type==='AnnouncementImage'&&n.props.compact&&n.props.preview));assert.match(texts(permanentCard),/Saved short description/);h.close();
+ assert.ok(nodes(permanentCard).some(n=>n.type==='AnnouncementImage'&&n.props.preview&&n.props.compact),'Home permanent covers retain the original compact frame');assert.match(texts(permanentCard),/Saved short description/);h.close();
  h=await home([admin]);assert.ok(texts(h.view()).indexOf('Admin bloodletting')<texts(h.view()).indexOf(red.title));
+ const homeCovers=nodes(h.view()).filter(n=>n.type==='AnnouncementImage');assert.equal(homeCovers.length,2);assert.ok(homeCovers.every(n=>n.props.preview&&n.props.compact),'Both Home variants use the original compact 32:9 frame');
  assert.ok(nodes(h.view()).some(n=>n.type==='AnnouncementImage' && n.props.uri===admin.image_url));
  button(h.view(),'View Details').props.onPress();assert.equal(routes.pop().params.id,'9');h.close();
 
@@ -176,7 +198,7 @@ function host(){
   assert.ok(nodes(tree).some(n=>n.type==='Image'&&n.props.accessibilityLabel==='Flowie, the LifeFlow assistant'));
   const card=nodes(tree).find(n=>n.type==='Pressable'&&n.props.accessibilityLabel==='View details: '+admin.title);
   assert.ok(card.props.style({pressed:true}).some(s=>s?.opacity<1));assert.equal(nodes(card).filter(n=>n.type==='Pressable').length,1);
-  assert.equal(nodes(card).find(n=>n.type==='AnnouncementImage').props.preview,true);h.close();
+  assert.equal(nodes(card).find(n=>n.type==='AnnouncementImage').props.preview,true);assert.equal(nodes(card).find(n=>n.type==='AnnouncementImage').props.compact,true);h.close();
  }
  // Real shared image component: fixed covers, full details, stable sources and fresh-image/error recovery.
  const imageHost=host(),imageModule=load('src/components/announcement-image.tsx',{...shared,react:imageHost.react},{URL});
@@ -186,6 +208,14 @@ function host(){
  nodes(renderImage()).find(n=>n.type==='Image').props.onLoad({nativeEvent:{source:{width:400,height:1200}}});
  assert.equal(renderImage().props.style[1].aspectRatio,16/9);assert.equal(nodes(renderImage()).find(n=>n.type==='Image').props.resizeMode,'cover');
  imageProps={...imageProps,compact:true};assert.equal(renderImage().props.style[1].aspectRatio,32/9,'Permanent cover is half the height at the same width');
+ for(const width of [280,320,560,768]){
+  renderImage().props.onLayout({nativeEvent:{layout:{width}}});const frame=renderImage();
+  assert.equal(frame.props.style[0].borderRadius,16);assert.equal(frame.props.style[1].aspectRatio,32/9);
+  assert.equal(nodes(frame).find(n=>n.type==='Image').props.resizeMode,'cover');
+ }
+ imageProps={...imageProps,uri:null};assert.match(texts(renderImage()),/No event image available/);assert.equal(renderImage().props.style[1].aspectRatio,32/9,'Missing image keeps the compact frame');
+ imageProps={...imageProps,uri:'https://cdn.test/compact.png'};nodes(renderImage()).find(n=>n.type==='Image').props.onError();assert.equal(renderImage().props.style[1].aspectRatio,32/9,'Failed image keeps the compact frame');
+ imageProps={uri:'https://cdn.test/portrait.png',title:'Portrait',preview:true,compact:true};renderImage().props.onLayout({nativeEvent:{layout:{width:320}}});nodes(renderImage()).find(n=>n.type==='Image').props.onLoad({nativeEvent:{source:{width:400,height:1200}}});
  assert.equal(nodes(renderImage()).find(n=>n.type==='Image').props.resizeMode,'cover');imageProps={...imageProps,compact:false};
  assert.equal(nodes(renderImage()).find(n=>n.type==='Image').props.fadeDuration,0);
  const originalSource=nodes(renderImage()).find(n=>n.type==='Image').props.source;
@@ -242,7 +272,7 @@ function host(){
  refreshedPost={...admin,title:'Changed event',image_url:'https://cdn.test/updated.png'};h.fire(poll);await flush();
  assert.ok(texts(h.view()).includes('Changed event'));assert.equal(nodes(h.view()).find(n=>n.type==='AnnouncementImage').props.uri,refreshedPost.image_url);
  button(h.view(),'View Details').props.onPress();assert.equal(routes.pop().params.id,'9');h.close();
- console.log('Dashboard revision checks passed: uniform 16:9 covers, no Android fade, stable native source through repeated signing/refresh, real image/version updates, stale-event protection and error recovery; full detail images preserved.');
+ console.log('Dashboard cover checks passed: matching compact 32:9 Home previews, no Android fade, stable sources, image/version updates, stale-event/error recovery and full detail proportions preserved.');
  console.log('Phase A Dashboard checks passed: local greeting/focus/boundaries, independent loading/retry, cached refresh, request coalescing, 320dp/large-font styles, whole-card routes, unpinned labels and full-aspect image fallback.');
 
  // Announcements screen uses the same active filter and existing detail route.
@@ -299,6 +329,12 @@ function host(){
  assert.ok(scrollResets>0);
  const statusPalette=load('src/constants/theme.ts',{'react-native':{Platform:{select:options=>options.default}}}).DonationStatusColors;
  for(const [status,label] of Object.entries(donations.DONATION_STATUS)){
+  for(const width of [320,768]) {
+   const recentHome=await home([], [{id:88,status,joined_at:'2026-10-31T16:00:00Z',opportunity:{...admin,event_date:null}}],{width,fontScale:2});
+   const recentCard=button(recentHome.view(),'View recent activity');assert.ok(recentCard);assert.match(texts(recentCard),/November 1, 2026/);assert.ok(texts(recentCard).includes(label));
+   assert.equal(recentCard.props.style({pressed:false})[0].borderRadius,12);assert.ok(nodes(recentCard).some(n=>n.type==='Icon'&&n.props.name==='chevron-right'));
+   recentCard.props.onPress();assert.equal(routes.pop().params.id,'88');recentHome.close();
+  }
   const title='A long bloodletting activity title that needs several lines';
   const record={id:88,status,opportunity:{...admin,title,event_date:status==='pending'?null:admin.event_date}};
   const card=activityList().props.renderItem({item:record});
@@ -310,7 +346,8 @@ function host(){
   assert.equal(headingText.props.children,title);assert.equal(headingText.props.numberOfLines,undefined);
   assert.equal(headingText.props.style[1].flex,1);assert.equal(headingText.props.style[1].minWidth,0);
   assert.equal(chevron.type,'Icon');assert.equal(chevron.props.name,'chevron-right');assert.equal(chevron.props.accessible,false);assert.equal(chevron.props.style.flexShrink,0);
-  assert.ok(texts(card).includes(record.opportunity.event_date||'Confirm arrangements with the chapter'));assert.ok(texts(card).includes(admin.location));
+  assert.ok(texts(card).includes(presentation.formatDonationDate(record.opportunity.event_date,'Confirm arrangements with the chapter')));assert.ok(texts(card).includes(admin.location));
+  assert.equal(card.props.style({pressed:false})[0].borderRadius,12);assert.equal(card.props.style({pressed:false})[0].padding,14);
   const statusBlock=footer.props.children;
   assert.ok(texts(statusBlock).includes(label));assert.ok(texts(statusBlock).includes(donations.DONATION_STATUS_DESCRIPTION[status]));
   const badge=statusBlock.props.children[0];assert.equal(badge.props.style[1].backgroundColor,statusPalette[status].surface);
@@ -482,8 +519,9 @@ function host(){
  }
  for(const result of [null,{}, {opportunity:null}]){d=await detailsScenario({result});assert.ok(texts(d.view()).includes('This announcement is unavailable.'));assert.equal(button(d.view(),'Go Donate'),undefined);d.h.unmount();}
  d=await detailsScenario({error:new ApiError('Not found',404)});assert.match(texts(d.view()),/no longer available/);assert.equal(button(d.view(),'Go Donate'),undefined);
- d.setResponse({opportunity:admin});button(d.view(),'Retry donation details').props.onPress();await flush();assert.ok(button(d.view(),'Go Donate'));assert.equal(d.calls.filter(c=>c[0]==='load').length,2);d.h.unmount();
- d=await detailsScenario({error:new Error('Network unavailable')});assert.match(texts(d.view()),/Network unavailable/);assert.ok(button(d.view(),'Retry donation details'));d.h.unmount();
+ assert.equal(button(d.view(),'Try again'),undefined,'Confirmed unavailable announcements have no retry');assert.doesNotMatch(texts(d.view()),/Retry donation details/);
+ d.setResponse({opportunity:admin});d.h.blur();d.view();await flush();assert.ok(button(d.view(),'Go Donate'));assert.equal(d.calls.filter(c=>c[0]==='load').length,2);d.h.unmount();
+ d=await detailsScenario({error:new Error('Network unavailable')});assert.match(texts(d.view()),/Network unavailable/);assert.ok(button(d.view(),'Try again'));d.h.unmount();
  d=await detailsScenario();button(d.view(),'Go Donate').props.onPress();await flush();nodes(d.view()).find(n=>n.type==='ConfirmationModal').props.onPrimary();await flush();
  assert.match(texts(d.view()),/This announcement is no longer available/);assert.equal(d.routes.length,0);assert.equal(d.calls.filter(c=>c[0]==='join').length,1);d.h.unmount();
  const late=deferred();d=await detailsScenario({result:late.promise});d.h.unmount();late.resolve({opportunity:admin});await flush();assert.equal(button(d.view(),'Go Donate'),undefined,'Late detail response cannot restore a departed screen');
@@ -493,9 +531,9 @@ function host(){
  oldDetail.resolve({opportunity:admin});await flush();assert.ok(!texts(d.view()).includes(admin.title),'Late previous-route response is discarded');d.h.unmount();
  d=await detailsScenario();const nextDetail=deferred();d.setResponse(nextDetail.promise);d.setId('10');
  const changedRoute=d.view();assert.ok(!texts(changedRoute).includes(admin.title));assert.equal(button(changedRoute,'Go Donate'),undefined);
- nextDetail.reject(new Error('Connection failed'));await flush();assert.ok(button(d.view(),'Retry donation details'));
+ nextDetail.reject(new Error('Connection failed'));await flush();assert.ok(button(d.view(),'Try again'));
  assert.ok(!nodes(d.view()).some(n=>n.type==='TabSkeleton'),'Failure resolves the loading skeleton');
- d.setResponse({opportunity:{...admin,id:10,title:'Recovered announcement'}});button(d.view(),'Retry donation details').props.onPress();await flush();assert.ok(texts(d.view()).includes('Recovered announcement'));
+ d.setResponse({opportunity:{...admin,id:10,title:'Recovered announcement'}});button(d.view(),'Try again').props.onPress();await flush();assert.ok(texts(d.view()).includes('Recovered announcement'));
  d.setId(undefined);d.view();await flush();assert.ok(texts(d.view()).includes('This announcement is unavailable.'));assert.equal(button(d.view(),'Go Donate'),undefined);d.h.unmount();
  d=await detailsScenario();const pendingJoin=deferred();d.auth.joinOpportunity=()=>pendingJoin.promise;
  button(d.view(),'Go Donate').props.onPress();await flush();nodes(d.view()).find(n=>n.type==='ConfirmationModal').props.onPrimary();await flush();
@@ -544,13 +582,13 @@ function host(){
  d=await detailsScenario({id:'10',notificationId:'17',result:archived});assert.ok(!texts(d.view()).includes('Retained announcement'));assert.match(texts(d.view()),/unavailable/);d.h.unmount();
  for(const status of [403,404,410,500,503]){
   d=await detailsScenario({notificationId:'17',error:new ApiError('Server unavailable',status)});copy=texts(d.view());
-  assert.ok(!copy.includes('Expired'));assert.equal(button(d.view(),'Go Donate'),undefined);assert.ok(button(d.view(),'Retry donation details'));
+  assert.ok(!copy.includes('Expired'));assert.equal(button(d.view(),'Go Donate'),undefined);assert.equal(!!button(d.view(),'Try again'),status>=500);
   if(status<500)assert.match(copy,/no longer available/);else assert.match(copy,/Server unavailable/);
   assert.ok(d.calls.every(call=>call[0]==='notification'),'A denied notice never falls back to unrestricted detail');d.h.unmount();
  }
  d=await detailsScenario({notificationId:'17',result:archived});d.view();d.setFailure(new Error('Offline'));
  d.h.blur();d.view();await flush();assert.ok(texts(d.view()).includes('Retained announcement'));assert.ok(texts(d.view()).includes('Offline'));
- assert.equal(button(d.view(),'Go Donate'),undefined);d.setResponse(archived);button(d.view(),'Retry donation details').props.onPress();await flush();assert.ok(!texts(d.view()).includes('Offline'));
+ assert.equal(button(d.view(),'Go Donate'),undefined);d.setResponse(archived);button(d.view(),'Try again').props.onPress();await flush();assert.ok(!texts(d.view()).includes('Offline'));
  d.setFailure(new ApiError('Withdrawn',403));d.h.blur();d.view();await flush();assert.ok(!texts(d.view()).includes('Retained announcement'));assert.match(texts(d.view()),/no longer available/);d.h.unmount();
  // Changing notification ID on the same announcement invalidates cached content and late replies.
  const firstNotice=deferred(),nextNotice=deferred();d=await detailsScenario({notificationId:'17',result:firstNotice.promise});
@@ -565,7 +603,7 @@ function host(){
  assert.equal(nodes(permanentDetails.view()).find(n=>n.type==='AnnouncementImage').props.preview,undefined);
  assert.equal(nodes(permanentDetails.view()).find(n=>n.type==='AnnouncementImage').props.uri,savedPermanent.image_url);
  assert.ok(button(permanentDetails.view(),'Go Donate')&&button(permanentDetails.view(),'Evaluate'));permanentDetails.h.unmount();
- console.log('B1 permanent post checks passed: saved content/refetch, zero/one/many board ordering, View All reachability/deduplication, whole-card chevron routes, 32:9 covers, full detail images/rich text and no fabricated dates or offline fallback.');
+ console.log('B1/V5 permanent post checks passed: saved content/refetch, ordering, whole-card routes, matching Home covers, full detail images/rich text and no fabricated dates or offline fallback.');
  console.log('Phase A detail checks passed: structured loading, missing IDs, out-of-order route responses, retry recovery and route-scoped join locks.');
  console.log('Task 03 details UI checks passed: cream theme, screenshot hierarchy, real banner/failure fallback, dates/times/nulls, full safe rich text/plain text, truthful guidance, footer/320/375dp/large-font configuration, Back/Evaluate, invalid/empty/expired/network/retry states and server-rejected join. Native boundaries mocked.');
  console.log('Red Cross / Go Donate checks passed: both sources, ordered validation, popup routes, expiry, cancel, duplicate taps, changed-server-state recovery, offline safety and shared Activity navigation.');

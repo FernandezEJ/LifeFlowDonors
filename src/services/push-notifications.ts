@@ -13,6 +13,14 @@ export async function nativeNotifications() {
 }
 export type PushRegistration = { status: 'enabled' | 'denied' | 'available' | 'unavailable'; token?: string };
 
+async function ensureImportantChannel(notifications: typeof import('expo-notifications')) {
+  // Android persists channel importance/sound. Never overwrite an existing donor preference.
+  if (await notifications.getNotificationChannelAsync('important')) return;
+  await notifications.setNotificationChannelAsync('important', {
+    name: 'Important LifeFlow updates', importance: notifications.AndroidImportance.HIGH, sound: 'default',
+  });
+}
+
 // Permission and channel state are separate from successful FCM registration/delivery.
 export async function phoneNotificationPermission() {
   const notifications = await nativeNotifications();
@@ -60,15 +68,11 @@ export async function getPushRegistration(requestPermission = false, suppliedTok
   if (!notifications) return { status: 'unavailable' };
   let permission = await notifications.getPermissionsAsync();
   if (!permission.granted && requestPermission && permission.canAskAgain) {
-    await notifications.setNotificationChannelAsync('important', {
-      name: 'Important LifeFlow updates', importance: notifications.AndroidImportance.DEFAULT,
-    });
+    await ensureImportantChannel(notifications);
     permission = await notifications.requestPermissionsAsync();
   }
   if (!permission.granted) return { status: permission.status === 'denied' ? 'denied' : 'available' };
-  await notifications.setNotificationChannelAsync('important', {
-    name: 'Important LifeFlow updates', importance: notifications.AndroidImportance.DEFAULT,
-  });
+  await ensureImportantChannel(notifications);
   // Refresh listeners supply their token; fetching another one emits another event.
   const token = suppliedToken ?? await notifications.getDevicePushTokenAsync();
   if (token.type !== 'android' || typeof token.data !== 'string' || !token.data) return { status: 'unavailable' };

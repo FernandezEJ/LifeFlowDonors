@@ -1,3 +1,4 @@
+import { formatDonorDate } from './date-presentation';
 import { ApiError, apiRequest, errorMessage } from './api';
 import { localFlowieResponse, type FlowieMessage } from './flowie-preview';
 
@@ -113,6 +114,5 @@ export function flowieError(error: unknown): string {
   return errorMessage(error);
 }
 export function flowieDate(value: string | null | undefined) {
-  const date = value ? new Date(value) : null;
-  return date && Number.isFinite(date.getTime()) ? date.toLocaleDateString('en-US', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric' }) : 'Date unavailable';
+  return formatDonorDate(value);
 }

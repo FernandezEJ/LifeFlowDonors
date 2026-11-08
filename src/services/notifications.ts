@@ -1,3 +1,4 @@
+import { donorInstant, formatCalendarDate, formatDonorDate } from './date-presentation';
 import { apiRequest } from './api';
 import type { AnnouncementDetail } from './donations';
 
@@ -46,13 +47,12 @@ export function notificationDestination(item: ImportantNotification) {
 // Presentation only; server timestamps and read state remain authoritative.
 export function preparationQuestion(title: string, date: string): string {
   const safeTitle = title.replace(/[\r\n\x00-\x1f]/g, ' ').trim().slice(0, 180);
-  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(date + 'T12:00:00') : null;
-  const label = parsed && Number.isFinite(parsed.getTime()) ? parsed.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'my upcoming donation';
+  const label = formatCalendarDate(date, 'my upcoming donation');
   return `I'm donating blood at ${safeTitle || 'my joined activity'} on ${label}. How should I prepare? I understand healthcare staff decide final eligibility.`;
 }
 
 export function notificationTimeLabel(value: unknown, now = Date.now()): string {
-  const time = typeof value === 'string' && value.trim() ? Date.parse(value) : NaN;
+  const time = donorInstant(value)?.getTime() ?? NaN;
   if (!Number.isFinite(time) || !Number.isFinite(now)) return 'Date unavailable';
   const date = new Date(time), today = new Date(now);
   const age = Math.max(0, now - time);
@@ -64,5 +64,5 @@ export function notificationTimeLabel(value: unknown, now = Date.now()): string 
     if (days === 1) return 'Yesterday';
     if (days > 1 && days < 7) return `${days} days ago`;
   }
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return formatDonorDate(value);
 }

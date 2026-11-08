@@ -1,3 +1,4 @@
+import { formatDonorDate } from '@/services/date-presentation';
 import { LifeFlowColors as PALETTE } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
 import { EmptyState, LoadError } from '@/components/load-state';
@@ -41,6 +42,7 @@ export default function PointsScreen() {
     historyScrollRef.current?.scrollTo({ y: 0, animated: false });
   }, []));
   const [selectedFilter, setSelectedFilter] = useState<TransactionFilter>('all');
+  const [focusedAction, setFocusedAction] = useState<'redeem' | 'rewards' | null>(null);
 
 
   // ========================================
@@ -117,14 +119,16 @@ export default function PointsScreen() {
             <View style={styles.pointsActions}>
             <Pressable
               accessibilityRole="button"
+              onFocus={() => setFocusedAction('redeem')} onBlur={() => setFocusedAction(null)}
               onPress={() => router.push('/redeem')}
               style={({ pressed }) => [
                 styles.redeemButton,
+                focusedAction === 'redeem' && styles.actionFocused,
                 pressed && styles.redeemButtonPressed,
               ]}>
               <Text style={styles.redeemButtonText}>Redeem</Text>
             </Pressable>
-            <Pressable accessibilityRole="button" onPress={() => router.push('/my-vouchers')} style={({ pressed }) => [styles.vouchersButton, pressed && styles.pressed]}>
+            <Pressable accessibilityRole="button" onFocus={() => setFocusedAction('rewards')} onBlur={() => setFocusedAction(null)} onPress={() => router.push('/my-vouchers')} style={({ pressed }) => [styles.vouchersButton, focusedAction === 'rewards' && styles.actionFocused, pressed && styles.pressed]}>
               <Text style={styles.vouchersText}>My Rewards</Text>
             </Pressable>
             </View>
@@ -173,7 +177,7 @@ export default function PointsScreen() {
                       />
                       <View style={styles.transactionDetails}>
                         <Text style={styles.transactionDescription}>{transaction.description}</Text>
-                        <Text style={styles.transactionDate}>{new Date(transaction.created_at).toLocaleDateString()}</Text>
+                        <Text style={styles.transactionDate}>{formatDonorDate(transaction.created_at)}</Text>
                       </View>
                       <Text style={[styles.transactionPoints, { color: transactionColor }]}>
                         {earned ? '+' : '-'}
@@ -237,7 +241,8 @@ const styles = StyleSheet.create({
   content: { width: '100%', maxWidth: 620, alignSelf: 'center', gap: 28 },
   balanceSection: { alignItems: 'center' },
   pointsActions: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 18 },
-  vouchersButton: { flexGrow: 1, flexBasis: 130, alignItems: 'center', justifyContent: 'center', minHeight: 50, paddingHorizontal: 12, borderRadius: 16, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.white },
+  actionFocused: { borderColor: PALETTE.primaryPressed, borderWidth: 2 },
+  vouchersButton: { flexGrow: 1, flexBasis: 130, alignItems: 'center', justifyContent: 'center', minHeight: 50, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: PALETTE.controlBorder, backgroundColor: COLORS.white },
   vouchersText: { color: COLORS.brand, fontSize: 15, fontWeight: '700' },
   retry: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
   historyHeading: { color: COLORS.text, fontSize: 17, fontWeight: '700', marginBottom: 12 },
@@ -274,20 +279,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 12,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 16,
-    backgroundColor: COLORS.white,
+    borderColor: COLORS.brand,
+    borderRadius: 12,
+    backgroundColor: COLORS.brand,
   },
   redeemButtonPressed: {
-    opacity: 0.7,
+    backgroundColor: COLORS.brandPressed,
     transform: [{ scale: 0.99 }],
   },
-  redeemButtonText: { color: COLORS.brand, fontSize: 15, fontWeight: '700' },
+  redeemButtonText: { color: COLORS.white, fontSize: 15, fontWeight: '700' },
   transactionsSection: {
     padding: 15,
     borderWidth: 1,
     borderColor: PALETTE.pointsBorder,
-    borderRadius: 23,
+    borderRadius: 12,
     backgroundColor: COLORS.transactionBackground,
   },
   filterBar: {

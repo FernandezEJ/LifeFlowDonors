@@ -1,3 +1,4 @@
+import { formatDonationDate } from '@/services/announcement-presentation';
 import { LifeFlowColors as PALETTE, DonationStatusColors } from '@/constants/theme';
 import { TabSkeleton } from '@/components/tab-skeleton';
 import { EmptyState, LoadError } from '@/components/load-state';
@@ -92,7 +93,7 @@ export default function ActivityScreen() {
         </View>
         <View style={styles.details}>
           <View style={styles.detailRow}><MaterialIcons name="calendar-today" size={17} color={PALETTE.primary} accessible={false} />
-            <Text style={styles.detailText}>{item.opportunity.event_date || 'Confirm arrangements with the chapter'}</Text></View>
+            <Text style={styles.detailText}>{formatDonationDate(item.opportunity.event_date ?? item.opportunity.donation_date, 'Confirm arrangements with the chapter')}</Text></View>
           {item.opportunity.location ? <View style={styles.detailRow}><MaterialIcons name="place" size={17} color={PALETTE.primary} accessible={false} />
             <Text style={styles.detailText}>{item.opportunity.location}</Text></View> : null}
         </View>
@@ -184,18 +185,18 @@ const styles = StyleSheet.create({
     borderRadius: 13,
     backgroundColor: COLORS.softRed,
   },
-  cardSeparator: { height: 13 },
+  cardSeparator: { height: 10 },
   card: {
-    padding: 17,
+    padding: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
-    borderRadius: 21,
+    borderRadius: 12,
     backgroundColor: COLORS.white,
     shadowColor: PALETTE.text,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.07,
-    shadowRadius: 9,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    elevation: 1,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -206,12 +207,12 @@ const styles = StyleSheet.create({
   cardPressed: { opacity: 0.75 },
   cardHeading: { flex: 1, minWidth: 0 },
   cardChevron: { flexShrink: 0, marginTop: 1 },
-  cardTitle: { color: COLORS.text, fontSize: 17, fontWeight: '800', lineHeight: 23 },
+  cardTitle: { color: COLORS.text, fontSize: 16, fontWeight: '700', lineHeight: 22 },
   organizer: { marginTop: 4, color: COLORS.muted, fontSize: 13, fontWeight: '600' },
-  statusBadge: { alignSelf: 'flex-start', maxWidth: '100%', paddingHorizontal: 9, paddingVertical: 5, borderRadius: 12 },
+  statusBadge: { alignSelf: 'flex-start', maxWidth: '100%', paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8 },
   statusText: { color: COLORS.text, fontSize: 12, lineHeight: 18, fontWeight: '800', flexShrink: 1 },
   statusBlock: { flex: 1, minWidth: 0, gap: 4 },
-  details: { gap: 7, marginTop: 15 },
+  details: { gap: 5, marginTop: 8 },
   detailRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   detailText: { flex: 1, minWidth: 0, color: COLORS.muted, fontSize: 13, lineHeight: 19 },
   cardFooter: {
@@ -219,10 +220,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'space-between',
     gap: 12,
-    marginTop: 16,
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+    marginTop: 10,
   },
   rewardBlock: { flex: 1 },
   rewardLabel: { color: COLORS.muted, fontSize: 12, lineHeight: 18, fontWeight: '600' },

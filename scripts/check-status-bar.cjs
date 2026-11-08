@@ -10,6 +10,7 @@ function load(file, imports) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
   vm.runInNewContext(code, { module, exports: module.exports, require(name) {
+    if(name.endsWith('.png')) { assert.ok(fs.existsSync(require('node:path').resolve(require('node:path').dirname(file),name))); return name; }
     assert.ok(name in imports, `Unexpected import: ${name}`);return imports[name];
   } }, { filename: file });
   return module.exports;
@@ -35,7 +36,7 @@ const root = load('src/app/_layout.tsx', {
   '@/contexts/notification-context': { NotificationProvider: 'NotificationProvider' },
   'expo-router': { Stack: stack, useSegments: () => segments },
   'expo-router/react-navigation': { DefaultTheme: { colors: { background: '#fff' } }, DarkTheme: { dark: true, colors: { background: '#000' } }, ThemeProvider: 'ThemeProvider' },
-  'react-native': { Text: 'Text', Button: 'Button', ActivityIndicator: 'ActivityIndicator' },
+  'react-native': { Text: 'Text', View: 'View', Image: 'Image', Button: 'Button', ActivityIndicator: 'ActivityIndicator' },
   'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
   'expo-status-bar': { StatusBar: 'StatusBar' }, '@/hooks/use-color-scheme': { useColorScheme: () => scheme },
   'expo-splash-screen': { setOptions() {} },
@@ -81,7 +82,7 @@ for (scheme of ['light', 'dark']) {
     assert.equal(find(tree, 'SafeAreaView').props.style.backgroundColor, palette.cream);
     assert.equal(find(tree, 'SafeAreaView').props.edges, undefined, 'Use all actual insets with no hardcoded status-bar height');
     if (gate === 'error') { find(tree, 'Button').props.onPress();assert.equal(retries, scheme === 'light' ? 1 : 2); }
-    else assert.ok(find(tree, 'ActivityIndicator'));
+    else { assert.ok(find(tree, 'ActivityIndicator')); assert.ok(find(tree,'Image').props.source.endsWith('LogoMascot.png')); assert.equal(find(tree,'View').props.accessibilityLabel,'Getting LifeFlow ready'); assert.ok(!JSON.stringify(tree).includes('Restoring session...')); }
     cases++;
   }
 }

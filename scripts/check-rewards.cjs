@@ -9,6 +9,7 @@ const vm = require('node:vm');
 const ts = require('typescript');
 const jsx = (type, props) => typeof type === 'function' && ['LoadError', 'EmptyState'].includes(type.name) ? type(props) : ({ type, props });
 function load(path, imports, globals = {}) {
+  if(path!=='src/services/date-presentation.ts'){const dates=load('src/services/date-presentation.ts',{});imports={'./date-presentation':dates,'@/services/date-presentation':dates,...imports};}
   if (!imports['@/components/load-state'] && path !== 'src/components/load-state.tsx' && imports['react/jsx-runtime'] && imports['@expo/vector-icons/MaterialIcons'] && imports.react) imports = { ...imports, '@/components/load-state': load('src/components/load-state.tsx', imports, globals) };
   const module = { exports: {} };
   const code = ts.transpileModule(fs.readFileSync(path, 'utf8'), {
@@ -281,6 +282,14 @@ async function polishChecks() {
   const points = harness('src/app/(tabs)/points.tsx', pointsAuth);
   assert.equal(nodes(points.render()).filter(n => n.type === 'TabSkeleton').length, 2,'Balance and history load independently with their own matching placeholders');
   tree = await points.settle();
+  assert.match(text(tree),/September 28, 2026/,'Points history uses the full donor-calendar date');
+  const primary=button(tree,'Redeem'),secondary=button(tree,'My Rewards');
+  const primaryStyle=primary.props.style({pressed:false})[0],secondaryStyle=secondary.props.style({pressed:false})[0];
+  assert.notEqual(primaryStyle.backgroundColor,secondaryStyle.backgroundColor,'Redeem is filled and My Rewards stays secondary');
+  assert.equal(secondaryStyle.borderWidth,1);assert.ok(primaryStyle.minHeight>=48&&secondaryStyle.minHeight>=48);
+  primary.props.onFocus();assert.equal(button(points.render(),'Redeem').props.style({pressed:false})[1].borderWidth,2);primary.props.onBlur();
+  assert.equal(button(points.render(),'Redeem').props.style({pressed:false})[1],false);
+  secondary.props.onFocus();assert.equal(button(points.render(),'My Rewards').props.style({pressed:false})[1].borderWidth,2);secondary.props.onBlur();
   const history = () => nodes(points.render()).find(n => n.props?.accessibilityLabel === 'Points history');
   for (const [label, type] of [['All', undefined], ['Earned', 'donation_reward'], ['Redeemed', 'reward_redemption']]) {
     button(points.render(), label).props.onPress(); tree = await points.settle();

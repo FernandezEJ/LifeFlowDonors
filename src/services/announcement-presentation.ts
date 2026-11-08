@@ -1,3 +1,4 @@
+import { formatCalendarDate, formatDonorDate } from './date-presentation';
 import { API_BASE_URL } from './api';
 
 /** Public media only; never turn local/private storage paths into URLs. */
@@ -30,16 +31,8 @@ export function announcementImageUrl(value?: string | null): string | null {
 
 /** Date-only values are calendar dates, not local-time instants. */
 export function formatDonationDate(value?: string | null, fallback = 'Date to be announced'): string {
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return fallback;
-  const [year, month, day] = value.split('-').map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return fallback;
-  return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  return formatCalendarDate(value, fallback);
 }
-
 export function formatJoinedDate(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? 'Date unavailable' : date.toLocaleDateString('en-US', {
-    month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila',
-  });
+  return formatDonorDate(value);
 }

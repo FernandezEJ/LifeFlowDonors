@@ -525,7 +525,7 @@ await check('full-screen history has top End, history-left/deleted-right, scroll
   manager.unmount();
   const deleted = { ...meta(9), deleted_at: '2026-10-03T00:00:00Z', permanent_delete_at: '2026-11-02T00:00:00Z', recoverable: true };
   const card = find(view(true), 'FlatList').props.renderItem({ item: deleted });
-  assert.match(texts(card).join(' '), /Permanently deletes.*Nov 2, 2026/);
+  assert.match(texts(card).join(' '), /Permanently deletes.*November 2, 2026/);
   const restore = nodes(card).find(n => n.props?.accessibilityLabel === 'Restore ' + deleted.title);
   assert.equal(restore.props.disabled, false); await restore.props.onPress(); assert.equal(restored, 9);
   const expired = find(view(true), 'FlatList').props.renderItem({ item: { ...deleted, recoverable: false } });

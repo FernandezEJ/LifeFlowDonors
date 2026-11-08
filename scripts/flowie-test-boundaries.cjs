@@ -7,6 +7,7 @@ const keyboardListeners = new Map();
 const emitKeyboard = event => keyboardListeners.get(event)?.forEach(fn => fn({}));
 const keyboardListenerCount = () => [...keyboardListeners.values()].reduce((sum, callbacks) => sum + callbacks.size, 0);
 function load(file, imports = {}, globals = {}) {
+  if(file!=='src/services/date-presentation.ts'){const dates=load('src/services/date-presentation.ts');imports={'./date-presentation':dates,'@/services/date-presentation':dates,...imports};}
   const module = { exports: {} };
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   vm.runInNewContext(code, { module, exports: module.exports, require: name => {if (name === '@/constants/theme') return load('src/constants/theme.ts', {'react-native': {Platform: {select: options => options.default}}});
